@@ -76,7 +76,7 @@ def apply_winning_pattern(
     chunk_size: int,
     chunk_overlap: int,
     apply_report: dsl.Output[dsl.Dataset],
-) -> NamedTuple("Outputs", [("chunks_created", int), ("documents_indexed", int)]):
+) -> NamedTuple("Outputs", [("chunks_created", int), ("documents_indexed", int), ("embedding_failures", int)]):
     """fetches batch_id's own already logged ingestion_report.json from
     mlflow (the same artifact owner-console-backend/server.py's
     ingestion_report() reads), pulls the abac tags and the guardrails
@@ -87,6 +87,7 @@ def apply_winning_pattern(
     import hashlib
     import json
     import os
+    import time
 
     import boto3
     import psycopg2
@@ -180,9 +181,32 @@ def apply_winning_pattern(
         data = resp.json()["data"]
         return [row["embedding"] for row in sorted(data, key=lambda r: r["index"])]
 
+    def embed_chunks_with_retry(texts: list[str], attempts: int = 3) -> list[list[float]]:
+        # a null embedding row can never be found by any vector search
+        # again, ever, regardless of who is asking, so a transient blip
+        # is worth a couple retries rather than writing a dead row into a
+        # live rag index. this is the real fix for the doc-001/doc-002
+        # null embedding incident, found and repaired live on 2026-10-02:
+        # both rows turned out to predate this pipeline entirely, from an
+        # older ingestion path with the same swallow-and-null behavior,
+        # never caught because nothing downstream ever read the old
+        # embedding_failures counter
+        last_exc = None
+        for attempt in range(attempts):
+            try:
+                return embed_chunks(texts)
+            except requests.RequestException as exc:
+                last_exc = exc
+                if attempt < attempts - 1:
+                    time.sleep(2 ** attempt)
+        raise last_exc
+
     total_chunks = 0
-    embedding_failures = 0
     documents_indexed = 0
+    # per doc_id, not just a count: a bare number nobody downstream reads
+    # is not a real safety net, this list is what actually ends up in
+    # apply_report.json and is small enough to always include in full
+    embedding_failures = []
     for row in sanitized_rows:
         doc = docs_by_id.get(row["doc_id"])
         if doc is None:
@@ -192,11 +216,6 @@ def apply_winning_pattern(
             Bucket=bucket, Key=f"{sanitized_prefix}{row['filename']}"
         )["Body"].read().decode("utf-8")
 
-        # chunk boundaries move whenever chunk_size/overlap change, so any
-        # rows this doc had under a previous pattern are stale, drop them
-        # before writing the new ones rather than leaving orphaned tails
-        cur.execute("DELETE FROM rag_chunks WHERE doc_id = %s", (doc["doc_id"],))
-
         chunks = []
         start = 0
         while start < len(content):
@@ -204,14 +223,25 @@ def apply_winning_pattern(
             start += chunk_size - chunk_overlap
 
         try:
-            embeddings = embed_chunks(chunks)
+            embeddings = embed_chunks_with_retry(chunks)
         except requests.RequestException as exc:
-            print(f"  {doc['doc_id']}: embedding call failed ({exc}), writing chunks with null vectors")
-            embeddings = [None] * len(chunks)
-            embedding_failures += len(chunks)
+            # embed before delete: whatever rows this doc_id already has
+            # from a previous successful run stay exactly as they are,
+            # a failed embed here must never make a previously working
+            # doc worse off. skip the doc entirely rather than writing a
+            # permanently unsearchable null vector row
+            print(f"  {doc['doc_id']}: embedding failed after {3} attempts ({exc}), leaving existing rows untouched, skipping")
+            embedding_failures.append({"doc_id": doc["doc_id"], "error": str(exc)})
+            continue
+
+        # only now that the new embeddings are actually in hand: chunk
+        # boundaries move whenever chunk_size/overlap change, so any rows
+        # this doc had under a previous pattern are stale, drop them
+        # before writing the fresh ones rather than leaving orphaned tails
+        cur.execute("DELETE FROM rag_chunks WHERE doc_id = %s", (doc["doc_id"],))
 
         for idx, chunk in enumerate(chunks):
-            vector_literal = "[" + ",".join(repr(v) for v in embeddings[idx]) + "]" if embeddings[idx] else None
+            vector_literal = "[" + ",".join(repr(v) for v in embeddings[idx]) + "]"
             cur.execute(
                 """
                 INSERT INTO rag_chunks
@@ -240,6 +270,10 @@ def apply_winning_pattern(
         "chunk_size": chunk_size,
         "chunk_overlap": chunk_overlap,
         "embedding_model": embedding_model,
+        # list of {doc_id, error}, not a count: an empty list here is the
+        # only thing that actually means every sanitized doc got indexed
+        # and is really searchable, a doc_id in this list was left alone,
+        # not written with a dead row
         "embedding_failures": embedding_failures,
         "documents_indexed": documents_indexed,
         "chunks_created": total_chunks,
@@ -250,8 +284,8 @@ def apply_winning_pattern(
     cur.close()
     conn.close()
 
-    outputs = NamedTuple("Outputs", [("chunks_created", int), ("documents_indexed", int)])
-    return outputs(total_chunks, documents_indexed)
+    outputs = NamedTuple("Outputs", [("chunks_created", int), ("documents_indexed", int), ("embedding_failures", int)])
+    return outputs(total_chunks, documents_indexed, len(embedding_failures))
 
 
 @dsl.component(base_image=BASE_IMAGE, packages_to_install=["boto3==1.35.99", "requests==2.32.3"])
@@ -266,6 +300,7 @@ def log_apply_report(
     artifact_bucket: str,
     chunks_created: int,
     documents_indexed: int,
+    embedding_failures: int,
     apply_report: dsl.Input[dsl.Dataset],
 ) -> str:
     """logs one mlflow run per apply, under its own phase1-apply-pattern
@@ -331,6 +366,10 @@ def log_apply_report(
             "metrics": [
                 {"key": "chunks_created", "value": chunks_created, "timestamp": metrics_ts},
                 {"key": "documents_indexed", "value": documents_indexed, "timestamp": metrics_ts},
+                # a real mlflow metric now, not just a field buried in the
+                # json artifact nobody downstream was reading, so a non
+                # zero value actually shows up in the run view
+                {"key": "embedding_failures", "value": embedding_failures, "timestamp": metrics_ts},
             ],
         },
         verify=False, timeout=30,
@@ -419,6 +458,7 @@ def phase1_apply_pattern_pipeline(
         minio_endpoint=minio_endpoint, artifact_bucket=artifact_bucket,
         chunks_created=apply_task.outputs["chunks_created"],
         documents_indexed=apply_task.outputs["documents_indexed"],
+        embedding_failures=apply_task.outputs["embedding_failures"],
         apply_report=apply_task.outputs["apply_report"],
     )
     _use_minio_creds(report_task)

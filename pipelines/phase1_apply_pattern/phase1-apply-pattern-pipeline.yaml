@@ -68,6 +68,8 @@ components:
           parameterType: NUMBER_INTEGER
         documents_indexed:
           parameterType: NUMBER_INTEGER
+        embedding_failures:
+          parameterType: NUMBER_INTEGER
   comp-log-apply-report:
     executorLabel: exec-log-apply-report
     inputDefinitions:
@@ -88,6 +90,8 @@ components:
         chunks_created:
           parameterType: NUMBER_INTEGER
         documents_indexed:
+          parameterType: NUMBER_INTEGER
+        embedding_failures:
           parameterType: NUMBER_INTEGER
         minio_endpoint:
           parameterType: STRING
@@ -137,25 +141,25 @@ deploymentSpec:
           \ str,\n    pattern_name: str,\n    autorag_run_id: str,\n    embedding_model:\
           \ str,\n    chunk_size: int,\n    chunk_overlap: int,\n    apply_report:\
           \ dsl.Output[dsl.Dataset],\n) -> NamedTuple(\"Outputs\", [(\"chunks_created\"\
-          , int), (\"documents_indexed\", int)]):\n    \"\"\"fetches batch_id's own\
-          \ already logged ingestion_report.json from\n    mlflow (the same artifact\
-          \ owner-console-backend/server.py's\n    ingestion_report() reads), pulls\
-          \ the abac tags and the guardrails\n    verdict per document from it, then\
-          \ re indexes every document that\n    passed sanitization using the winning\
-          \ pattern's real chunk_size,\n    chunk_overlap and embedding_model_id.\n\
-          \    \"\"\"\n    import hashlib\n    import json\n    import os\n\n    import\
-          \ boto3\n    import psycopg2\n    import requests\n\n    headers = {\"X-MLflow-Workspace\"\
-          : mlflow_workspace, \"Content-Type\": \"application/json\"}\n    token_path\
-          \ = \"/var/run/secrets/kubernetes.io/serviceaccount/token\"\n    if os.path.exists(token_path):\n\
-          \        with open(token_path) as f:\n            headers[\"Authorization\"\
-          ] = f\"Bearer {f.read().strip()}\"\n\n    search = requests.post(\n    \
-          \    f\"{mlflow_url}/api/2.0/mlflow/experiments/search\",\n        headers=headers,\
-          \ json={\"max_results\": 100}, verify=False, timeout=30,\n    ).json()\n\
-          \    exp = next((e for e in search.get(\"experiments\", []) if e[\"name\"\
-          ] == ingestion_experiment_name), None)\n    if exp is None:\n        raise\
-          \ RuntimeError(f\"no {ingestion_experiment_name!r} experiment found, has\
-          \ any batch ever been ingested?\")\n\n    runs = requests.post(\n      \
-          \  f\"{mlflow_url}/api/2.0/mlflow/runs/search\",\n        headers=headers,\n\
+          , int), (\"documents_indexed\", int), (\"embedding_failures\", int)]):\n\
+          \    \"\"\"fetches batch_id's own already logged ingestion_report.json from\n\
+          \    mlflow (the same artifact owner-console-backend/server.py's\n    ingestion_report()\
+          \ reads), pulls the abac tags and the guardrails\n    verdict per document\
+          \ from it, then re indexes every document that\n    passed sanitization\
+          \ using the winning pattern's real chunk_size,\n    chunk_overlap and embedding_model_id.\n\
+          \    \"\"\"\n    import hashlib\n    import json\n    import os\n    import\
+          \ time\n\n    import boto3\n    import psycopg2\n    import requests\n\n\
+          \    headers = {\"X-MLflow-Workspace\": mlflow_workspace, \"Content-Type\"\
+          : \"application/json\"}\n    token_path = \"/var/run/secrets/kubernetes.io/serviceaccount/token\"\
+          \n    if os.path.exists(token_path):\n        with open(token_path) as f:\n\
+          \            headers[\"Authorization\"] = f\"Bearer {f.read().strip()}\"\
+          \n\n    search = requests.post(\n        f\"{mlflow_url}/api/2.0/mlflow/experiments/search\"\
+          ,\n        headers=headers, json={\"max_results\": 100}, verify=False, timeout=30,\n\
+          \    ).json()\n    exp = next((e for e in search.get(\"experiments\", [])\
+          \ if e[\"name\"] == ingestion_experiment_name), None)\n    if exp is None:\n\
+          \        raise RuntimeError(f\"no {ingestion_experiment_name!r} experiment\
+          \ found, has any batch ever been ingested?\")\n\n    runs = requests.post(\n\
+          \        f\"{mlflow_url}/api/2.0/mlflow/runs/search\",\n        headers=headers,\n\
           \        json={\n            \"experiment_ids\": [exp[\"experiment_id\"\
           ]],\n            \"filter\": f\"tags.mlflow.runName = '{batch_id}'\",\n\
           \            \"max_results\": 1,\n        },\n        verify=False, timeout=30,\n\
@@ -192,53 +196,79 @@ deploymentSpec:
           \         json={\"model\": embedding_model, \"input\": texts},\n       \
           \     timeout=120,\n        )\n        resp.raise_for_status()\n       \
           \ data = resp.json()[\"data\"]\n        return [row[\"embedding\"] for row\
-          \ in sorted(data, key=lambda r: r[\"index\"])]\n\n    total_chunks = 0\n\
-          \    embedding_failures = 0\n    documents_indexed = 0\n    for row in sanitized_rows:\n\
-          \        doc = docs_by_id.get(row[\"doc_id\"])\n        if doc is None:\n\
-          \            print(f\"  {row['doc_id']}: no abac tags found in ingestion\
-          \ report, skipping\")\n            continue\n        content = s3.get_object(\n\
-          \            Bucket=bucket, Key=f\"{sanitized_prefix}{row['filename']}\"\
-          \n        )[\"Body\"].read().decode(\"utf-8\")\n\n        # chunk boundaries\
-          \ move whenever chunk_size/overlap change, so any\n        # rows this doc\
+          \ in sorted(data, key=lambda r: r[\"index\"])]\n\n    def embed_chunks_with_retry(texts:\
+          \ list[str], attempts: int = 3) -> list[list[float]]:\n        # a null\
+          \ embedding row can never be found by any vector search\n        # again,\
+          \ ever, regardless of who is asking, so a transient blip\n        # is worth\
+          \ a couple retries rather than writing a dead row into a\n        # live\
+          \ rag index. this is the real fix for the doc-001/doc-002\n        # null\
+          \ embedding incident, found and repaired live on 2026-10-02:\n        #\
+          \ both rows turned out to predate this pipeline entirely, from an\n    \
+          \    # older ingestion path with the same swallow-and-null behavior,\n \
+          \       # never caught because nothing downstream ever read the old\n  \
+          \      # embedding_failures counter\n        last_exc = None\n        for\
+          \ attempt in range(attempts):\n            try:\n                return\
+          \ embed_chunks(texts)\n            except requests.RequestException as exc:\n\
+          \                last_exc = exc\n                if attempt < attempts -\
+          \ 1:\n                    time.sleep(2 ** attempt)\n        raise last_exc\n\
+          \n    total_chunks = 0\n    documents_indexed = 0\n    # per doc_id, not\
+          \ just a count: a bare number nobody downstream reads\n    # is not a real\
+          \ safety net, this list is what actually ends up in\n    # apply_report.json\
+          \ and is small enough to always include in full\n    embedding_failures\
+          \ = []\n    for row in sanitized_rows:\n        doc = docs_by_id.get(row[\"\
+          doc_id\"])\n        if doc is None:\n            print(f\"  {row['doc_id']}:\
+          \ no abac tags found in ingestion report, skipping\")\n            continue\n\
+          \        content = s3.get_object(\n            Bucket=bucket, Key=f\"{sanitized_prefix}{row['filename']}\"\
+          \n        )[\"Body\"].read().decode(\"utf-8\")\n\n        chunks = []\n\
+          \        start = 0\n        while start < len(content):\n            chunks.append(content[start:start\
+          \ + chunk_size])\n            start += chunk_size - chunk_overlap\n\n  \
+          \      try:\n            embeddings = embed_chunks_with_retry(chunks)\n\
+          \        except requests.RequestException as exc:\n            # embed before\
+          \ delete: whatever rows this doc_id already has\n            # from a previous\
+          \ successful run stay exactly as they are,\n            # a failed embed\
+          \ here must never make a previously working\n            # doc worse off.\
+          \ skip the doc entirely rather than writing a\n            # permanently\
+          \ unsearchable null vector row\n            print(f\"  {doc['doc_id']}:\
+          \ embedding failed after {3} attempts ({exc}), leaving existing rows untouched,\
+          \ skipping\")\n            embedding_failures.append({\"doc_id\": doc[\"\
+          doc_id\"], \"error\": str(exc)})\n            continue\n\n        # only\
+          \ now that the new embeddings are actually in hand: chunk\n        # boundaries\
+          \ move whenever chunk_size/overlap change, so any rows\n        # this doc\
           \ had under a previous pattern are stale, drop them\n        # before writing\
-          \ the new ones rather than leaving orphaned tails\n        cur.execute(\"\
+          \ the fresh ones rather than leaving orphaned tails\n        cur.execute(\"\
           DELETE FROM rag_chunks WHERE doc_id = %s\", (doc[\"doc_id\"],))\n\n    \
-          \    chunks = []\n        start = 0\n        while start < len(content):\n\
-          \            chunks.append(content[start:start + chunk_size])\n        \
-          \    start += chunk_size - chunk_overlap\n\n        try:\n            embeddings\
-          \ = embed_chunks(chunks)\n        except requests.RequestException as exc:\n\
-          \            print(f\"  {doc['doc_id']}: embedding call failed ({exc}),\
-          \ writing chunks with null vectors\")\n            embeddings = [None] *\
-          \ len(chunks)\n            embedding_failures += len(chunks)\n\n       \
-          \ for idx, chunk in enumerate(chunks):\n            vector_literal = \"\
-          [\" + \",\".join(repr(v) for v in embeddings[idx]) + \"]\" if embeddings[idx]\
-          \ else None\n            cur.execute(\n                \"\"\"\n        \
-          \        INSERT INTO rag_chunks\n                    (doc_id, chunk_index,\
-          \ content, content_sha256, source,\n                     clearance_level,\
-          \ dept, team, project_scope, data_owner,\n                     embedding,\
-          \ pattern_name, autorag_run_id, chunk_size, chunk_overlap)\n           \
-          \     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, %s,\
-          \ %s, %s)\n                \"\"\",\n                (\n                \
-          \    doc[\"doc_id\"], idx, chunk, hashlib.sha256(chunk.encode(\"utf-8\"\
-          )).hexdigest(),\n                    doc.get(\"source\"), doc.get(\"clearance_level\"\
-          ), doc.get(\"dept\"),\n                    doc.get(\"team\"), doc.get(\"\
-          project_scope\"), doc.get(\"data_owner\"), vector_literal,\n           \
-          \         pattern_name, autorag_run_id, chunk_size, chunk_overlap,\n   \
-          \             ),\n            )\n        total_chunks += len(chunks)\n \
-          \       documents_indexed += 1\n        print(f\"  {doc['doc_id']}: {len(chunks)}\
+          \    for idx, chunk in enumerate(chunks):\n            vector_literal =\
+          \ \"[\" + \",\".join(repr(v) for v in embeddings[idx]) + \"]\"\n       \
+          \     cur.execute(\n                \"\"\"\n                INSERT INTO\
+          \ rag_chunks\n                    (doc_id, chunk_index, content, content_sha256,\
+          \ source,\n                     clearance_level, dept, team, project_scope,\
+          \ data_owner,\n                     embedding, pattern_name, autorag_run_id,\
+          \ chunk_size, chunk_overlap)\n                VALUES (%s, %s, %s, %s, %s,\
+          \ %s, %s, %s, %s, %s, %s::vector, %s, %s, %s, %s)\n                \"\"\"\
+          ,\n                (\n                    doc[\"doc_id\"], idx, chunk, hashlib.sha256(chunk.encode(\"\
+          utf-8\")).hexdigest(),\n                    doc.get(\"source\"), doc.get(\"\
+          clearance_level\"), doc.get(\"dept\"),\n                    doc.get(\"team\"\
+          ), doc.get(\"project_scope\"), doc.get(\"data_owner\"), vector_literal,\n\
+          \                    pattern_name, autorag_run_id, chunk_size, chunk_overlap,\n\
+          \                ),\n            )\n        total_chunks += len(chunks)\n\
+          \        documents_indexed += 1\n        print(f\"  {doc['doc_id']}: {len(chunks)}\
           \ chunks written, embedded with {embedding_model}\")\n\n    report_out =\
           \ {\n        \"batch_id\": batch_id,\n        \"pattern_name\": pattern_name,\n\
           \        \"autorag_run_id\": autorag_run_id,\n        \"table\": \"rag_chunks\"\
           ,\n        \"chunking_method\": \"fixed_size_window (winner's real chunk_size/overlap,\
           \ not autorag's own splitting algorithm, see this file's module docstring)\"\
           ,\n        \"chunk_size\": chunk_size,\n        \"chunk_overlap\": chunk_overlap,\n\
-          \        \"embedding_model\": embedding_model,\n        \"embedding_failures\"\
-          : embedding_failures,\n        \"documents_indexed\": documents_indexed,\n\
-          \        \"chunks_created\": total_chunks,\n    }\n    with open(apply_report.path,\
-          \ \"w\") as f:\n        json.dump(report_out, f, indent=2)\n\n    cur.close()\n\
-          \    conn.close()\n\n    outputs = NamedTuple(\"Outputs\", [(\"chunks_created\"\
-          , int), (\"documents_indexed\", int)])\n    return outputs(total_chunks,\
-          \ documents_indexed)\n\n"
+          \        \"embedding_model\": embedding_model,\n        # list of {doc_id,\
+          \ error}, not a count: an empty list here is the\n        # only thing that\
+          \ actually means every sanitized doc got indexed\n        # and is really\
+          \ searchable, a doc_id in this list was left alone,\n        # not written\
+          \ with a dead row\n        \"embedding_failures\": embedding_failures,\n\
+          \        \"documents_indexed\": documents_indexed,\n        \"chunks_created\"\
+          : total_chunks,\n    }\n    with open(apply_report.path, \"w\") as f:\n\
+          \        json.dump(report_out, f, indent=2)\n\n    cur.close()\n    conn.close()\n\
+          \n    outputs = NamedTuple(\"Outputs\", [(\"chunks_created\", int), (\"\
+          documents_indexed\", int), (\"embedding_failures\", int)])\n    return outputs(total_chunks,\
+          \ documents_indexed, len(embedding_failures))\n\n"
         image: registry.access.redhat.com/ubi9/python-311:latest
     exec-log-apply-report:
       container:
@@ -270,15 +300,15 @@ deploymentSpec:
           \ *\n\ndef log_apply_report(\n    mlflow_url: str,\n    mlflow_workspace:\
           \ str,\n    apply_experiment_name: str,\n    batch_id: str,\n    pattern_name:\
           \ str,\n    autorag_run_id: str,\n    minio_endpoint: str,\n    artifact_bucket:\
-          \ str,\n    chunks_created: int,\n    documents_indexed: int,\n    apply_report:\
-          \ dsl.Input[dsl.Dataset],\n) -> str:\n    \"\"\"logs one mlflow run per\
-          \ apply, under its own phase1-apply-pattern\n    experiment rather than\
-          \ mixed into phase1-ingestion, since applying a\n    pattern is a separate\
-          \ real world action from ingesting a batch and\n    can happen more than\
-          \ once against the same batch as autorag keeps\n    finding better recipes.\n\
-          \    \"\"\"\n    import json\n    import os\n    import time\n\n    import\
-          \ boto3\n    import requests\n\n    with open(apply_report.path) as f:\n\
-          \        report = json.load(f)\n\n    headers = {\"X-MLflow-Workspace\"\
+          \ str,\n    chunks_created: int,\n    documents_indexed: int,\n    embedding_failures:\
+          \ int,\n    apply_report: dsl.Input[dsl.Dataset],\n) -> str:\n    \"\"\"\
+          logs one mlflow run per apply, under its own phase1-apply-pattern\n    experiment\
+          \ rather than mixed into phase1-ingestion, since applying a\n    pattern\
+          \ is a separate real world action from ingesting a batch and\n    can happen\
+          \ more than once against the same batch as autorag keeps\n    finding better\
+          \ recipes.\n    \"\"\"\n    import json\n    import os\n    import time\n\
+          \n    import boto3\n    import requests\n\n    with open(apply_report.path)\
+          \ as f:\n        report = json.load(f)\n\n    headers = {\"X-MLflow-Workspace\"\
           : mlflow_workspace, \"Content-Type\": \"application/json\"}\n    token_path\
           \ = \"/var/run/secrets/kubernetes.io/serviceaccount/token\"\n    if os.path.exists(token_path):\n\
           \        with open(token_path) as f:\n            headers[\"Authorization\"\
@@ -306,19 +336,24 @@ deploymentSpec:
           \            ],\n            \"metrics\": [\n                {\"key\": \"\
           chunks_created\", \"value\": chunks_created, \"timestamp\": metrics_ts},\n\
           \                {\"key\": \"documents_indexed\", \"value\": documents_indexed,\
-          \ \"timestamp\": metrics_ts},\n            ],\n        },\n        verify=False,\
-          \ timeout=30,\n    )\n\n    assert artifact_uri.startswith(\"s3://\"), artifact_uri\n\
-          \    _, path = artifact_uri[len(\"s3://\"):].split(\"/\", 1)\n    s3 = boto3.client(\n\
-          \        \"s3\",\n        endpoint_url=f\"http://{minio_endpoint}\",\n \
-          \       aws_access_key_id=os.environ[\"MINIO_ACCESS_KEY\"],\n        aws_secret_access_key=os.environ[\"\
-          MINIO_SECRET_KEY\"],\n    )\n    s3.put_object(\n        Bucket=artifact_bucket,\n\
-          \        Key=f\"{path}/apply_report.json\",\n        Body=json.dumps(report,\
-          \ indent=2).encode(\"utf-8\"),\n        ContentType=\"application/json\"\
-          ,\n    )\n\n    requests.post(\n        f\"{mlflow_url}/api/2.0/mlflow/runs/update\"\
-          ,\n        headers=headers,\n        json={\"run_id\": run_id, \"status\"\
-          : \"FINISHED\", \"end_time\": int(time.time() * 1000)},\n        verify=False,\
-          \ timeout=30,\n    )\n\n    print(f\"logged mlflow run {run_id} in experiment\
-          \ {apply_experiment_name}\")\n    return run_id\n\n"
+          \ \"timestamp\": metrics_ts},\n                # a real mlflow metric now,\
+          \ not just a field buried in the\n                # json artifact nobody\
+          \ downstream was reading, so a non\n                # zero value actually\
+          \ shows up in the run view\n                {\"key\": \"embedding_failures\"\
+          , \"value\": embedding_failures, \"timestamp\": metrics_ts},\n         \
+          \   ],\n        },\n        verify=False, timeout=30,\n    )\n\n    assert\
+          \ artifact_uri.startswith(\"s3://\"), artifact_uri\n    _, path = artifact_uri[len(\"\
+          s3://\"):].split(\"/\", 1)\n    s3 = boto3.client(\n        \"s3\",\n  \
+          \      endpoint_url=f\"http://{minio_endpoint}\",\n        aws_access_key_id=os.environ[\"\
+          MINIO_ACCESS_KEY\"],\n        aws_secret_access_key=os.environ[\"MINIO_SECRET_KEY\"\
+          ],\n    )\n    s3.put_object(\n        Bucket=artifact_bucket,\n       \
+          \ Key=f\"{path}/apply_report.json\",\n        Body=json.dumps(report, indent=2).encode(\"\
+          utf-8\"),\n        ContentType=\"application/json\",\n    )\n\n    requests.post(\n\
+          \        f\"{mlflow_url}/api/2.0/mlflow/runs/update\",\n        headers=headers,\n\
+          \        json={\"run_id\": run_id, \"status\": \"FINISHED\", \"end_time\"\
+          : int(time.time() * 1000)},\n        verify=False, timeout=30,\n    )\n\n\
+          \    print(f\"logged mlflow run {run_id} in experiment {apply_experiment_name}\"\
+          )\n    return run_id\n\n"
         image: registry.access.redhat.com/ubi9/python-311:latest
 pipelineInfo:
   description: winning autorag pattern -> re chunk + re embed the sanitized batch
@@ -395,6 +430,10 @@ root:
             documents_indexed:
               taskOutputParameter:
                 outputParameterKey: documents_indexed
+                producerTask: apply-winning-pattern
+            embedding_failures:
+              taskOutputParameter:
+                outputParameterKey: embedding_failures
                 producerTask: apply-winning-pattern
             minio_endpoint:
               componentInputParameter: minio_endpoint

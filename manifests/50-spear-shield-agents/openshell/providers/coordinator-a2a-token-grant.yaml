@@ -1,0 +1,42 @@
+# openshell provider profile: coordinator a2a egress uses token_grant.
+# supervisor fetches a spiffe jwt-svid, asserts it to keycloak as a
+# jwt-spiffe client assertion against spear-coordinator-workload (its
+# own jwt.credential.issuer: spire / jwt.credential.sub: spiffe://agent-pack.internal/ns/spear-shield-agents/sandbox/spear-coordinator-agent
+# attributes, manifests/50-spear-shield-agents/01-keycloak-realm.yaml),
+# and injects the resulting keycloak access token as Authorization on
+# the matching endpoint below. adapted directly from the reference's
+# own coordinator-a2a-token-grant.yaml.tmpl, same shape, this project's
+# own real values already substituted, not left as placeholders, since
+# this runs against a single known realm rather than a templated script.
+id: coordinator-a2a-token-grant
+display_name: coordinator a2a via spiffe token grant
+description: spiffe jwt-svid client assertion to keycloak for retrieval agent a2a
+category: agent
+credentials:
+  - name: access_token
+    description: keycloak access token minted via spiffe jwt client assertion
+    required: false
+    auth_style: bearer
+    header_name: Authorization
+    token_grant:
+      grant_type: client_credentials
+      # routed through the plain http relay, not keycloak's real https
+      # endpoint directly, see ../auth-token-relay.yaml's own comment
+      token_endpoint: http://spear-shield-auth-token.spear-shield-agents.svc.cluster.local:8080/realms/spear-shield-agents/protocol/openid-connect/token
+      jwt_svid_audience: https://sso.apps.cluster-rf7lv.dyn.redhatworkshops.io/realms/spear-shield-agents
+      client_assertion_type: urn:ietf:params:oauth:client-assertion-type:jwt-spiffe
+      cache_ttl_seconds: 240
+endpoints:
+  - host: spear-retrieval-a2a-gateway.spear-shield-agents.svc.cluster.local
+    port: 80
+    protocol: rest
+    tls: none
+    access: read-write
+    enforcement: enforce
+    allowed_ips:
+      - CLUSTER_NETWORK_CIDR_PLACEHOLDER
+      - SERVICE_NETWORK_CIDR_PLACEHOLDER
+binaries:
+  - /usr/bin/python3*
+  - /usr/local/bin/python3*
+  - /opt/app-root/bin/python3*

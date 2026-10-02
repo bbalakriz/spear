@@ -1,0 +1,31 @@
+# spear-coordinator-agent for openshell sandboxes, same base image and
+# shape as the reference's Containerfile.openshell.coordinator: iproute
+# and nftables are genuinely needed inside the image, not optional, the
+# openshell supervisor's own network policy enforcement depends on them
+# being present in the sandbox's own filesystem.
+#
+# build in cluster:
+#   oc start-build spear-coordinator-agent --from-dir=agents --wait -n spear-shield-agents
+
+FROM registry.access.redhat.com/ubi9/python-312:latest
+
+USER 0
+
+RUN dnf install -y --nodocs iproute nftables && dnf clean all && rm -rf /var/cache/dnf
+
+RUN install -d -o 1001 -g 0 -m 775 /sandbox
+WORKDIR /sandbox
+
+USER 1001
+
+COPY --chown=1001:0 _shared/a2a_server.py /sandbox/a2a_server.py
+COPY --chown=1001:0 _shared/http_client.py /sandbox/http_client.py
+COPY --chown=1001:0 spear-coordinator-agent/main.py /sandbox/main.py
+
+ENV AGENT_PORT=8080 \
+    PYTHONPATH=/sandbox \
+    PATH="/opt/app-root/bin:${PATH}"
+
+EXPOSE 8080
+
+CMD ["python3", "/sandbox/main.py"]

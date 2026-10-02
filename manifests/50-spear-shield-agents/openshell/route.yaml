@@ -1,0 +1,19 @@
+# external route to this project's own openshell gateway, so the
+# openshell cli can reach it from outside the cluster the same way
+# scripts/30-install-openshell.sh's own route.yaml works for agent-pack.
+# CLUSTER_DOMAIN_PLACEHOLDER substituted at apply time, same pattern.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: spear-shield-openshell
+  namespace: spear-shield-openshell
+spec:
+  host: spear-shield-openshell.CLUSTER_DOMAIN_PLACEHOLDER
+  to:
+    kind: Service
+    name: spear-shield-openshell
+  port:
+    targetPort: grpc
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Allow

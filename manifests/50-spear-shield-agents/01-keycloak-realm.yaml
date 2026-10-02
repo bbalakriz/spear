@@ -146,7 +146,15 @@ spec:
         clientAuthenticatorType: federated-jwt
         attributes:
           jwt.credential.issuer: spire
-          jwt.credential.sub: spiffe://agent-pack.internal/ns/spear-shield-agents/sandbox/spear-coordinator-agent
+          # the live, observed agents.x-k8s.io/sandbox-name-hash label
+          # value for sandbox name "spear-coordinator", not the sandbox
+          # name itself: confirmed live that openshell sandbox create's
+          # own --label app=... flag never becomes a real kubernetes pod
+          # label at all, see manifests/50-spear-shield-agents/10-cluster-spiffeid.yaml's
+          # own comment for the full story, this hash is what the
+          # ClusterSPIFFEID's own podSelector and spiffeIDTemplate
+          # actually key on
+          jwt.credential.sub: spiffe://agent-pack.internal/ns/spear-shield-agents/sandbox/abf32a96
       - clientId: spear-retrieval
         name: spear-retrieval
         enabled: true

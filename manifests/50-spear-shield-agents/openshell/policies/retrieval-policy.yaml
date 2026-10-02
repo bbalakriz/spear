@@ -1,0 +1,69 @@
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /opt
+    - /etc
+    - /proc
+    - /dev/urandom
+  read_write:
+    - /sandbox
+    - /tmp
+    - /dev/null
+landlock:
+  compatibility: best_effort
+network_policies:
+  cluster_rag_relay:
+    name: cluster-rag-relay
+    endpoints:
+      # rag-query-relay, not pgvector or ogx directly. confirmed live
+      # this cluster's openshell build does not advertise transparent
+      # tcp support ("candidate policy introduces protocol: tcp, but
+      # the runtime does not advertise transparent tcp support"), both
+      # tcp and sql hit that same unsupported layer (sql failed the
+      # same way, a silent connection refused with no matching log
+      # line on either side), so this sandbox cannot open a raw
+      # postgres connection to pgvector itself at all. rag-query-relay
+      # runs unsandboxed in rag-phase1 and does the real
+      # embed_query()/abac_filtered_search() calls on this sandbox's
+      # behalf, see agents/spear-retrieval-agent/rag_query_server.py
+      - host: spear-shield-rag-query-relay.rag-phase1.svc.cluster.local
+        port: 8080
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+        allowed_ips:
+          - CLUSTER_NETWORK_CIDR_PLACEHOLDER
+          - SERVICE_NETWORK_CIDR_PLACEHOLDER
+    binaries:
+      - path: /usr/bin/python3*
+      - path: /usr/local/bin/python3*
+      - path: /opt/app-root/bin/python3*
+  cluster_mcp:
+    name: cluster-mcp
+    endpoints:
+      # the real work tracker tool path, PHASE2_PLAN.md section 4's
+      # own already live tested full chain, connected the same way
+      # that live test used: real cluster dns name, host header
+      # override to the gateway's own listener hostname for the
+      # HTTPRoute to match, see main.py's own MCP_GATEWAY_HOST_HEADER
+      - host: spear-shield-gateway-istio.spear-shield-agents.svc.cluster.local
+        port: 8080
+        protocol: mcp
+        # no enforcement/access fields here, matching the reference's
+        # own specialist-policy.yaml exactly, mcp.allow_all_known_mcp_methods
+        # is the access control knob for this protocol type, not those
+        # two fields which the cli's own parser rejects for some other
+        # non rest protocols
+        mcp:
+          allow_all_known_mcp_methods: true
+        allowed_ips:
+          - CLUSTER_NETWORK_CIDR_PLACEHOLDER
+          - SERVICE_NETWORK_CIDR_PLACEHOLDER
+    binaries:
+      - path: /usr/bin/python3*
+      - path: /usr/local/bin/python3*
+      - path: /opt/app-root/bin/python3*

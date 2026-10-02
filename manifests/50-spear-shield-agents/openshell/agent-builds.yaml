@@ -1,0 +1,66 @@
+# ImageStream + BuildConfig per agent, same binary docker strategy shape
+# as the reference's own agent-builds.yaml, built with
+# `oc start-build <name> --from-dir=agents --wait -n spear-shield-agents`
+# so the resulting image lands in this cluster's own internal registry,
+# where openshell's own k8s driver can actually pull it. a locally built
+# docker image on a laptop has no path into this cluster's pods, this
+# step is not optional.
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: spear-coordinator-agent
+  namespace: spear-shield-agents
+  labels:
+    app: spear-coordinator-agent
+spec: {}
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: spear-coordinator-agent
+  namespace: spear-shield-agents
+  labels:
+    app: spear-coordinator-agent
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile.spear-coordinator-agent
+  output:
+    to:
+      kind: ImageStreamTag
+      name: spear-coordinator-agent:latest
+  triggers: []
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: spear-retrieval-agent
+  namespace: spear-shield-agents
+  labels:
+    app: spear-retrieval-agent
+spec: {}
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: spear-retrieval-agent
+  namespace: spear-shield-agents
+  labels:
+    app: spear-retrieval-agent
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile.spear-retrieval-agent
+  output:
+    to:
+      kind: ImageStreamTag
+      name: spear-retrieval-agent:latest
+  triggers: []

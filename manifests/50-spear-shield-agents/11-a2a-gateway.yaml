@@ -1,0 +1,128 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: spear-shield-a2a-gateway
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  # same gatewayClassName as 05-gateway.yaml's own mcp gateway
+  gatewayClassName: istio
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-retrieval-a2a-gateway
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  selector:
+    gateway.networking.k8s.io/gateway-name: spear-shield-a2a-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+# openshell service expose publishes the retrieval agent's a2a listener
+# through the second, independent spear-shield-openshell gateway relay
+# (confirmed live this session: a plain ClusterIP hit at the sandbox's
+# own pod ip dies on the supervisor sidecar's nftables skuid gate, same
+# finding the reference project already documented for its own
+# specialist sandbox). this ExternalName lets the a2a HTTPRoute live in
+# spear-shield-agents while its real backend is this project's own
+# openshell gateway service, not agent-pack's.
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-shield-openshell-a2a-backend
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  type: ExternalName
+  externalName: spear-shield-openshell.spear-shield-openshell.svc.cluster.local
+  ports:
+    - name: http
+      port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: spear-retrieval-a2a
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: spear-shield-a2a-gateway
+      namespace: spear-shield-agents
+      sectionName: http
+  hostnames:
+    - spear-retrieval-a2a-gateway.spear-shield-agents.svc.cluster.local
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        # host must match the exact string openshell service expose
+        # prints (workspace--sandbox--service.openshell.localhost), the
+        # retrieval agent sandbox is named spear-retrieval (19 char
+        # sandbox name limit, confirmed live), exposed as service name
+        # "a2a" under workspace "default"
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: Host
+                value: default--spear-retrieval--a2a.openshell.localhost
+      backendRefs:
+        - name: spear-shield-openshell-a2a-backend
+          port: 8080
+---
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: spear-retrieval-a2a-auth
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: spear-shield-a2a-gateway
+    sectionName: http
+  # authorino accepts the request if either issuer validates, same
+  # dual path shape as the reference's own specialist-a2a-auth: a
+  # keycloak jwt for spear-coordinator-workload's own client credentials
+  # grant (works today) or a spire issued jwt-svid asserted straight
+  # from the coordinator sandbox's own token_grant provider (the real
+  # path this project actually wants, confirmed live this session that
+  # the realm's federated-jwt client authenticator is wired up, not yet
+  # confirmed end to end against this specific authpolicy)
+  rules:
+    authentication:
+      spear-shield-keycloak:
+        jwt:
+          issuerUrl: https://sso.apps.cluster-rf7lv.dyn.redhatworkshops.io/realms/spear-shield-agents
+      spear-shield-spire:
+        jwt:
+          issuerUrl: https://spire-oidc.apps.cluster-rf7lv.dyn.redhatworkshops.io
+    response:
+      unauthenticated:
+        code: 401
+        headers:
+          WWW-Authenticate:
+            value: Bearer
+        body:
+          value: '{"error":"unauthorized","message":"retrieval agent a2a route requires a bearer token"}'

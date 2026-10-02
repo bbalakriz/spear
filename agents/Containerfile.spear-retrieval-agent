@@ -1,0 +1,35 @@
+# spear-retrieval-agent for openshell sandboxes, kata isolated per
+# PHASE2_PLAN.md section 7, same base image and iproute/nftables
+# requirement as Containerfile.spear-coordinator-agent, see that file's
+# own comment for why those packages are not optional here.
+#
+# build in cluster:
+#   oc start-build spear-retrieval-agent --from-dir=agents --wait -n spear-shield-agents
+
+FROM registry.access.redhat.com/ubi9/python-312:latest
+
+USER 0
+
+RUN dnf install -y --nodocs iproute nftables && dnf clean all && rm -rf /var/cache/dnf
+
+RUN install -d -o 1001 -g 0 -m 775 /sandbox
+WORKDIR /sandbox
+
+COPY spear-retrieval-agent/requirements.txt /sandbox/requirements.txt
+RUN pip install --no-cache-dir -r /sandbox/requirements.txt
+
+USER 1001
+
+COPY --chown=1001:0 _shared/a2a_server.py /sandbox/a2a_server.py
+COPY --chown=1001:0 _shared/http_client.py /sandbox/http_client.py
+COPY --chown=1001:0 spear-retrieval-agent/rag_query.py /sandbox/rag_query.py
+COPY --chown=1001:0 spear-retrieval-agent/rag_query_server.py /sandbox/rag_query_server.py
+COPY --chown=1001:0 spear-retrieval-agent/main.py /sandbox/main.py
+
+ENV AGENT_PORT=8080 \
+    PYTHONPATH=/sandbox \
+    PATH="/opt/app-root/bin:${PATH}"
+
+EXPOSE 8080
+
+CMD ["python3", "/sandbox/main.py"]

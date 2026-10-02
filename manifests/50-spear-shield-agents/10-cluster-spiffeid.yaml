@@ -1,0 +1,58 @@
+# workload identity for this project's own two sandboxed agents, section 2
+# and section 7. not a second spire install, the one already live on this
+# cluster (installed by the reference project, see PHASE2_PLAN.md's
+# revised naming table note) is a single cluster wide singleton, this just
+# adds a second ClusterSPIFFEID selecting this project's own pods by
+# namespace, same pattern as the reference's own agent-pack-sandboxes.
+#
+# className is pinned the same way the reference's own comment explains:
+# the controller-manager-config configmap only renders ClusterSPIFFEID
+# objects carrying this exact className into real registration entries,
+# one silently never fires without it, confirmed against that comment,
+# not independently rediscovered here.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: spear-shield-agents-sandboxes
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  className: zero-trust-workload-identity-manager-spire
+  # trust domain is the cluster's real one, agent-pack.internal, not this
+  # project's own, see the naming table note above, real isolation comes
+  # from the ns/spear-shield-agents path segment below, which spire's own
+  # k8s workload attestation (namespace + service account + pod label)
+  # actually enforces
+  # templated on agents.x-k8s.io/sandbox-name-hash, not the app label,
+  # corrected after live verification: the --label app=... flag on
+  # openshell sandbox create does not become a real kubernetes pod
+  # label at all, the actual pod only carries openshell's own
+  # agents.x-k8s.io/sandbox-name-hash, openshell.ai/managed-by, and
+  # openshell.ai/sandbox-id labels, confirmed by reading the live pod's
+  # own labels directly, not assumed from the cli's own flag name. the
+  # hash is a deterministic function of the sandbox name, not a
+  # per-create random id, confirmed by recreating the same named
+  # sandbox twice and seeing the identical hash both times
+  spiffeIDTemplate: "spiffe://agent-pack.internal/ns/{{ .PodMeta.Namespace }}/sandbox/{{ index .PodMeta.Labels \"agents.x-k8s.io/sandbox-name-hash\" }}"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: spear-shield-agents
+  podSelector:
+    matchExpressions:
+      # only the coordinator needs a spire issued identity at all: it is
+      # the only one of the two that makes an outbound spiffe
+      # authenticated call (token_grant, to the retrieval agent's a2a
+      # gateway), the retrieval agent only ever receives inbound calls
+      # authenticated by the coordinator's own token, and forwards the
+      # real end user's own jwt outbound for its own mcp calls, not a
+      # spiffe derived one of its own
+      - key: agents.x-k8s.io/sandbox-name-hash
+        operator: In
+        values:
+          # the real, live observed hash for sandbox name
+          # "spear-coordinator", confirmed stable across recreates
+          - abf32a96
+  workloadSelectorTemplates:
+    - "k8s:ns:{{ .PodMeta.Namespace }}"
+    - "k8s:sa:{{ .PodSpec.ServiceAccountName }}"
+    - "k8s:pod-label:agents.x-k8s.io/sandbox-name-hash:{{ index .PodMeta.Labels \"agents.x-k8s.io/sandbox-name-hash\" }}"

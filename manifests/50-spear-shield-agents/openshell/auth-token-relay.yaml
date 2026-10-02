@@ -1,0 +1,93 @@
+# plain http to https bridge, same shape and same reason as the
+# reference's own manifests/20-security/05-auth-token-relay.yaml: the
+# openshell sandbox network policy's rest protocol handler only bridges
+# plain http, so the sandbox supervisor's own token_grant provider
+# cannot reach keycloak's real https endpoint directly from inside a
+# sandboxed coordinator pod, this relay runs outside any sandbox, in an
+# ordinary unconfined pod, and the sandbox policy allowlists this
+# relay's plain http endpoint instead.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spear-shield-auth-token-relay
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spear-shield-auth-token-relay
+  template:
+    metadata:
+      labels:
+        app: spear-shield-auth-token-relay
+    spec:
+      containers:
+        - name: relay
+          image: registry.access.redhat.com/ubi9/python-312:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: TARGET
+              value: https://sso.apps.cluster-rf7lv.dyn.redhatworkshops.io
+          command:
+            - python3
+            - -c
+            - |
+              import os
+              import ssl
+              import urllib.request
+              from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+              target = os.environ["TARGET"].rstrip("/")
+              context = ssl._create_unverified_context()
+
+              class Handler(BaseHTTPRequestHandler):
+                  def do_GET(self) -> None:
+                      self._relay("GET")
+
+                  def do_POST(self) -> None:
+                      self._relay("POST")
+
+                  def _relay(self, method: str) -> None:
+                      length = int(self.headers.get("content-length", "0"))
+                      body = self.rfile.read(length) if length else None
+                      req = urllib.request.Request(f"{target}{self.path}", data=body, method=method)
+                      for key, value in self.headers.items():
+                          if key.lower() != "host":
+                              req.add_header(key, value)
+                      try:
+                          with urllib.request.urlopen(req, timeout=30, context=context) as resp:
+                              payload = resp.read()
+                              self.send_response(resp.status)
+                              for key, value in resp.headers.items():
+                                  if key.lower() not in ("transfer-encoding", "connection"):
+                                      self.send_header(key, value)
+                              self.end_headers()
+                              if payload:
+                                  self.wfile.write(payload)
+                      except urllib.error.HTTPError as exc:
+                          payload = exc.read()
+                          self.send_response(exc.code)
+                          self.end_headers()
+                          if payload:
+                              self.wfile.write(payload)
+
+              ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-shield-auth-token
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  selector:
+    app: spear-shield-auth-token-relay
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

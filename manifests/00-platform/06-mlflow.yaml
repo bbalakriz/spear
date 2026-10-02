@@ -1,0 +1,69 @@
+# the mlflow instance every ingestion pipeline run logs its report artifact
+# to (architecture.html's phase 3 mlflow, reused here rather than building a
+# second audit backbone).
+#
+# confirmed live 2026-09-25, contrary to what the CRD's namespaced scope
+# suggests: this operator only ever manages a single, cluster wide instance
+# named exactly "mlflow" (apply with any other name and it is rejected,
+# "MLflow resource name must be 'mlflow'"), and its actual workloads
+# (migration job, server deployment) always land in
+# redhat-ods-applications regardless of what namespace the cr itself is
+# created in, matching the "OpenShift Self Managed Services" section the
+# mlflowoperator cr's own spec.sectionTitle places it under, one shared
+# instance for the whole platform, the same pattern as the pre existing
+# odh-dashboard-mlflow-ui service. so unlike everything else phase 1 owns,
+# this cr and its secrets live in redhat-ods-applications on purpose, not
+# rag-phase1, scripts/04-install-mlflow.sh checks before creating exactly
+# like 00-install-platform.sh already does for the shared
+# odh-dashboard-config flags.
+#
+# backendStoreUriFrom points at mlflow-backend-conn (generated once by
+# scripts/04-install-mlflow.sh, a full postgres dsn including the password,
+# kept out of this spec on purpose since spec.backendStoreUri would put the
+# password in plain sight on `oc get mlflow -o yaml`), pointed at a
+# database on rag-phase1's own pgvector instance since no shared postgres
+# exists on this cluster. artifacts land in rag-phase1's
+# dsp-pipeline-artifacts minio bucket under an mlflow/ prefix, credentials
+# synced into redhat-ods-applications as mlflow-s3-creds since the pod
+# reading them runs there, not in rag-phase1.
+#
+# no route/httproute authored here: the mlflowoperator's spec.gatewayName
+# (data-science-gateway, confirmed live) means the operator exposes this
+# itself, readable off status.url once ready.
+#
+# workspaceLabelSelector: confirmed live 2026-09-25 that this build uses a
+# genuinely custom multi tenant layer on top of upstream mlflow
+# (KubernetesWorkspaceProvider, server-info reports workspaces_enabled:
+# true), every api call 400s with "Workspace context is required" until a
+# namespace matches this selector and is passed as the workspace. any
+# namespace carrying rag-phase1.io/mlflow-workspace: "true" becomes a
+# selectable workspace, rag-phase1 itself is labeled this way by
+# scripts/04-install-mlflow.sh.
+apiVersion: mlflow.opendatahub.io/v1
+kind: MLflow
+metadata:
+  name: mlflow
+  namespace: redhat-ods-applications
+spec:
+  workspaceLabelSelector:
+    matchLabels:
+      rag-phase1.io/mlflow-workspace: "true"
+  backendStoreUriFrom:
+    name: mlflow-backend-conn
+    key: uri
+  defaultArtifactRoot: s3://dsp-pipeline-artifacts/mlflow
+  env:
+    - name: MLFLOW_S3_ENDPOINT_URL
+      value: http://minio.minio.svc.cluster.local:9000
+    - name: AWS_DEFAULT_REGION
+      value: us-east-1
+    - name: AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: mlflow-s3-creds
+          key: accesskey
+    - name: AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: mlflow-s3-creds
+          key: secretkey

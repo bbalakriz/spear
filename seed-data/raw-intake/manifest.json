@@ -1,0 +1,83 @@
+{
+  "batch_id": "seed-batch-001",
+  "documents": [
+    {
+      "doc_id": "POLICY-DG-042",
+      "title": "Enterprise Data Classification Policy",
+      "filename": "general_data_classification_policy.md",
+      "source": "internal",
+      "clearance_level": "general",
+      "dept": "data-governance",
+      "team": null,
+      "project_scope": "enterprise-wide",
+      "data_owner": "governance-team@corp.example",
+      "effective_date": "2026-01-15",
+      "review_date": "2027-01-15"
+    },
+    {
+      "doc_id": "POLICY-DG-055",
+      "title": "Data Classification Exception Handling Framework",
+      "filename": "exception_handling_framework.md",
+      "source": "internal",
+      "clearance_level": "restricted",
+      "dept": "data-governance",
+      "team": null,
+      "project_scope": "data-governance",
+      "data_owner": "governance-team@corp.example",
+      "effective_date": "2026-01-15",
+      "review_date": "2027-01-15"
+    },
+    {
+      "doc_id": "DG-RISK-v3",
+      "title": "Data Governance Risk Rating Framework",
+      "filename": "risk_rating_framework.md",
+      "source": "internal",
+      "clearance_level": "restricted",
+      "dept": "data-governance",
+      "team": null,
+      "project_scope": "data-governance",
+      "data_owner": "governance-team@corp.example",
+      "effective_date": "2025-11-01",
+      "review_date": "2026-11-01"
+    },
+    {
+      "doc_id": "ENG-ONBOARD-01",
+      "title": "Data Engineering Team Onboarding Guide",
+      "filename": "engineering_onboarding_guide.md",
+      "source": "internal",
+      "clearance_level": "general",
+      "dept": "engineering",
+      "team": "data-eng",
+      "project_scope": "data-eng-team",
+      "data_owner": "data-eng-lead@corp.example",
+      "effective_date": "2026-02-01",
+      "review_date": "2027-02-01"
+    },
+    {
+      "doc_id": "VENDOR-DPA-ACME-2025",
+      "title": "Data Processing Agreement Submission - Acme Corp (Vendor, Untrusted)",
+      "filename": "vendor_dpa_acme_corp.md",
+      "source": "external-vendor",
+      "clearance_level": "confidential",
+      "dept": "vendor-management",
+      "team": null,
+      "project_scope": "vendor-onboarding",
+      "data_owner": "vendor-management@corp.example",
+      "effective_date": "2025-09-20",
+      "review_date": "2025-10-20"
+    },
+    {
+      "doc_id": "DRAFT-RETENTION-01",
+      "title": "Draft Retention Note",
+      "filename": "draft_retention_note.md",
+      "source": "internal",
+      "clearance_level": "restricted",
+      "dept": null,
+      "team": "data-governance",
+      "project_scope": "data-governance",
+      "data_owner": null,
+      "effective_date": null,
+      "review_date": null
+    }
+  ]
+}

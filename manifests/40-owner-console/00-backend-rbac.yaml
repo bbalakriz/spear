@@ -1,0 +1,35 @@
+# backend for the phase1-ingestion-console ConsolePlugin's spec.proxy,
+# PHASE1_PLAN.md section 6. mirrors 00-platform/07-mlflow-pipeline-rbac.yaml's
+# grant exactly, same mlflow.kubeflow.org SubjectAccessReview mechanism,
+# scoped to get/list only, no create/update: this backend only ever
+# reads the report the ingestion pipeline already wrote, it never
+# recomputes or logs anything of its own.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: phase1-ingestion-console-backend
+  namespace: rag-phase1
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rag-phase1-owner-console-reader
+  namespace: rag-phase1
+rules:
+  - apiGroups: [mlflow.kubeflow.org]
+    resources: [experiments]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rag-phase1-owner-console-reader
+  namespace: rag-phase1
+subjects:
+  - kind: ServiceAccount
+    name: phase1-ingestion-console-backend
+    namespace: rag-phase1
+roleRef:
+  kind: Role
+  name: rag-phase1-owner-console-reader
+  apiGroup: rbac.authorization.k8s.io

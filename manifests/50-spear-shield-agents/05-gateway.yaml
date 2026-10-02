@@ -1,0 +1,46 @@
+# same two listener shape as the reference's own
+# manifests/10-agent-pack/02-mcp-gateway.yaml, own instance, own
+# namespace, agent-pack's gateway is not touched or shared, section 2.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: spear-shield-gateway
+  namespace: spear-shield-agents
+spec:
+  gatewayClassName: istio
+  listeners:
+    - name: mcp
+      hostname: MCP_PUBLIC_HOST_PLACEHOLDER
+      port: 8080
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: mcps
+      hostname: "*.mcp.local"
+      port: 8080
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPGatewayExtension
+metadata:
+  name: spear-shield-mcp
+  namespace: spear-shield-agents
+spec:
+  httpRouteManagement: Enabled
+  oauthProtectedResource:
+    authorizationServers:
+      - ISSUER_URL_PLACEHOLDER
+    resource: https://MCP_PUBLIC_HOST_PLACEHOLDER/mcp
+    scopesSupported:
+      - openid
+      - mcp:tools
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: spear-shield-gateway
+    namespace: spear-shield-agents
+    sectionName: mcp

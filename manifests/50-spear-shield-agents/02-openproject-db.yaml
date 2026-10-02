@@ -1,0 +1,102 @@
+# bala: openproject's own postgres, separate from pgvector in rag-phase1 and from
+# keycloak's own postgres, same plain Deployment plus PVC shape
+# manifests/00-platform/04-pgvector-postgres.yaml already uses in this repo.
+#
+# bala: openproject uses structure.sql which sets
+# transaction_timeout, a postgres 17+ only configuration parameter,
+# so we use rhel9/postgresql-18
+#
+# bala: spear-openproject-db-creds is generated once, out of band, same
+# generate-once-never-touch pattern pgvector-creds already uses
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spear-openproject-db-data
+  namespace: spear-shield-agents
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spear-openproject-db
+  namespace: spear-shield-agents
+  labels:
+    app: spear-openproject-db
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: spear-openproject-db
+  template:
+    metadata:
+      labels:
+        app: spear-openproject-db
+    spec:
+      containers:
+        - name: postgres
+          image: registry.redhat.io/rhel9/postgresql-18:latest
+          env:
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: spear-openproject-db-creds
+                  key: user
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: spear-openproject-db-creds
+                  key: password
+            - name: POSTGRESQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: spear-openproject-db-creds
+                  key: dbname
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRESQL_USER)", "-d", "$(POSTGRESQL_DATABASE)"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRESQL_USER)", "-d", "$(POSTGRESQL_DATABASE)"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: spear-openproject-db-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-openproject-db
+  namespace: spear-shield-agents
+  labels:
+    app: spear-openproject-db
+spec:
+  selector:
+    app: spear-openproject-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

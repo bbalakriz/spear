@@ -1,0 +1,53 @@
+# nemo guardrails config for internal documents, default policy on the
+# nemoguardrails cr in 03-nemoguardrails-cr.yaml. built in Presidio and
+# regex detectors only, no llm required, see
+# https://eformat.github.io/ralf-wiggum-rhoai-kitchen-sink/nemo-guardrails
+# module 2.
+#
+# design note on block vs mask: the documented "mask sensitive data on
+# input/output" flow only appears in the workshop wired to the
+# /v1/chat/completions path fronting a live model. our ingestion step calls
+# /v1/guardrail/checks instead, which is fully documented as block-only
+# (status success|blocked, activated_rails), so this config stays on the
+# documented "detect ... on input" / "regex check input" block flows.
+# scripts/10-install-guardrails.sh's ingestion caller treats a "blocked"
+# verdict plus activated_rails as the detection signal, and performs the
+# actual redact-and-continue itself, guardrails is the detector and audit
+# source of record here, not the transform engine, see PHASE1_PLAN.md
+# section 2.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: internal-docs-config
+  namespace: rag-phase1
+data:
+  config.yaml: |
+    rails:
+      config:
+        sensitive_data_detection:
+          input:
+            entities:
+              - EMAIL_ADDRESS
+              - PERSON
+              - CREDIT_CARD
+              - US_SSN
+        regex_detection:
+          input:
+            patterns:
+              # prompt injection / instruction override signatures. this list
+              # is the one thing PHASE1_PLAN.md section 2 flagged as needing
+              # a security team review pass before go live.
+              - "ignore\\s+(all\\s+)?previous\\s+instructions?"
+              - "system\\s+override"
+              - "you\\s+(now\\s+)?have\\s+elevated\\s+access"
+              - "disregard\\s+(all\\s+)?(prior|previous)\\s+(rules|restrictions|instructions)"
+              - "classify\\s+all\\s+data\\s+as\\s+public"
+              - "share\\s+(the\\s+)?full\\s+(customer\\s+)?database"
+              - "\\[\\s*system\\s*[:\\]]"
+            case_insensitive: true
+      input:
+        flows:
+          - detect sensitive data on input
+          - regex check input
+  rails.co: |
+    # built in rails only, no custom colang flows for the baseline policy

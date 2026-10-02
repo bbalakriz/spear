@@ -1,0 +1,82 @@
+# same two authpolicy shape as the reference's own
+# manifests/20-security/03-auth-policies.yaml, rebuilt against
+# spear-shield-gateway and the spear-shield-agents realm, own instance,
+# nothing shared with agent-pack, section 2.
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: spear-shield-gateway-auth
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: spear-shield-gateway
+    sectionName: mcp
+  defaults:
+    when:
+      - predicate: |
+          !request.path.contains('/.well-known/oauth-protected-resource')
+    rules:
+      authentication:
+        spear-shield-keycloak:
+          jwt:
+            issuerUrl: ISSUER_URL_PLACEHOLDER
+      response:
+        unauthenticated:
+          code: 401
+          headers:
+            WWW-Authenticate:
+              value: Bearer resource_metadata=https://MCP_PUBLIC_HOST_PLACEHOLDER/.well-known/oauth-protected-resource/mcp
+          body:
+            value: '{"error":"unauthorized","message":"mcp gateway requires a bearer token"}'
+---
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: spear-shield-gateway-tools-auth
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: spear-shield-gateway
+    sectionName: mcps
+  rules:
+    authentication:
+      spear-shield-keycloak:
+        jwt:
+          issuerUrl: ISSUER_URL_PLACEHOLDER
+    # tool level rbac, same mcp-gateway-guide pattern the reference uses:
+    # the caller's resource_access claim, keyed by the mcp server's
+    # registration namespace/name, must contain "tool:<name>" for the
+    # tool named in x-mcp-toolname. matches the two real roles already
+    # on the spear-shield-agents realm's spear-openproject-mcp resource
+    # client, section 6: tool:search_work_packages, tool:update_work_package
+    authorization:
+      tool-access-check:
+        when:
+          - predicate: "request.headers.exists(h, h == 'x-mcp-toolname')"
+          - predicate: "request.headers['x-mcp-method'] == 'tools/call'"
+        patternMatching:
+          patterns:
+            - predicate: |
+                ('tool:' + request.headers['x-mcp-toolname']) in (
+                  has(auth.identity.resource_access) &&
+                  auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername'])
+                    ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles
+                    : []
+                )
+    response:
+      unauthenticated:
+        code: 401
+        body:
+          value: '{"error":"unauthorized","message":"mcp backend hop requires a bearer token"}'
+      unauthorized:
+        body:
+          value: |
+            {"jsonrpc":"2.0","error":{"code":-32600,"message":"forbidden: insufficient permissions for this tool"}}

@@ -1,0 +1,153 @@
+# bala: self hosted openproject, the real work tracker spear-openproject-mcp wraps,
+# login is through openproject's own native login, the admin and both
+# personas already have native accounts and personal api tokens, nothing
+# here does oidc against the sso realm.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-openproject
+  namespace: spear-shield-agents
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spear-openproject
+  namespace: spear-shield-agents
+  labels:
+    app: spear-openproject
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: spear-openproject
+  template:
+    metadata:
+      labels:
+        app: spear-openproject
+    spec:
+      serviceAccountName: spear-openproject
+      containers:
+        - name: openproject
+          image: docker.io/openproject/openproject:17.9.1
+          env:
+            # bala:to recreate the admin account with the same known password on
+            # a fresh schema load below, no interactive forced reset
+            # wizard step needed
+            - name: OPENPROJECT_SEED_ADMIN_USER_USERNAME
+              value: admin
+            - name: OPENPROJECT_SEED_ADMIN_USER_MAIL
+              value: admin@example.net
+            - name: OPENPROJECT_SEED_ADMIN_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: spear-openproject-login-creds
+                  key: admin-password
+            - name: OPENPROJECT_SEED_ADMIN_USER_PASSWORD_RESET
+              value: "false"
+            - name: SECRET_KEY_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: spear-openproject-app-secrets
+                  key: secret_key_base
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: spear-openproject-db-creds
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: spear-openproject-db-creds
+                  key: password
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: spear-openproject-db-creds
+                  key: dbname
+            # no query params here, postgres readiness check
+            # rejects rails-only options like pool/encoding as invalid uri params
+            - name: DATABASE_URL
+              value: "postgres://$(DB_USER):$(DB_PASSWORD)@spear-openproject-db:5432/$(DB_NAME)"
+            - name: OPENPROJECT_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: spear-openproject-db-creds
+                  key: user
+            - name: OPENPROJECT_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: spear-openproject-db-creds
+                  key: password
+            - name: OPENPROJECT_DB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: spear-openproject-db-creds
+                  key: dbname
+            - name: OPENPROJECT_DB_HOST
+              value: spear-openproject-db
+            - name: OPENPROJECT_DB_PORT
+              value: "5432"
+            - name: OPENPROJECT_HOST__NAME
+              value: OPENPROJECT_HOST_PLACEHOLDER
+            - name: OPENPROJECT_HTTPS
+              value: "true"
+            - name: RAILS_MIN_THREADS
+              value: "4"
+            - name: RAILS_MAX_THREADS
+              value: "16"
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 120
+            periodSeconds: 15
+            failureThreshold: 20
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 180
+            periodSeconds: 30
+            failureThreshold: 10
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-openproject
+  namespace: spear-shield-agents
+spec:
+  selector:
+    app: spear-openproject
+  ports:
+    - name: internal-http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: spear-openproject
+  namespace: spear-shield-agents
+spec:
+  host: OPENPROJECT_HOST_PLACEHOLDER
+  to:
+    kind: Service
+    name: spear-openproject
+  port:
+    targetPort: internal-http
+  tls:
+    # bala: tls ends at the router, plain http to the pod, openproject itself
+    # has no tls listener
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

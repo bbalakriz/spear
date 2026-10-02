@@ -1,0 +1,116 @@
+# backend for the phase1-ingestion-console ConsolePlugin's spec.proxy,
+# PHASE1_PLAN.md section 6, plus the "trigger and business value" addendum.
+#
+# no longer a configmap mounted stdlib script: reading a completed autorag
+# run's per pattern scores needs a real signed s3 get (boto3), and triggering
+# kfp runs correctly needs the real kfp rest field names (not a hand rolled
+# json body), so this ships as a built image now, source lives in
+# owner-console-backend/ at the repo root, built and pushed the same way the
+# console plugin's own frontend image is (oc new-build/oc start-build
+# --from-dir, into this namespace's own internal registry image stream, see
+# PHASE1_PLAN.md).
+#
+# mlflow reads still use this pod's own service account token (unchanged
+# rbac, see 00-backend-rbac.yaml). anything that touches the kfp pipeline
+# server uses the signed in user's own forwarded token instead, since the
+# consoleplugin proxy alias is authorization: UserToken now, not None, see
+# charts/openshift-console-plugin/templates/consoleplugin.yaml. that keeps
+# this backend's own service account from ever gaining kfp trigger power
+# just by existing, only a real signed in user with real rbac on rag-phase1's
+# pipeline resources can actually trigger or inspect a run through it.
+#
+# MLFLOW_URL, DSPA_ROUTE, GUARDRAILS_ROUTE, MINIO_CONSOLE_URL and
+# RHOAI_DASHBOARD_URL are deliberately not set here: all five are openshift
+# route hostnames, unique per cluster, so baking one in would silently break
+# on any cluster other than the one this was first written against.
+# scripts/07-install-owner-console.sh resolves them live via
+# `oc get route`/`oc get mlflow` and injects them with `oc set env` after
+# this manifest is applied, safe to rerun.
+#
+# every pipeline/experiment name, bucket, secret name and autorag knob
+# server.py uses (RAG_WORKSPACE, AUTORAG_GENERATION_MODELS and so on) is
+# also an env var now, not a baked in constant, so this deployment can be
+# retuned with `oc set env` alone, no rebuild. see server.py's own module
+# level defaults for the full list and scripts/07-install-owner-console.sh
+# for where this project sets them explicitly.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phase1-ingestion-console-backend
+  namespace: rag-phase1
+  labels:
+    app: phase1-ingestion-console-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: phase1-ingestion-console-backend
+  template:
+    metadata:
+      labels:
+        app: phase1-ingestion-console-backend
+    spec:
+      serviceAccountName: phase1-ingestion-console-backend
+      containers:
+        - name: backend
+          image: image-registry.openshift-image-registry.svc:5000/rag-phase1/phase1-ingestion-console-backend:latest
+          env:
+            # read only use of the same shared minio credential every other
+            # pipeline component in this project already uses, see
+            # pipelines/phase1_ingestion/pipeline.py's _use_minio_creds. this
+            # backend only ever calls get_object/list_objects_v2 with it.
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-dsp-creds
+                  key: accesskey
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-dsp-creds
+                  key: secretkey
+          ports:
+            - containerPort: 8443
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "96Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/tls/private
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: phase1-ingestion-console-backend-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: phase1-ingestion-console-backend
+  namespace: rag-phase1
+  annotations:
+    service.alpha.openshift.io/serving-cert-secret-name: phase1-ingestion-console-backend-tls
+spec:
+  selector:
+    app: phase1-ingestion-console-backend
+  ports:
+    - port: 8443
+      targetPort: 8443

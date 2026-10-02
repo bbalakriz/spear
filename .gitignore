@@ -1,0 +1,9 @@
+.secrets-backup/
+*.dockerconfigjson
+*.md
+*.html
+*.rtf
+*.pptx
+.venv-kfp/
+.venv/
+venv/

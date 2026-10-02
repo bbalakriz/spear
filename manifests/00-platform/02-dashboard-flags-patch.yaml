@@ -1,0 +1,9 @@
+# merge patch applied to the cluster's single odh-dashboard-config by
+# scripts/00-install-platform.sh, not applied with a plain oc apply since
+# this cr is shared cluster state, see ensure_dashboard_flags in that
+# script for the check-before-patch logic. kept here as a readable record
+# of exactly what gets merged in.
+spec:
+  dashboardConfig:
+    genAiStudio: true
+    autorag: true

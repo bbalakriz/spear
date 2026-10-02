@@ -1,0 +1,27 @@
+[
+  {
+    "type": "console.navigation/section",
+    "properties": {
+      "id": "rag-phase1",
+      "name": "%plugin__phase1-ingestion-console~SpearShield%"
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/rag-ingestion",
+      "component": { "$codeRef": "KnowledgeBasePage" }
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "rag-ingestion",
+      "name": "%plugin__phase1-ingestion-console~Knowledge Base%",
+      "href": "/rag-ingestion",
+      "perspective": "admin",
+      "section": "rag-phase1"
+    }
+  }
+]

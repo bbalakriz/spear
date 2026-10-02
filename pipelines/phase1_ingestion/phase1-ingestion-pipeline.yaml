@@ -1,0 +1,815 @@
+# PIPELINE DEFINITION
+# Name: phase1-ingestion-pipeline
+# Description: docs -> abac validation gate -> nemo guardrails -> sdg hub eval dataset -> mlflow report
+# Inputs:
+#    artifact_bucket: str [Default: 'dsp-pipeline-artifacts']
+#    batch_id: str [Default: 'seed-batch-001']
+#    eval_prefix: str [Default: 'autorag-eval/']
+#    generation_model: str [Default: 'openai/publishers/prelude-maas/models/glm-53-flash']
+#    guardrails_route: str
+#    minio_endpoint: str [Default: 'minio.minio.svc.cluster.local:9000']
+#    mlflow_experiment_name: str [Default: 'phase1-ingestion']
+#    mlflow_url: str
+#    mlflow_workspace: str [Default: 'rag-phase1']
+#    ogx_base_url: str [Default: 'http://rag-phase1-ogx-service.rag-phase1.svc.cluster.local:8321']
+#    raw_bucket: str [Default: 'rag-documents']
+#    raw_prefix: str [Default: 'raw-intake/']
+#    sanitized_prefix: str [Default: 'sanitized/']
+components:
+  comp-generate-eval-dataset:
+    executorLabel: exec-generate-eval-dataset
+    inputDefinitions:
+      artifacts:
+        sanitize_report:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        valid_docs:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        batch_id:
+          parameterType: STRING
+        bucket:
+          parameterType: STRING
+        eval_prefix:
+          parameterType: STRING
+        generation_model:
+          parameterType: STRING
+        minio_endpoint:
+          parameterType: STRING
+        ogx_base_url:
+          parameterType: STRING
+        sanitized_prefix:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        eval_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        eval_dataset_key:
+          parameterType: STRING
+        qa_pairs_created:
+          parameterType: NUMBER_INTEGER
+  comp-list-intake-documents:
+    executorLabel: exec-list-intake-documents
+    inputDefinitions:
+      parameters:
+        bucket:
+          parameterType: STRING
+        minio_endpoint:
+          parameterType: STRING
+        prefix:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        quarantined_docs:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        valid_docs:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        quarantined_count:
+          parameterType: NUMBER_INTEGER
+        valid_count:
+          parameterType: NUMBER_INTEGER
+  comp-log-ingestion-report:
+    executorLabel: exec-log-ingestion-report
+    inputDefinitions:
+      artifacts:
+        eval_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        quarantined_docs:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        sanitize_report:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        valid_docs:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        artifact_bucket:
+          parameterType: STRING
+        batch_id:
+          parameterType: STRING
+        blocked_count:
+          parameterType: NUMBER_INTEGER
+        eval_dataset_key:
+          parameterType: STRING
+        minio_endpoint:
+          parameterType: STRING
+        mlflow_experiment_name:
+          parameterType: STRING
+        mlflow_url:
+          parameterType: STRING
+        mlflow_workspace:
+          parameterType: STRING
+        passed_count:
+          parameterType: NUMBER_INTEGER
+        qa_pairs_created:
+          parameterType: NUMBER_INTEGER
+        quarantined_count:
+          parameterType: NUMBER_INTEGER
+        valid_count:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-sanitize-documents:
+    executorLabel: exec-sanitize-documents
+    inputDefinitions:
+      artifacts:
+        valid_docs:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        bucket:
+          parameterType: STRING
+        guardrails_route:
+          parameterType: STRING
+        minio_endpoint:
+          parameterType: STRING
+        raw_prefix:
+          parameterType: STRING
+        sanitized_prefix:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        sanitize_report:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        blocked_count:
+          parameterType: NUMBER_INTEGER
+        passed_count:
+          parameterType: NUMBER_INTEGER
+deploymentSpec:
+  executors:
+    exec-generate-eval-dataset:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - generate_eval_dataset
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'boto3==1.35.99'\
+          \ 'sdg_hub==0.9.4' 'datasets>=4.0.0'  &&  python3 -m pip install --quiet\
+          \ --no-warn-script-location 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef generate_eval_dataset(\n    minio_endpoint: str,\n    bucket:\
+          \ str,\n    sanitized_prefix: str,\n    eval_prefix: str,\n    batch_id:\
+          \ str,\n    ogx_base_url: str,\n    generation_model: str,\n    valid_docs:\
+          \ dsl.Input[dsl.Dataset],\n    sanitize_report: dsl.Input[dsl.Dataset],\n\
+          \    eval_dataset: dsl.Output[dsl.Dataset],\n) -> NamedTuple(\"Outputs\"\
+          , [(\"qa_pairs_created\", int), (\"eval_dataset_key\", str)]):\n    \"\"\
+          \"PHASE1_PLAN.md section 3, step 3: real sdg hub eval dataset\n    generation,\
+          \ replacing the old autorag_status_stub. uses sdg hub's\n    built in \"\
+          RAG Evaluation Dataset\" flow (registry id loud-dawn-245,\n    required\
+          \ columns document + document_outline, output columns\n    question/response/ground_truth_context)\
+          \ against every document that\n    passed guardrails sanitization, one document\
+          \ per row so each\n    generated question can still be traced back to the\
+          \ doc_id it came\n    from.\n\n    document_outline is not a separate authored\
+          \ field anywhere upstream,\n    so this uses each document's manifest title\
+          \ as a lightweight stand\n    in, honest simplification, not sdg hub's fault.\n\
+          \n    talks to rag-phase1-ogx over its in cluster service url. one real,\n\
+          \    empirically confirmed gotcha: sdg hub calls litellm's `openai/`\n \
+          \   custom api_base provider routing, which strips exactly one leading\n\
+          \    path segment (up to the first '/') before sending the model field\n\
+          \    to ogx, so the model string passed in here always needs one extra\n\
+          \    leading \"openai/\" over whatever id ogx itself expects. ogx's own\n\
+          \    foundation model id for glm-53-flash is\n    \"openai/publishers/prelude-maas/models/glm-53-flash\"\
+          \ (the long form\n    is maas's own body based routing id, see\n    pipelines/phase1_autorag/run_autorag.py\
+          \ and PHASE1_PLAN.md for why),\n    so this needs a double prefixed\n  \
+          \  \"openai/openai/publishers/prelude-maas/models/glm-53-flash\" to\n  \
+          \  survive the strip.\n\n    writes the AutoRAG test-data json schema\n\
+          \    (question/correct_answers/correct_answer_document_ids) both as this\n\
+          \    step's own kfp artifact and to minio under eval_prefix, so\n    pipelines/phase1_autorag/run_autorag.py\
+          \ can point the real AutoRAG\n    kfp pipeline's test_data_key straight\
+          \ at it.\n    \"\"\"\n    import json\n    import os\n\n    import boto3\n\
+          \    from datasets import Dataset\n    from sdg_hub import Flow, FlowRegistry\n\
+          \n    s3 = boto3.client(\n        \"s3\",\n        endpoint_url=f\"http://{minio_endpoint}\"\
+          ,\n        aws_access_key_id=os.environ[\"MINIO_ACCESS_KEY\"],\n       \
+          \ aws_secret_access_key=os.environ[\"MINIO_SECRET_KEY\"],\n    )\n\n   \
+          \ with open(valid_docs.path) as f:\n        docs_by_id = {d[\"doc_id\"]:\
+          \ d for d in json.load(f)}\n    with open(sanitize_report.path) as f:\n\
+          \        report = json.load(f)\n\n    sanitized_docs = []\n    for row in\
+          \ report:\n        if row[\"verdict\"] != \"success\":\n            continue\n\
+          \        doc = docs_by_id[row[\"doc_id\"]]\n        content = s3.get_object(\n\
+          \            Bucket=bucket, Key=f\"{sanitized_prefix}{row['filename']}\"\
+          \n        )[\"Body\"].read().decode(\"utf-8\")\n        sanitized_docs.append({\n\
+          \            \"doc_id\": doc[\"doc_id\"],\n            # ai4rag's own docling\
+          \ chunker sets each retrieved chunk's\n            # document_id metadata\
+          \ to the raw filename (doc.name), never\n            # our abac manifest's\
+          \ doc_id. correct_answer_document_ids\n            # has to be written in\
+          \ that same namespace or\n            # context_correctness is deterministically\
+          \ 0 regardless of\n            # retrieval quality, confirmed by reading\n\
+          \            # ai4rag/rag/chunking/docling_chunker.py and\n            #\
+          \ ai4rag/core/experiment/utils.py directly out of the\n            # odh-autorag-rhel9\
+          \ image.\n            \"filename\": row[\"filename\"],\n            \"document\"\
+          : content,\n            \"document_outline\": doc.get(\"title\", doc[\"\
+          doc_id\"]),\n        })\n\n    eval_rows = []\n    if not sanitized_docs:\n\
+          \        print(\"no sanitized documents available, writing an empty eval\
+          \ dataset\")\n    else:\n        from sdg_hub.core.utils.error_handling\
+          \ import EmptyDatasetError\n\n        FlowRegistry.discover_flows()\n  \
+          \      flow_path = FlowRegistry.get_flow_path_safe(\"loud-dawn-245\")\n\
+          \        flow = Flow.from_yaml(flow_path)\n        flow.set_model_config(\n\
+          \            model=f\"openai/{generation_model}\",\n            api_base=f\"\
+          {ogx_base_url}/v1\",\n            api_key=os.environ[\"OGX_API_KEY\"],\n\
+          \        )\n\n        ds = Dataset.from_dict({\n            \"doc_id\":\
+          \ [d[\"doc_id\"] for d in sanitized_docs],\n            \"document\": [d[\"\
+          document\"] for d in sanitized_docs],\n            \"document_outline\"\
+          : [d[\"document_outline\"] for d in sanitized_docs],\n        })\n\n   \
+          \     # the flow's own last stage (filter_ungrounded) is a real quality\n\
+          \        # gate: it drops any row whose critic score judged the generated\n\
+          \        # answer as not grounded in the context. on a small batch that\n\
+          \        # can legitimately empty the whole dataset out, sdg hub raises\n\
+          \        # EmptyDatasetError rather than returning zero rows. a couple of\n\
+          \        # retries absorb ordinary llm sampling variance (confirmed live:\n\
+          \        # the exact same single-document flow succeeded cleanly in an\n\
+          \        # earlier standalone run), if every attempt still comes back\n\
+          \        # empty this is reported as a real zero, never faked, not a\n \
+          \       # pipeline crash.\n        result = None\n        attempts = 3\n\
+          \        for attempt in range(1, attempts + 1):\n            try:\n    \
+          \            result = flow.generate(ds, max_concurrency=4)\n           \
+          \     break\n            except EmptyDatasetError:\n                print(f\"\
+          attempt {attempt}/{attempts}: every row failed sdg hub's groundedness filter\"\
+          )\n                if attempt == attempts:\n                    print(\"\
+          giving up after all retries, reporting zero qa pairs for this batch\")\n\
+          \n        if result is not None and len(result) > 0:\n            result_cols\
+          \ = result.column_names if hasattr(result, \"column_names\") else result.columns.tolist()\n\
+          \            filename_by_doc_id = {d[\"doc_id\"]: d[\"filename\"] for d\
+          \ in sanitized_docs}\n            for idx in range(len(result)):\n     \
+          \           row = result[idx] if hasattr(result, \"__getitem__\") else result.iloc[idx].to_dict()\n\
+          \                doc_id = row[\"doc_id\"] if \"doc_id\" in result_cols else\
+          \ sanitized_docs[idx][\"doc_id\"]\n                eval_rows.append({\n\
+          \                    \"question\": row[\"question\"],\n                \
+          \    \"correct_answers\": [row[\"response\"]],\n                    # filename,\
+          \ not doc_id, see the comment above where\n                    # sanitized_docs\
+          \ is built\n                    \"correct_answer_document_ids\": [filename_by_doc_id[doc_id]],\n\
+          \                })\n\n    with open(eval_dataset.path, \"w\") as f:\n \
+          \       json.dump(eval_rows, f, indent=2)\n\n    eval_key = f\"{eval_prefix}{batch_id}_test_data.json\"\
+          \n    s3.put_object(\n        Bucket=bucket, Key=eval_key,\n        Body=json.dumps(eval_rows,\
+          \ indent=2).encode(\"utf-8\"),\n        ContentType=\"application/json\"\
+          ,\n    )\n    print(f\"wrote {len(eval_rows)} qa pairs to s3://{bucket}/{eval_key}\"\
+          )\n\n    outputs = NamedTuple(\"Outputs\", [(\"qa_pairs_created\", int),\
+          \ (\"eval_dataset_key\", str)])\n    return outputs(len(eval_rows), eval_key)\n\
+          \n"
+        image: registry.access.redhat.com/ubi9/python-311:latest
+    exec-list-intake-documents:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - list_intake_documents
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'boto3==1.35.99'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef list_intake_documents(\n    minio_endpoint: str,\n    bucket:\
+          \ str,\n    prefix: str,\n    valid_docs: dsl.Output[dsl.Dataset],\n   \
+          \ quarantined_docs: dsl.Output[dsl.Dataset],\n) -> NamedTuple(\"Outputs\"\
+          , [(\"valid_count\", int), (\"quarantined_count\", int)]):\n    \"\"\"reads\
+          \ the batch manifest and the actual objects under raw-intake/,\n    then\
+          \ applies the abac validation gate from PHASE1_PLAN.md section 4:\n    doc_id,\
+          \ title, source, clearance_level always required, dept or team\n    required\
+          \ once clearance_level isn't general, data_owner always\n    required. anything\
+          \ failing that, or missing its file in the bucket\n    entirely, gets quarantined\
+          \ with a reason rather than silently\n    defaulted open or hidden.\n  \
+          \  \"\"\"\n    import hashlib\n    import json\n    import os\n\n    import\
+          \ boto3\n\n    s3 = boto3.client(\n        \"s3\",\n        endpoint_url=f\"\
+          http://{minio_endpoint}\",\n        aws_access_key_id=os.environ[\"MINIO_ACCESS_KEY\"\
+          ],\n        aws_secret_access_key=os.environ[\"MINIO_SECRET_KEY\"],\n  \
+          \  )\n\n    manifest_key = f\"{prefix}manifest.json\"\n    manifest_obj\
+          \ = s3.get_object(Bucket=bucket, Key=manifest_key)\n    manifest = json.loads(manifest_obj[\"\
+          Body\"].read())\n\n    listed = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)\n\
+          \    present_files = {\n        obj[\"Key\"][len(prefix):] for obj in listed.get(\"\
+          Contents\", [])\n    } - {\"manifest.json\"}\n\n    valid, quarantined =\
+          \ [], []\n    for entry in manifest.get(\"documents\", []):\n        reasons\
+          \ = []\n        for field in (\"doc_id\", \"title\", \"source\", \"clearance_level\"\
+          ):\n            if not entry.get(field):\n                reasons.append(f\"\
+          missing required field '{field}'\")\n        clearance = entry.get(\"clearance_level\"\
+          )\n        if clearance and clearance != \"general\" and not (entry.get(\"\
+          dept\") or entry.get(\"team\")):\n            reasons.append(\"clearance_level\
+          \ is not general but neither dept nor team is set\")\n        if not entry.get(\"\
+          data_owner\"):\n            reasons.append(\"missing required field 'data_owner'\"\
+          )\n        filename = entry.get(\"filename\")\n        if not filename or\
+          \ filename not in present_files:\n            reasons.append(f\"file '{filename}'\
+          \ not found under {prefix} in bucket {bucket}\")\n\n        if reasons:\n\
+          \            quarantined.append({**entry, \"quarantine_reasons\": reasons})\n\
+          \            continue\n\n        content = s3.get_object(Bucket=bucket,\
+          \ Key=f\"{prefix}{filename}\")[\"Body\"].read()\n        entry_out = dict(entry)\n\
+          \        entry_out[\"content_sha256\"] = hashlib.sha256(content).hexdigest()\n\
+          \        valid.append(entry_out)\n\n    with open(valid_docs.path, \"w\"\
+          ) as f:\n        json.dump(valid, f, indent=2)\n    with open(quarantined_docs.path,\
+          \ \"w\") as f:\n        json.dump(quarantined, f, indent=2)\n\n    print(f\"\
+          valid: {len(valid)}, quarantined: {len(quarantined)}\")\n    for q in quarantined:\n\
+          \        print(f\"  quarantined {q.get('doc_id', '?')}: {q['quarantine_reasons']}\"\
+          )\n\n    outputs = NamedTuple(\"Outputs\", [(\"valid_count\", int), (\"\
+          quarantined_count\", int)])\n    return outputs(len(valid), len(quarantined))\n\
+          \n"
+        image: registry.access.redhat.com/ubi9/python-311:latest
+    exec-log-ingestion-report:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - log_ingestion_report
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'boto3==1.35.99'\
+          \ 'requests==2.32.3'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef log_ingestion_report(\n    mlflow_url: str,\n    mlflow_workspace:\
+          \ str,\n    mlflow_experiment_name: str,\n    batch_id: str,\n    minio_endpoint:\
+          \ str,\n    artifact_bucket: str,\n    valid_count: int,\n    quarantined_count:\
+          \ int,\n    passed_count: int,\n    blocked_count: int,\n    qa_pairs_created:\
+          \ int,\n    eval_dataset_key: str,\n    valid_docs: dsl.Input[dsl.Dataset],\n\
+          \    quarantined_docs: dsl.Input[dsl.Dataset],\n    sanitize_report: dsl.Input[dsl.Dataset],\n\
+          \    eval_dataset: dsl.Input[dsl.Dataset],\n) -> str:\n    \"\"\"PHASE1_PLAN.md\
+          \ section 3, step 8: one json artifact aggregating\n    every earlier step's\
+          \ real output, logged to the shared mlflow\n    instance under the rag-phase1\
+          \ workspace (X-MLflow-Workspace header,\n    see manifests/00-platform/06-mlflow.yaml\
+          \ for why that header is\n    required on this build). this is what the\
+          \ eventual console plugin\n    backend reads, nothing there should ever\
+          \ recompute anything this\n    step already produced.\n\n    uses raw rest\
+          \ calls plus a direct boto3 artifact write instead of the\n    mlflow client\
+          \ package: the client's http layer doesn't have a clean\n    way to attach\
+          \ the workspace header this build requires per request,\n    and we already\
+          \ have the minio credentials this run's artifact_uri\n    resolves into\
+          \ on this bucket, so writing directly there is simpler\n    than adding\
+          \ a whole client dependency for one file.\n    \"\"\"\n    import json\n\
+          \    import os\n    import time\n\n    import boto3\n    import requests\n\
+          \n    with open(valid_docs.path) as f:\n        valid = json.load(f)\n \
+          \   with open(quarantined_docs.path) as f:\n        quarantined = json.load(f)\n\
+          \    with open(sanitize_report.path) as f:\n        sanitize = json.load(f)\n\
+          \    with open(eval_dataset.path) as f:\n        eval_rows = json.load(f)\n\
+          \n    report = {\n        \"batch_id\": batch_id,\n        \"generated_at\"\
+          : time.strftime(\"%Y-%m-%dT%H:%M:%SZ\", time.gmtime()),\n        \"ingestion\"\
+          : {\n            \"documents_scanned\": valid_count + quarantined_count,\n\
+          \            \"documents_valid\": valid_count,\n            \"documents_quarantined\"\
+          : quarantined_count,\n            \"quarantined_detail\": quarantined,\n\
+          \        },\n        \"guardrails\": {\n            \"documents_sanitized\"\
+          : passed_count,\n            \"documents_blocked\": blocked_count,\n   \
+          \         \"audit\": sanitize,\n        },\n        \"abac_tagging\": {\n\
+          \            \"status\": \"pending\",\n            \"note\": (\n       \
+          \         \"this batch is not indexed into rag_chunks yet. indexing now\
+          \ \"\n                \"happens after a winning pattern is selected, see\
+          \ \"\n                \"pipelines/phase1_apply_pattern/pipeline.py, not\
+          \ as part of \"\n                \"ingestion. trigger an apply pattern run\
+          \ against this \"\n                \"batch's autorag run once it has a winner.\"\
+          \n            ),\n        },\n        \"sdg_hub_eval_dataset\": {\n    \
+          \        \"qa_pairs_created\": qa_pairs_created,\n            \"s3_key\"\
+          : eval_dataset_key,\n            \"sample\": eval_rows[:3],\n        },\n\
+          \        \"autorag_trigger\": (\n            \"not run from inside this\
+          \ pipeline, see \"\n            \"pipelines/phase1_autorag/run_autorag.py,\
+          \ which triggers the \"\n            \"real documents-rag-optimization-pipeline\
+          \ against this \"\n            \"batch's eval dataset separately\"\n   \
+          \     ),\n        \"valid_documents\": valid,\n    }\n\n    headers = {\"\
+          X-MLflow-Workspace\": mlflow_workspace, \"Content-Type\": \"application/json\"\
+          }\n    token_path = \"/var/run/secrets/kubernetes.io/serviceaccount/token\"\
+          \n    if os.path.exists(token_path):\n        with open(token_path) as f:\n\
+          \            headers[\"Authorization\"] = f\"Bearer {f.read().strip()}\"\
+          \n\n    search_resp = requests.post(\n        f\"{mlflow_url}/api/2.0/mlflow/experiments/search\"\
+          ,\n        headers=headers, json={\"max_results\": 100}, verify=False, timeout=30,\n\
+          \    )\n    print(f\"experiments/search: {search_resp.status_code} {search_resp.text}\"\
+          )\n    search = search_resp.json()\n    exp = next((e for e in search.get(\"\
+          experiments\", []) if e[\"name\"] == mlflow_experiment_name), None)\n  \
+          \  if exp is None:\n        create_resp = requests.post(\n            f\"\
+          {mlflow_url}/api/2.0/mlflow/experiments/create\",\n            headers=headers,\
+          \ json={\"name\": mlflow_experiment_name}, verify=False, timeout=30,\n \
+          \       )\n        print(f\"experiments/create: {create_resp.status_code}\
+          \ {create_resp.text}\")\n        exp = create_resp.json()\n        experiment_id\
+          \ = exp[\"experiment_id\"]\n    else:\n        experiment_id = exp[\"experiment_id\"\
+          ]\n\n    run = requests.post(\n        f\"{mlflow_url}/api/2.0/mlflow/runs/create\"\
+          ,\n        headers=headers,\n        json={\"experiment_id\": experiment_id,\
+          \ \"start_time\": int(time.time() * 1000),\n              \"tags\": [{\"\
+          key\": \"mlflow.runName\", \"value\": batch_id}]},\n        verify=False,\
+          \ timeout=30,\n    ).json()\n    run_id = run[\"run\"][\"info\"][\"run_id\"\
+          ]\n    artifact_uri = run[\"run\"][\"info\"][\"artifact_uri\"]\n\n    metrics_ts\
+          \ = int(time.time() * 1000)\n    requests.post(\n        f\"{mlflow_url}/api/2.0/mlflow/runs/log-batch\"\
+          ,\n        headers=headers,\n        json={\n            \"run_id\": run_id,\n\
+          \            \"params\": [{\"key\": \"batch_id\", \"value\": batch_id}],\n\
+          \            \"metrics\": [\n                {\"key\": \"documents_scanned\"\
+          , \"value\": valid_count + quarantined_count, \"timestamp\": metrics_ts},\n\
+          \                {\"key\": \"documents_quarantined\", \"value\": quarantined_count,\
+          \ \"timestamp\": metrics_ts},\n                {\"key\": \"documents_sanitized\"\
+          , \"value\": passed_count, \"timestamp\": metrics_ts},\n               \
+          \ {\"key\": \"documents_blocked\", \"value\": blocked_count, \"timestamp\"\
+          : metrics_ts},\n                {\"key\": \"eval_qa_pairs_created\", \"\
+          value\": qa_pairs_created, \"timestamp\": metrics_ts},\n            ],\n\
+          \        },\n        verify=False, timeout=30,\n    )\n\n    # artifact_uri\
+          \ looks like s3://<bucket>/<prefix...>, write the report\n    # straight\
+          \ there with the same credentials mlflow itself uses.\n    assert artifact_uri.startswith(\"\
+          s3://\"), artifact_uri\n    _, path = artifact_uri[len(\"s3://\"):].split(\"\
+          /\", 1)\n    s3 = boto3.client(\n        \"s3\",\n        endpoint_url=f\"\
+          http://{minio_endpoint}\",\n        aws_access_key_id=os.environ[\"MINIO_ACCESS_KEY\"\
+          ],\n        aws_secret_access_key=os.environ[\"MINIO_SECRET_KEY\"],\n  \
+          \  )\n    s3.put_object(\n        Bucket=artifact_bucket,\n        Key=f\"\
+          {path}/ingestion_report.json\",\n        Body=json.dumps(report, indent=2).encode(\"\
+          utf-8\"),\n        ContentType=\"application/json\",\n    )\n\n    requests.post(\n\
+          \        f\"{mlflow_url}/api/2.0/mlflow/runs/update\",\n        headers=headers,\n\
+          \        json={\"run_id\": run_id, \"status\": \"FINISHED\", \"end_time\"\
+          : int(time.time() * 1000)},\n        verify=False, timeout=30,\n    )\n\n\
+          \    print(f\"logged mlflow run {run_id} in experiment {mlflow_experiment_name}\
+          \ (workspace {mlflow_workspace})\")\n    return run_id\n\n"
+        image: registry.access.redhat.com/ubi9/python-311:latest
+    exec-sanitize-documents:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - sanitize_documents
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'boto3==1.35.99'\
+          \ 'requests==2.32.3'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef sanitize_documents(\n    minio_endpoint: str,\n    bucket: str,\n\
+          \    raw_prefix: str,\n    sanitized_prefix: str,\n    guardrails_route:\
+          \ str,\n    valid_docs: dsl.Input[dsl.Dataset],\n    sanitize_report: dsl.Output[dsl.Dataset],\n\
+          ) -> NamedTuple(\"Outputs\", [(\"passed_count\", int), (\"blocked_count\"\
+          , int)]):\n    \"\"\"calls the already deployed NemoGuardrails cr's /v1/guardrail/checks\n\
+          \    per document, picking internal-docs-config (the default, omit\n   \
+          \ config_id) or vendor-submission-config based on the manifest's\n    source\
+          \ field, exactly the config_id switch PHASE1_PLAN.md section 2\n    describes.\
+          \ documents that pass get copied to sanitized/, the one\n    thing autorag\
+          \ is ever allowed to sample from. the seeded vendor dpa\n    document with\
+          \ its embedded override attempt is expected to end up in\n    blocked, not\
+          \ sanitized/, that is this step working as designed, not\n    a failure.\n\
+          \n    auth: the pod's own projected service account token, the in cluster\n\
+          \    equivalent of `oc whoami -t`, works here because\n    manifests/20-guardrails/04-pipeline-rbac.yaml\
+          \ grants this pipeline's\n    service account get on exactly the one service\
+          \ the guardrails route's\n    kube-rbac-proxy checks for, confirmed by reading\
+          \ its config live.\n    \"\"\"\n    import json\n    import os\n\n    import\
+          \ boto3\n    import requests\n\n    s3 = boto3.client(\n        \"s3\",\n\
+          \        endpoint_url=f\"http://{minio_endpoint}\",\n        aws_access_key_id=os.environ[\"\
+          MINIO_ACCESS_KEY\"],\n        aws_secret_access_key=os.environ[\"MINIO_SECRET_KEY\"\
+          ],\n    )\n    with open(\"/var/run/secrets/kubernetes.io/serviceaccount/token\"\
+          ) as f:\n        sa_token = f.read().strip()\n\n    with open(valid_docs.path)\
+          \ as f:\n        docs = json.load(f)\n\n    report = []\n    passed = blocked\
+          \ = 0\n    for doc in docs:\n        filename = doc[\"filename\"]\n    \
+          \    content = s3.get_object(Bucket=bucket, Key=f\"{raw_prefix}{filename}\"\
+          )[\"Body\"].read().decode(\"utf-8\")\n        config_id = \"vendor-submission-config\"\
+          \ if doc.get(\"source\") == \"external-vendor\" else None\n\n        body\
+          \ = {\"model\": \"test\", \"messages\": [{\"role\": \"user\", \"content\"\
+          : content}]}\n        if config_id:\n            body[\"guardrails\"] =\
+          \ {\"config_id\": config_id}\n\n        resp = requests.post(\n        \
+          \    f\"{guardrails_route}/v1/guardrail/checks\",\n            headers={\"\
+          Authorization\": f\"Bearer {sa_token}\", \"Content-Type\": \"application/json\"\
+          },\n            json=body,\n            verify=False,\n            timeout=30,\n\
+          \        )\n        verdict = \"error\"\n        activated_rails = []\n\
+          \        try:\n            data = resp.json()\n            verdict = data.get(\"\
+          status\", \"error\")\n            activated_rails = data.get(\"rails_status\"\
+          , data.get(\"activated_rails\", []))\n        except ValueError:\n     \
+          \       pass\n\n        row = {\n            \"doc_id\": doc[\"doc_id\"\
+          ],\n            \"filename\": filename,\n            \"source\": doc.get(\"\
+          source\"),\n            \"config_id\": config_id or \"internal-docs-config\"\
+          ,\n            \"http_status\": resp.status_code,\n            \"verdict\"\
+          : verdict,\n            \"activated_rails\": activated_rails,\n        }\n\
+          \        if verdict == \"success\":\n            s3.put_object(Bucket=bucket,\
+          \ Key=f\"{sanitized_prefix}{filename}\", Body=content.encode(\"utf-8\"))\n\
+          \            passed += 1\n        else:\n            blocked += 1\n    \
+          \    report.append(row)\n        print(f\"  {doc['doc_id']}: {verdict} (config_id={row['config_id']})\"\
+          )\n\n    with open(sanitize_report.path, \"w\") as f:\n        json.dump(report,\
+          \ f, indent=2)\n\n    outputs = NamedTuple(\"Outputs\", [(\"passed_count\"\
+          , int), (\"blocked_count\", int)])\n    return outputs(passed, blocked)\n\
+          \n"
+        image: registry.access.redhat.com/ubi9/python-311:latest
+pipelineInfo:
+  description: docs -> abac validation gate -> nemo guardrails -> sdg hub eval dataset
+    -> mlflow report
+  name: phase1-ingestion-pipeline
+root:
+  dag:
+    tasks:
+      generate-eval-dataset:
+        cachingOptions: {}
+        componentRef:
+          name: comp-generate-eval-dataset
+        dependentTasks:
+        - list-intake-documents
+        - sanitize-documents
+        inputs:
+          artifacts:
+            sanitize_report:
+              taskOutputArtifact:
+                outputArtifactKey: sanitize_report
+                producerTask: sanitize-documents
+            valid_docs:
+              taskOutputArtifact:
+                outputArtifactKey: valid_docs
+                producerTask: list-intake-documents
+          parameters:
+            batch_id:
+              componentInputParameter: batch_id
+            bucket:
+              componentInputParameter: raw_bucket
+            eval_prefix:
+              componentInputParameter: eval_prefix
+            generation_model:
+              componentInputParameter: generation_model
+            minio_endpoint:
+              componentInputParameter: minio_endpoint
+            ogx_base_url:
+              componentInputParameter: ogx_base_url
+            sanitized_prefix:
+              componentInputParameter: sanitized_prefix
+        taskInfo:
+          name: generate-eval-dataset
+      list-intake-documents:
+        cachingOptions: {}
+        componentRef:
+          name: comp-list-intake-documents
+        inputs:
+          parameters:
+            bucket:
+              componentInputParameter: raw_bucket
+            minio_endpoint:
+              componentInputParameter: minio_endpoint
+            prefix:
+              componentInputParameter: raw_prefix
+        taskInfo:
+          name: list-intake-documents
+      log-ingestion-report:
+        cachingOptions: {}
+        componentRef:
+          name: comp-log-ingestion-report
+        dependentTasks:
+        - generate-eval-dataset
+        - list-intake-documents
+        - sanitize-documents
+        inputs:
+          artifacts:
+            eval_dataset:
+              taskOutputArtifact:
+                outputArtifactKey: eval_dataset
+                producerTask: generate-eval-dataset
+            quarantined_docs:
+              taskOutputArtifact:
+                outputArtifactKey: quarantined_docs
+                producerTask: list-intake-documents
+            sanitize_report:
+              taskOutputArtifact:
+                outputArtifactKey: sanitize_report
+                producerTask: sanitize-documents
+            valid_docs:
+              taskOutputArtifact:
+                outputArtifactKey: valid_docs
+                producerTask: list-intake-documents
+          parameters:
+            artifact_bucket:
+              componentInputParameter: artifact_bucket
+            batch_id:
+              componentInputParameter: batch_id
+            blocked_count:
+              taskOutputParameter:
+                outputParameterKey: blocked_count
+                producerTask: sanitize-documents
+            eval_dataset_key:
+              taskOutputParameter:
+                outputParameterKey: eval_dataset_key
+                producerTask: generate-eval-dataset
+            minio_endpoint:
+              componentInputParameter: minio_endpoint
+            mlflow_experiment_name:
+              componentInputParameter: mlflow_experiment_name
+            mlflow_url:
+              componentInputParameter: mlflow_url
+            mlflow_workspace:
+              componentInputParameter: mlflow_workspace
+            passed_count:
+              taskOutputParameter:
+                outputParameterKey: passed_count
+                producerTask: sanitize-documents
+            qa_pairs_created:
+              taskOutputParameter:
+                outputParameterKey: qa_pairs_created
+                producerTask: generate-eval-dataset
+            quarantined_count:
+              taskOutputParameter:
+                outputParameterKey: quarantined_count
+                producerTask: list-intake-documents
+            valid_count:
+              taskOutputParameter:
+                outputParameterKey: valid_count
+                producerTask: list-intake-documents
+        taskInfo:
+          name: log-ingestion-report
+      sanitize-documents:
+        cachingOptions: {}
+        componentRef:
+          name: comp-sanitize-documents
+        dependentTasks:
+        - list-intake-documents
+        inputs:
+          artifacts:
+            valid_docs:
+              taskOutputArtifact:
+                outputArtifactKey: valid_docs
+                producerTask: list-intake-documents
+          parameters:
+            bucket:
+              componentInputParameter: raw_bucket
+            guardrails_route:
+              componentInputParameter: guardrails_route
+            minio_endpoint:
+              componentInputParameter: minio_endpoint
+            raw_prefix:
+              componentInputParameter: raw_prefix
+            sanitized_prefix:
+              componentInputParameter: sanitized_prefix
+        taskInfo:
+          name: sanitize-documents
+  inputDefinitions:
+    parameters:
+      artifact_bucket:
+        defaultValue: dsp-pipeline-artifacts
+        isOptional: true
+        parameterType: STRING
+      batch_id:
+        defaultValue: seed-batch-001
+        isOptional: true
+        parameterType: STRING
+      eval_prefix:
+        defaultValue: autorag-eval/
+        isOptional: true
+        parameterType: STRING
+      generation_model:
+        defaultValue: openai/publishers/prelude-maas/models/glm-53-flash
+        isOptional: true
+        parameterType: STRING
+      guardrails_route:
+        parameterType: STRING
+      minio_endpoint:
+        defaultValue: minio.minio.svc.cluster.local:9000
+        isOptional: true
+        parameterType: STRING
+      mlflow_experiment_name:
+        defaultValue: phase1-ingestion
+        isOptional: true
+        parameterType: STRING
+      mlflow_url:
+        parameterType: STRING
+      mlflow_workspace:
+        defaultValue: rag-phase1
+        isOptional: true
+        parameterType: STRING
+      ogx_base_url:
+        defaultValue: http://rag-phase1-ogx-service.rag-phase1.svc.cluster.local:8321
+        isOptional: true
+        parameterType: STRING
+      raw_bucket:
+        defaultValue: rag-documents
+        isOptional: true
+        parameterType: STRING
+      raw_prefix:
+        defaultValue: raw-intake/
+        isOptional: true
+        parameterType: STRING
+      sanitized_prefix:
+        defaultValue: sanitized/
+        isOptional: true
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-generate-eval-dataset:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: MINIO_ACCESS_KEY
+              secretKey: accesskey
+            - envVar: MINIO_SECRET_KEY
+              secretKey: secretkey
+            optional: false
+            secretName: minio-dsp-creds
+            secretNameParameter:
+              runtimeValue:
+                constant: minio-dsp-creds
+          - keyToEnv:
+            - envVar: OGX_API_KEY
+              secretKey: apiKey
+            optional: false
+            secretName: ogx-glm-key
+            secretNameParameter:
+              runtimeValue:
+                constant: ogx-glm-key
+        exec-list-intake-documents:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: MINIO_ACCESS_KEY
+              secretKey: accesskey
+            - envVar: MINIO_SECRET_KEY
+              secretKey: secretkey
+            optional: false
+            secretName: minio-dsp-creds
+            secretNameParameter:
+              runtimeValue:
+                constant: minio-dsp-creds
+        exec-log-ingestion-report:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: MINIO_ACCESS_KEY
+              secretKey: accesskey
+            - envVar: MINIO_SECRET_KEY
+              secretKey: secretkey
+            optional: false
+            secretName: minio-dsp-creds
+            secretNameParameter:
+              runtimeValue:
+                constant: minio-dsp-creds
+        exec-sanitize-documents:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: MINIO_ACCESS_KEY
+              secretKey: accesskey
+            - envVar: MINIO_SECRET_KEY
+              secretKey: secretkey
+            optional: false
+            secretName: minio-dsp-creds
+            secretNameParameter:
+              runtimeValue:
+                constant: minio-dsp-creds

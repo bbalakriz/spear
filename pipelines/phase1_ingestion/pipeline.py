@@ -65,8 +65,9 @@ def list_intake_documents(
     then applies the abac validation gate from PHASE1_PLAN.md section 4:
     doc_id, title, source, clearance_level always required, dept or team
     required once clearance_level isn't general, data_owner always
-    required. anything failing that, or missing its file in the bucket
-    entirely, gets quarantined with a reason rather than silently
+    required. anything failing that, missing its file in the bucket
+    entirely, or sharing a doc_id with another entry in the same
+    manifest, gets quarantined with a reason rather than silently
     defaulted open or hidden.
     """
     import hashlib
@@ -91,12 +92,27 @@ def list_intake_documents(
         obj["Key"][len(prefix):] for obj in listed.get("Contents", [])
     } - {"manifest.json"}
 
+    # pre pass across the whole manifest before any per entry check, so a
+    # duplicate doc_id is caught even if every other field on both entries
+    # is otherwise perfectly valid. apply_winning_pattern deletes rag_chunks
+    # by doc_id before inserting, so two entries sharing one doc_id would
+    # otherwise silently let whichever gets processed last win with no
+    # trace, not something this pipeline should guess its way through
+    doc_id_counts = {}
+    for entry in manifest.get("documents", []):
+        doc_id = entry.get("doc_id")
+        if doc_id:
+            doc_id_counts[doc_id] = doc_id_counts.get(doc_id, 0) + 1
+
     valid, quarantined = [], []
     for entry in manifest.get("documents", []):
         reasons = []
         for field in ("doc_id", "title", "source", "clearance_level"):
             if not entry.get(field):
                 reasons.append(f"missing required field '{field}'")
+        doc_id = entry.get("doc_id")
+        if doc_id and doc_id_counts[doc_id] > 1:
+            reasons.append(f"doc_id '{doc_id}' appears {doc_id_counts[doc_id]} times in this manifest, quarantining all of them rather than guessing which one is correct")
         clearance = entry.get("clearance_level")
         if clearance and clearance != "general" and not (entry.get("dept") or entry.get("team")):
             reasons.append("clearance_level is not general but neither dept nor team is set")

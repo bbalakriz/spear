@@ -321,7 +321,8 @@ deploymentSpec:
           \ applies the abac validation gate from PHASE1_PLAN.md section 4:\n    doc_id,\
           \ title, source, clearance_level always required, dept or team\n    required\
           \ once clearance_level isn't general, data_owner always\n    required. anything\
-          \ failing that, or missing its file in the bucket\n    entirely, gets quarantined\
+          \ failing that, missing its file in the bucket\n    entirely, or sharing\
+          \ a doc_id with another entry in the same\n    manifest, gets quarantined\
           \ with a reason rather than silently\n    defaulted open or hidden.\n  \
           \  \"\"\"\n    import hashlib\n    import json\n    import os\n\n    import\
           \ boto3\n\n    s3 = boto3.client(\n        \"s3\",\n        endpoint_url=f\"\
@@ -331,16 +332,29 @@ deploymentSpec:
           \ = s3.get_object(Bucket=bucket, Key=manifest_key)\n    manifest = json.loads(manifest_obj[\"\
           Body\"].read())\n\n    listed = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)\n\
           \    present_files = {\n        obj[\"Key\"][len(prefix):] for obj in listed.get(\"\
-          Contents\", [])\n    } - {\"manifest.json\"}\n\n    valid, quarantined =\
-          \ [], []\n    for entry in manifest.get(\"documents\", []):\n        reasons\
-          \ = []\n        for field in (\"doc_id\", \"title\", \"source\", \"clearance_level\"\
+          Contents\", [])\n    } - {\"manifest.json\"}\n\n    # pre pass across the\
+          \ whole manifest before any per entry check, so a\n    # duplicate doc_id\
+          \ is caught even if every other field on both entries\n    # is otherwise\
+          \ perfectly valid. apply_winning_pattern deletes rag_chunks\n    # by doc_id\
+          \ before inserting, so two entries sharing one doc_id would\n    # otherwise\
+          \ silently let whichever gets processed last win with no\n    # trace, not\
+          \ something this pipeline should guess its way through\n    doc_id_counts\
+          \ = {}\n    for entry in manifest.get(\"documents\", []):\n        doc_id\
+          \ = entry.get(\"doc_id\")\n        if doc_id:\n            doc_id_counts[doc_id]\
+          \ = doc_id_counts.get(doc_id, 0) + 1\n\n    valid, quarantined = [], []\n\
+          \    for entry in manifest.get(\"documents\", []):\n        reasons = []\n\
+          \        for field in (\"doc_id\", \"title\", \"source\", \"clearance_level\"\
           ):\n            if not entry.get(field):\n                reasons.append(f\"\
-          missing required field '{field}'\")\n        clearance = entry.get(\"clearance_level\"\
-          )\n        if clearance and clearance != \"general\" and not (entry.get(\"\
-          dept\") or entry.get(\"team\")):\n            reasons.append(\"clearance_level\
-          \ is not general but neither dept nor team is set\")\n        if not entry.get(\"\
-          data_owner\"):\n            reasons.append(\"missing required field 'data_owner'\"\
-          )\n        filename = entry.get(\"filename\")\n        if not filename or\
+          missing required field '{field}'\")\n        doc_id = entry.get(\"doc_id\"\
+          )\n        if doc_id and doc_id_counts[doc_id] > 1:\n            reasons.append(f\"\
+          doc_id '{doc_id}' appears {doc_id_counts[doc_id]} times in this manifest,\
+          \ quarantining all of them rather than guessing which one is correct\")\n\
+          \        clearance = entry.get(\"clearance_level\")\n        if clearance\
+          \ and clearance != \"general\" and not (entry.get(\"dept\") or entry.get(\"\
+          team\")):\n            reasons.append(\"clearance_level is not general but\
+          \ neither dept nor team is set\")\n        if not entry.get(\"data_owner\"\
+          ):\n            reasons.append(\"missing required field 'data_owner'\")\n\
+          \        filename = entry.get(\"filename\")\n        if not filename or\
           \ filename not in present_files:\n            reasons.append(f\"file '{filename}'\
           \ not found under {prefix} in bucket {bucket}\")\n\n        if reasons:\n\
           \            quarantined.append({**entry, \"quarantine_reasons\": reasons})\n\

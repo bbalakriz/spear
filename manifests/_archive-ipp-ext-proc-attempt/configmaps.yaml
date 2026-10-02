@@ -1,0 +1,133 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  data:
+    config.yaml: |
+      colang_version: "1.0"
+      rails:
+        config:
+          sensitive_data_detection:
+            input:
+              entities:
+                - PERSON
+                - EMAIL_ADDRESS
+                - PHONE_NUMBER
+                - CREDIT_CARD
+                - US_SSN
+              score_threshold: 0.5
+        input:
+          flows:
+            - detect sensitive data on input
+    rails.co: |
+      define bot refuse to respond
+        "please do not share personal or sensitive information in your message."
+
+      define subflow detect sensitive data on input
+        $has_sensitive_data = execute detect_sensitive_data(source="input", text=$user_message)
+        if $has_sensitive_data
+          bot refuse to respond
+          stop
+  kind: ConfigMap
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","data":{"config.yaml":"colang_version: \"1.0\"\nrails:\n  config:\n    sensitive_data_detection:\n      input:\n        entities:\n          - PERSON\n          - EMAIL_ADDRESS\n          - PHONE_NUMBER\n          - CREDIT_CARD\n          - US_SSN\n        score_threshold: 0.5\n  input:\n    flows:\n      - detect sensitive data on input\n","rails.co":"define bot refuse to respond\n  \"please do not share personal or sensitive information in your message.\"\n\ndefine subflow detect sensitive data on input\n  $has_sensitive_data = execute detect_sensitive_data(source=\"input\", text=$user_message)\n  if $has_sensitive_data\n    bot refuse to respond\n    stop\n"},"kind":"ConfigMap","metadata":{"annotations":{},"name":"spear-shield-mcp-guardrails-config","namespace":"spear-shield-agents"}}
+    creationTimestamp: "2026-10-02T06:25:01Z"
+    name: spear-shield-mcp-guardrails-config
+    namespace: spear-shield-agents
+    resourceVersion: "6563067"
+    uid: 64263677-7e94-4cfd-bfac-ffad9350e8a5
+- apiVersion: v1
+  data:
+    service-ca.crt: |
+      -----BEGIN CERTIFICATE-----
+      MIIDUTCCAjmgAwIBAgIIKpd/qkcjLwUwDQYJKoZIhvcNAQELBQAwNjE0MDIGA1UE
+      Awwrb3BlbnNoaWZ0LXNlcnZpY2Utc2VydmluZy1zaWduZXJAMTc5MDAwNjMzMjAe
+      Fw0yNjA5MjExNTU4NTFaFw0yODExMTkxNTU4NTJaMDYxNDAyBgNVBAMMK29wZW5z
+      aGlmdC1zZXJ2aWNlLXNlcnZpbmctc2lnbmVyQDE3OTAwMDYzMzIwggEiMA0GCSqG
+      SIb3DQEBAQUAA4IBDwAwggEKAoIBAQC4bkHUE0cNjoHCLBFVrVvlEEYHy3kGkKur
+      q92uE5YCjsSGORrYSg+YSub5hkpoEau9Ddr21PJcDUv+TMG/OCQ78wf/pcCqA5WJ
+      xO7Z0DtEwncIz0fHphknwzdNBgi+T6BN4M5CXVNUkJquQMpdc8h1kpdUgPB9v1zW
+      rk0yt1PpklqwI3IWG9wMFtuOMBcM8LsAr9alKUs0DOdevOjrQQdiqT45NonK1Lih
+      yTTMvZEJ5gV3vAtpjyDK6xayE+vYYQzg43Lngx9ykWoDm5mdyUwiQ0hXs9UoYx/n
+      6/Z7C2L9rRNRFxXLMElv0/GH+F77rPZGAiKMkKKz0ZM/J8k3HJj3AgMBAAGjYzBh
+      MA4GA1UdDwEB/wQEAwICpDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBROcPr9
+      +NLCyij3sZqhuYm8XaZPTjAfBgNVHSMEGDAWgBROcPr9+NLCyij3sZqhuYm8XaZP
+      TjANBgkqhkiG9w0BAQsFAAOCAQEAM7WNoq0EdaODjnJUNraSqcHvI26VZjPC4Qqo
+      vdsZgO87LWlp6qe9Q+uaCHFD8P91Jvnkqar/l/wVoiSHK0hvEsIZoQde6VFcdnu1
+      JMT5BC1mRctuLt0np8zkef/D41WHGJby63lu8urR7l3XyAaCKD6Aytm+C0o49Ij3
+      jCDfHTO9Un4apl28vZ2qPbUEYe2w/ua1t4CVMgLQ31D2876nOIU/Vmiy9k37uz5D
+      2kF1sXOMfsByY/xmoD0u4kLw0GBau7IGSVzftNwtUCK7VyuYfLgHzyWL5jGuoXY3
+      sylthPWs62rDeIJHME2amiRf+X6FO+/NdvAalsItFKMUzWwYuQ==
+      -----END CERTIFICATE-----
+  kind: ConfigMap
+  metadata:
+    annotations:
+      openshift.io/description: Configmap is added/updated with a data item containing
+        the CA signing bundle that can be used to verify service-serving certificates
+      openshift.io/owning-component: service-ca
+      service.beta.openshift.io/inject-cabundle: "true"
+    creationTimestamp: "2026-10-02T06:25:01Z"
+    labels:
+      app: spear-shield-mcp-guardrails
+      component: spear-shield-mcp-guardrails
+    name: spear-shield-mcp-guardrails-ca-bundle
+    namespace: spear-shield-agents
+    ownerReferences:
+    - apiVersion: trustyai.opendatahub.io/v1alpha1
+      blockOwnerDeletion: true
+      controller: true
+      kind: NemoGuardrails
+      name: spear-shield-mcp-guardrails
+      uid: 0bab4291-e6c3-44b8-b589-a966c5fefad9
+    resourceVersion: "6563096"
+    uid: 247fdd5d-fef9-4684-b40a-f57f9d2b84b6
+- apiVersion: v1
+  data:
+    custom-ipp-config.yaml: |
+      apiVersion: llm-d.ai/v1alpha1
+      kind: PayloadProcessorConfig
+      plugins:
+      - parameters:
+          nemoURL: https://spear-shield-mcp-guardrails-spear-shield-agents.apps.cluster-rf7lv.dyn.redhatworkshops.io/v1/guardrail/checks
+          timeoutSeconds: 10
+        type: nemo-request-guard
+      - parameters:
+          nemoURL: https://spear-shield-mcp-guardrails-spear-shield-agents.apps.cluster-rf7lv.dyn.redhatworkshops.io/v1/guardrail/checks
+          timeoutSeconds: 10
+        type: nemo-response-guard
+      profiles:
+      - name: default
+        plugins:
+          request:
+          - pluginRef: nemo-request-guard
+          response:
+          - pluginRef: nemo-response-guard
+    default-ipp-config.yaml: |
+      apiVersion: llm-d.ai/v1alpha1
+      kind: PayloadProcessorConfig
+      plugins:
+      - type: body-field-to-header
+        parameters:
+          fieldName: model
+          headerName: X-Gateway-Model-Name
+      - type: base-model-to-header
+      profiles:
+      - name: default
+        plugins:
+          request:
+          - pluginRef: body-field-to-header
+          - pluginRef: base-model-to-header
+  kind: ConfigMap
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","data":{"custom-ipp-config.yaml":"apiVersion: llm-d.ai/v1alpha1\nkind: PayloadProcessorConfig\nplugins:\n- parameters:\n    nemoURL: https://spear-shield-mcp-guardrails-spear-shield-agents.apps.cluster-rf7lv.dyn.redhatworkshops.io/v1/guardrail/checks\n    timeoutSeconds: 10\n  type: nemo-request-guard\n- parameters:\n    nemoURL: https://spear-shield-mcp-guardrails-spear-shield-agents.apps.cluster-rf7lv.dyn.redhatworkshops.io/v1/guardrail/checks\n    timeoutSeconds: 10\n  type: nemo-response-guard\nprofiles:\n- name: default\n  plugins:\n    request:\n    - pluginRef: nemo-request-guard\n    response:\n    - pluginRef: nemo-response-guard\n","default-ipp-config.yaml":"apiVersion: llm-d.ai/v1alpha1\nkind: PayloadProcessorConfig\nplugins:\n- type: body-field-to-header\n  parameters:\n    fieldName: model\n    headerName: X-Gateway-Model-Name\n- type: base-model-to-header\nprofiles:\n- name: default\n  plugins:\n    request:\n    - pluginRef: body-field-to-header\n    - pluginRef: base-model-to-header\n"},"kind":"ConfigMap","metadata":{"annotations":{},"name":"spear-shield-nemo-guard","namespace":"spear-shield-agents"}}
+    creationTimestamp: "2026-10-02T07:05:19Z"
+    name: spear-shield-nemo-guard
+    namespace: spear-shield-agents
+    resourceVersion: "6616969"
+    uid: 60e4bb1f-201d-47ed-a163-c3b7135d1b3e
+kind: List
+metadata:
+  resourceVersion: ""

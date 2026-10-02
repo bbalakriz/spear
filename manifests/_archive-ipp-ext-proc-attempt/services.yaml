@@ -1,0 +1,77 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      service.alpha.openshift.io/serving-cert-signed-by: openshift-service-serving-signer@1790006332
+      service.beta.openshift.io/serving-cert-secret-name: spear-shield-mcp-guardrails-tls
+      service.beta.openshift.io/serving-cert-signed-by: openshift-service-serving-signer@1790006332
+    creationTimestamp: "2026-10-02T06:27:33Z"
+    labels:
+      app: spear-shield-mcp-guardrails
+      component: spear-shield-mcp-guardrails
+    name: spear-shield-mcp-guardrails
+    namespace: spear-shield-agents
+    ownerReferences:
+    - apiVersion: trustyai.opendatahub.io/v1alpha1
+      blockOwnerDeletion: true
+      controller: true
+      kind: NemoGuardrails
+      name: spear-shield-mcp-guardrails
+      uid: 0bab4291-e6c3-44b8-b589-a966c5fefad9
+    resourceVersion: "6566479"
+    uid: 2c276d83-e7ec-44c5-b84b-c68157032424
+  spec:
+    clusterIP: 172.231.136.114
+    clusterIPs:
+    - 172.231.136.114
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: spear-shield-mcp-guardrails
+      port: 80
+      protocol: TCP
+      targetPort: 8000
+    selector:
+      app: spear-shield-mcp-guardrails
+      component: spear-shield-mcp-guardrails
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"spear-shield-nemo-guard","namespace":"spear-shield-agents"},"spec":{"ports":[{"appProtocol":"HTTP2","port":9004,"protocol":"TCP","targetPort":9004}],"selector":{"app":"spear-shield-nemo-guard"},"type":"ClusterIP"}}
+    creationTimestamp: "2026-10-02T07:05:21Z"
+    name: spear-shield-nemo-guard
+    namespace: spear-shield-agents
+    resourceVersion: "6617022"
+    uid: a92a8bba-b6b8-41aa-b688-d0edf1ce4e80
+  spec:
+    clusterIP: 172.231.100.17
+    clusterIPs:
+    - 172.231.100.17
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - appProtocol: HTTP2
+      port: 9004
+      protocol: TCP
+      targetPort: 9004
+    selector:
+      app: spear-shield-nemo-guard
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+kind: List
+metadata:
+  resourceVersion: ""

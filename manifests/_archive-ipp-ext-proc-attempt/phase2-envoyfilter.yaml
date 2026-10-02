@@ -1,0 +1,56 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: spear-shield-nemo-guard
+  namespace: spear-shield-agents
+spec:
+  # targetRefs silently did not resolve on this cluster, confirmed live:
+  # the envoyfilter pushed fine (istiod logged a full push) but the patch
+  # never landed in the real listener's http_filters. switched to the
+  # same workloadSelector shape the two other, already working filters on
+  # this gateway use (mcp-ext-proc-spear-shield-agents-gateway,
+  # kuadrant-spear-shield-gateway), confirmed live this time by rechecking
+  # the actual config dump
+  workloadSelector:
+    labels:
+      gateway.networking.k8s.io/gateway-name: spear-shield-gateway
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: GATEWAY
+      listener:
+        filterChain:
+          filter:
+            name: "envoy.filters.network.http_connection_manager"
+            subFilter:
+              name: envoy.filters.http.wasm
+    patch:
+      operation: INSERT_AFTER
+      value:
+        name: envoy.filters.http.ext_proc.payload-processor
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+          failure_mode_allow: false
+          allow_mode_override: true
+          processing_mode:
+            request_header_mode: "SEND"
+            response_header_mode: "SEND"
+            request_body_mode: "BUFFERED"
+            # switched from FULL_DUPLEX_STREAMED to BUFFERED here, found
+            # live: FULL_DUPLEX_STREAMED either dropped the Mcp-Session-Id
+            # response header or hung the request to a real 504, confirmed
+            # via the ipp pod's own logs showing request headers processed
+            # with no further progress. our real tool responses are small
+            # json (192 and 334 bytes seen live this session), not
+            # streaming llm tokens, so buffering the whole response before
+            # the response guard inspects it has no real cost here
+            response_body_mode: "BUFFERED"
+            request_trailer_mode: "SKIP"
+            # BUFFERED response body mode needs response_trailer_mode SEND
+            # too, same requirement envoy enforced for FULL_DUPLEX_STREAMED
+            response_trailer_mode: "SEND"
+          message_timeout: 30s
+          grpc_service:
+            envoy_grpc:
+              cluster_name: outbound|9004||spear-shield-nemo-guard.spear-shield-agents.svc.cluster.local
+            timeout: 30s

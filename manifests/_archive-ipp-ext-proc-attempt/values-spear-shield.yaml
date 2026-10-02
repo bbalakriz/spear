@@ -1,0 +1,36 @@
+payloadProcessor:
+  name: spear-shield-nemo-guard
+  replicas: 1
+  multiNamespace: false
+  customConfig:
+    plugins:
+      - type: nemo-request-guard
+        parameters:
+          nemoURL: "https://spear-shield-mcp-guardrails-spear-shield-agents.apps.cluster-rf7lv.dyn.redhatworkshops.io/v1/guardrail/checks"
+          timeoutSeconds: 10
+      - type: nemo-response-guard
+        parameters:
+          nemoURL: "https://spear-shield-mcp-guardrails-spear-shield-agents.apps.cluster-rf7lv.dyn.redhatworkshops.io/v1/guardrail/checks"
+          timeoutSeconds: 10
+    profiles:
+      - name: default
+        plugins:
+          request:
+            - pluginRef: nemo-request-guard
+          response:
+            - pluginRef: nemo-response-guard
+provider:
+  name: istio
+  supportedEvents:
+    requestHeaders: true
+    requestBody: true
+    requestTrailers: false
+    responseHeaders: true
+    responseBody: true
+    responseTrailers: false
+  istio:
+    envoyFilter:
+      operation: INSERT_AFTER
+      anchorSubFilter: "envoy.filters.http.wasm"
+inferenceGateway:
+  name: spear-shield-gateway

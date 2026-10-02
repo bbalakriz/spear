@@ -1,0 +1,30 @@
+# one NemoGuardrails cr, three named configs, config_id switches between
+# them per request. internal-docs-config is default: true so a request
+# that omits guardrails.config_id (the common case for internal documents)
+# gets it automatically. OPENAI_API_KEY is a required field on the cr even
+# though none of these configs use an llm, the built in Presidio and regex
+# detectors run entirely inside this pod, see
+# https://eformat.github.io/ralf-wiggum-rhoai-kitchen-sink/nemo-guardrails
+# module 2 exercise 1.
+apiVersion: trustyai.opendatahub.io/v1alpha1
+kind: NemoGuardrails
+metadata:
+  name: rag-phase1-guardrails
+  namespace: rag-phase1
+  annotations:
+    security.opendatahub.io/enable-auth: 'true'
+spec:
+  nemoConfigs:
+    - name: internal-docs-config
+      configMaps:
+        - internal-docs-config
+      default: true
+    - name: vendor-submission-config
+      configMaps:
+        - vendor-submission-config
+    - name: work-tracker-config
+      configMaps:
+        - work-tracker-config
+  env:
+    - name: OPENAI_API_KEY
+      value: not-used

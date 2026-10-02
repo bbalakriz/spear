@@ -1,0 +1,46 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: spear-shield-nemo-guard
+  namespace: spear-shield-agents
+spec:
+  workloadSelector:
+    labels:
+      gateway.networking.k8s.io/gateway-name: spear-shield-gateway
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: GATEWAY
+      listener:
+        filterChain:
+          filter:
+            name: "envoy.filters.network.http_connection_manager"
+            subFilter:
+              name: envoy.filters.http.wasm
+    patch:
+      operation: INSERT_AFTER
+      value:
+        name: envoy.filters.http.ext_proc.payload-processor
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+          failure_mode_allow: false
+          allow_mode_override: true
+          processing_mode:
+            request_header_mode: "SEND"
+            request_body_mode: "BUFFERED"
+            request_trailer_mode: "SKIP"
+            # isolating to request phase only this time, found live: two
+            # chained ext_proc filters hung regardless of response body
+            # mode (FULL_DUPLEX_STREAMED and BUFFERED both hung the same
+            # way), mcp-gateway's own existing ext_proc filter logged a
+            # stream EOF at the exact moment of the hang. skipping our
+            # filter's response phase entirely here to isolate whether
+            # that is what breaks the existing filter's stream
+            response_header_mode: "SKIP"
+            response_body_mode: "NONE"
+            response_trailer_mode: "SKIP"
+          message_timeout: 30s
+          grpc_service:
+            envoy_grpc:
+              cluster_name: outbound|9004||spear-shield-nemo-guard.spear-shield-agents.svc.cluster.local
+            timeout: 30s

@@ -1,0 +1,164 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+  creationTimestamp: "2026-10-02T06:27:32Z"
+  generation: 1
+  labels:
+    app: spear-shield-mcp-guardrails
+    app.kubernetes.io/instance: spear-shield-mcp-guardrails
+    app.kubernetes.io/name: spear-shield-mcp-guardrails
+    app.kubernetes.io/part-of: trustyai
+    component: spear-shield-mcp-guardrails
+    deploy-name: spear-shield-mcp-guardrails
+  name: spear-shield-mcp-guardrails
+  namespace: spear-shield-agents
+  ownerReferences:
+  - apiVersion: trustyai.opendatahub.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: NemoGuardrails
+    name: spear-shield-mcp-guardrails
+    uid: 0bab4291-e6c3-44b8-b589-a966c5fefad9
+  resourceVersion: "6716298"
+  uid: d8574c2e-425e-4317-88c7-5137b40d2f18
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: spear-shield-mcp-guardrails
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        trustyai.opendatahub.io/nemo-config-hash: a838bb129dbe5d06621fde08de0e9d30dda33b3c6df0e52d98f10c235979bf85
+      labels:
+        app: spear-shield-mcp-guardrails
+        app.kubernetes.io/instance: spear-shield-mcp-guardrails
+        app.kubernetes.io/name: spear-shield-mcp-guardrails
+        app.kubernetes.io/part-of: trustyai
+        component: spear-shield-mcp-guardrails
+        deploy-name: spear-shield-mcp-guardrails
+    spec:
+      containers:
+      - env:
+        - name: CONFIG_ID
+          value: mcp-guard
+        - name: SSL_CERT_FILE
+          value: /etc/ssl/certs/ca-certificates.crt
+        image: registry.redhat.io/rhoai/odh-trustyai-nemo-guardrails-server-rhel9@sha256:d6221e450b487cbf4adf25298e428452e231a33bfbffd15ca381284501b09c93
+        imagePullPolicy: IfNotPresent
+        name: nemo-guardrails
+        ports:
+        - containerPort: 8000
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 12
+          httpGet:
+            path: /
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 2
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /app/config/mcp-guard
+          name: mcp-guard-spear-shield-mcp-guardrails-config-volume
+        - mountPath: /etc/ssl/certs/
+          name: ca-bundle-transfer
+          readOnly: true
+      dnsPolicy: ClusterFirst
+      initContainers:
+      - command:
+        - /bin/sh
+        - -c
+        - |-
+          #!/bin/sh
+          set -e
+          output_file="/tmp/ca-bundle-transfer//ca-certificates.crt"
+
+          # Clear the output file
+          > "$output_file"
+
+          # Process each validated key file (keys are pre-validated)
+          for file_path in "/tmp/odh-trusted-ca-bundle//ca-bundle.crt" "/tmp/openshift-serving-ca-bundle//service-ca.crt"; do
+              if [ -f "$file_path" ]; then
+                  cat "$file_path" >> "$output_file"
+                  echo >> "$output_file"  # Add newline between certificates
+              else
+                  echo "Warning: Certificate file $file_path not found" >&2
+              fi
+          done
+        image: registry.redhat.io/rhoai/odh-trustyai-nemo-guardrails-server-rhel9@sha256:d6221e450b487cbf4adf25298e428452e231a33bfbffd15ca381284501b09c93
+        imagePullPolicy: IfNotPresent
+        name: ca-bundle-initializer
+        resources: {}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /tmp/ca-bundle-transfer/
+          name: ca-bundle-transfer
+        - mountPath: /tmp/odh-trusted-ca-bundle/
+          name: odh-trusted-ca-bundle-vol
+        - mountPath: /tmp/openshift-serving-ca-bundle/
+          name: spear-shield-mcp-guardrails-ca-bundle-vol
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: tls-certs
+        secret:
+          defaultMode: 420
+          secretName: spear-shield-mcp-guardrails-tls
+      - configMap:
+          defaultMode: 420
+          name: spear-shield-mcp-guardrails-config
+        name: mcp-guard-spear-shield-mcp-guardrails-config-volume
+      - configMap:
+          defaultMode: 420
+          name: odh-trusted-ca-bundle
+        name: odh-trusted-ca-bundle-vol
+      - configMap:
+          defaultMode: 420
+          name: spear-shield-mcp-guardrails-ca-bundle
+        name: spear-shield-mcp-guardrails-ca-bundle-vol
+      - emptyDir: {}
+        name: ca-bundle-transfer
+status:
+  availableReplicas: 1
+  conditions:
+  - lastTransitionTime: "2026-10-02T06:27:33Z"
+    lastUpdateTime: "2026-10-02T06:27:47Z"
+    message: ReplicaSet "spear-shield-mcp-guardrails-54795b77f4" has successfully
+      progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  - lastTransitionTime: "2026-10-02T12:04:39Z"
+    lastUpdateTime: "2026-10-02T12:04:39Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  observedGeneration: 1
+  readyReplicas: 1
+  replicas: 1
+  updatedReplicas: 1

@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "3"
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"spear-shield-nemo-guard","namespace":"spear-shield-agents"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"spear-shield-nemo-guard"}},"template":{"metadata":{"labels":{"app":"spear-shield-nemo-guard"}},"spec":{"containers":[{"args":["--config-file","config/custom-ipp-config.yaml","--v=3","--tracing=false"],"env":[{"name":"NAMESPACE","valueFrom":{"fieldRef":{"fieldPath":"metadata.namespace"}}}],"image":"ghcr.io/llm-d/llm-d-inference-payload-processor:v0.1.0","imagePullPolicy":"IfNotPresent","name":"payload-processor","ports":[{"containerPort":9004},{"containerPort":9005}],"volumeMounts":[{"mountPath":"/config","name":"config-volume"}]}],"serviceAccountName":"spear-shield-nemo-guard-spear-shield-nemo-guard","volumes":[{"configMap":{"name":"spear-shield-nemo-guard"},"name":"config-volume"}]}}}}
+  creationTimestamp: "2026-10-02T07:05:22Z"
+  generation: 3
+  name: spear-shield-nemo-guard
+  namespace: spear-shield-agents
+  resourceVersion: "6746103"
+  uid: 2d815f70-bb71-4c8d-8ead-59800c63bb3b
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: spear-shield-nemo-guard
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: spear-shield-nemo-guard
+    spec:
+      containers:
+      - args:
+        - --config-file
+        - config/custom-ipp-config.yaml
+        - --v=3
+        - --tracing=false
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: DISABLE_EXTERNAL_MODEL_CONTROLLER
+          value: "true"
+        image: quay.io/opendatahub/odh-ai-gateway-payload-processing:odh-stable
+        imagePullPolicy: IfNotPresent
+        name: payload-processor
+        ports:
+        - containerPort: 9004
+          protocol: TCP
+        - containerPort: 9005
+          protocol: TCP
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /config
+          name: config-volume
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: spear-shield-nemo-guard-spear-shield-nemo-guard
+      serviceAccountName: spear-shield-nemo-guard-spear-shield-nemo-guard
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - configMap:
+          defaultMode: 420
+          name: spear-shield-nemo-guard
+        name: config-volume
+status:
+  availableReplicas: 1
+  conditions:
+  - lastTransitionTime: "2026-10-02T12:21:02Z"
+    lastUpdateTime: "2026-10-02T12:21:02Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  - lastTransitionTime: "2026-10-02T07:05:22Z"
+    lastUpdateTime: "2026-10-02T12:21:02Z"
+    message: ReplicaSet "spear-shield-nemo-guard-7cfbc7ff9" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  observedGeneration: 3
+  readyReplicas: 1
+  replicas: 1
+  updatedReplicas: 1

@@ -1,0 +1,43 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  annotations:
+    openshift.io/host.generated: "true"
+  creationTimestamp: "2026-10-02T06:27:33Z"
+  generation: 1
+  labels:
+    app: spear-shield-mcp-guardrails
+    component: spear-shield-mcp-guardrails
+  name: spear-shield-mcp-guardrails
+  namespace: spear-shield-agents
+  ownerReferences:
+  - apiVersion: trustyai.opendatahub.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: NemoGuardrails
+    name: spear-shield-mcp-guardrails
+    uid: 0bab4291-e6c3-44b8-b589-a966c5fefad9
+  resourceVersion: "6566468"
+  uid: e3fca452-c3be-417b-a4f7-a31acde0f683
+spec:
+  host: spear-shield-mcp-guardrails-spear-shield-agents.apps.cluster-rf7lv.dyn.redhatworkshops.io
+  port:
+    targetPort: spear-shield-mcp-guardrails
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: edge
+  to:
+    kind: Service
+    name: spear-shield-mcp-guardrails
+    weight: 100
+  wildcardPolicy: None
+status:
+  ingress:
+  - conditions:
+    - lastTransitionTime: "2026-10-02T06:27:33Z"
+      status: "True"
+      type: Admitted
+    host: spear-shield-mcp-guardrails-spear-shield-agents.apps.cluster-rf7lv.dyn.redhatworkshops.io
+    routerCanonicalHostname: router-default.apps.cluster-rf7lv.dyn.redhatworkshops.io
+    routerName: default
+    wildcardPolicy: None

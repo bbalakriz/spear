@@ -1,0 +1,139 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-shield-nemo-guard-spear-shield-nemo-guard
+  namespace: spear-shield-agents
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spear-shield-nemo-guard
+  namespace: spear-shield-agents
+data:
+  default-ipp-config.yaml: |
+    apiVersion: llm-d.ai/v1alpha1
+    kind: PayloadProcessorConfig
+    plugins:
+    - type: body-field-to-header
+      parameters:
+        fieldName: model
+        headerName: X-Gateway-Model-Name
+    - type: base-model-to-header
+    profiles:
+    - name: default
+      plugins:
+        request:
+        - pluginRef: body-field-to-header
+        - pluginRef: base-model-to-header
+  custom-ipp-config.yaml: |
+    apiVersion: llm-d.ai/v1alpha1
+    kind: PayloadProcessorConfig
+    plugins:
+    - parameters:
+        nemoURL: https://spear-shield-mcp-guardrails-spear-shield-agents.apps.cluster-rf7lv.dyn.redhatworkshops.io/v1/guardrail/checks
+        timeoutSeconds: 10
+      type: nemo-request-guard
+    - parameters:
+        nemoURL: https://spear-shield-mcp-guardrails-spear-shield-agents.apps.cluster-rf7lv.dyn.redhatworkshops.io/v1/guardrail/checks
+        timeoutSeconds: 10
+      type: nemo-response-guard
+    profiles:
+    - name: default
+      plugins:
+        request:
+        - pluginRef: nemo-request-guard
+        response:
+        - pluginRef: nemo-response-guard
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spear-shield-nemo-guard-spear-shield-nemo-guard-configmap-reader
+  namespace: spear-shield-agents
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-shield-nemo-guard-spear-shield-nemo-guard
+  namespace: spear-shield-agents
+subjects:
+- kind: ServiceAccount
+  name: spear-shield-nemo-guard-spear-shield-nemo-guard
+  namespace: spear-shield-agents
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: spear-shield-nemo-guard-spear-shield-nemo-guard-configmap-reader
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-shield-nemo-guard
+  namespace: spear-shield-agents
+spec:
+  selector:
+    app: spear-shield-nemo-guard
+  ports:
+  - protocol: TCP
+    port: 9004
+    targetPort: 9004
+    appProtocol: HTTP2
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spear-shield-nemo-guard
+  namespace: spear-shield-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spear-shield-nemo-guard
+  template:
+    metadata:
+      labels:
+        app: spear-shield-nemo-guard
+    spec:
+      serviceAccountName: spear-shield-nemo-guard-spear-shield-nemo-guard
+      containers:
+      - name: payload-processor
+        image: ghcr.io/llm-d/llm-d-inference-payload-processor:v0.1.0
+        imagePullPolicy: IfNotPresent
+        args:
+        - --config-file
+        - "config/custom-ipp-config.yaml"
+        - --v=3
+        - --tracing=false
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - containerPort: 9004
+        - containerPort: 9005
+        volumeMounts:
+        - name: config-volume
+          mountPath: "/config"
+      volumes:
+      - name: config-volume
+        configMap:
+          name: spear-shield-nemo-guard
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: spear-shield-nemo-guard
+  namespace: spear-shield-agents
+spec:
+  host: spear-shield-nemo-guard.spear-shield-agents.svc.cluster.local
+  trafficPolicy:
+      tls:
+        mode: SIMPLE
+        insecureSkipVerify: true

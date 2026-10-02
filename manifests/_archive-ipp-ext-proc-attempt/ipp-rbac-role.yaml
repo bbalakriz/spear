@@ -1,0 +1,20 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"annotations":{},"name":"spear-shield-nemo-guard-spear-shield-nemo-guard-configmap-reader","namespace":"spear-shield-agents"},"rules":[{"apiGroups":[""],"resources":["configmaps"],"verbs":["get","list","watch"]}]}
+  creationTimestamp: "2026-10-02T07:05:20Z"
+  name: spear-shield-nemo-guard-spear-shield-nemo-guard-configmap-reader
+  namespace: spear-shield-agents
+  resourceVersion: "6616980"
+  uid: 449a28b2-94d6-43c9-929d-1d0a3e9037f3
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch

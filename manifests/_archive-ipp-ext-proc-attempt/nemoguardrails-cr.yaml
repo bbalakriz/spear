@@ -1,0 +1,42 @@
+apiVersion: trustyai.opendatahub.io/v1alpha1
+kind: NemoGuardrails
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"trustyai.opendatahub.io/v1alpha1","kind":"NemoGuardrails","metadata":{"annotations":{},"name":"spear-shield-mcp-guardrails","namespace":"spear-shield-agents"},"spec":{"nemoConfigs":[{"configMaps":["spear-shield-mcp-guardrails-config"],"default":true,"name":"mcp-guard"}]}}
+  creationTimestamp: "2026-10-02T06:25:01Z"
+  finalizers:
+  - trustyai.opendatahub.io/nemo-guardrails-finalizer
+  generation: 2
+  name: spear-shield-mcp-guardrails
+  namespace: spear-shield-agents
+  resourceVersion: "6566476"
+  uid: 0bab4291-e6c3-44b8-b589-a966c5fefad9
+spec:
+  nemoConfigs:
+  - configMaps:
+    - spear-shield-mcp-guardrails-config
+    default: true
+    name: mcp-guard
+  replicas: 1
+status:
+  ca:
+    odhTrustedCAFound: true
+    openshiftServingCAFound: true
+  conditions:
+  - lastTransitionTime: "2026-10-02T06:27:33Z"
+    message: Deployment is ready
+    reason: DeploymentReady
+    status: "True"
+    type: DeploymentReady
+  - lastTransitionTime: "2026-10-02T06:27:33Z"
+    message: Route is ready
+    reason: RouteReady
+    status: "True"
+    type: RouteReady
+  - lastTransitionTime: "2026-10-02T06:27:33Z"
+    message: Reconcile completed successfully
+    reason: ReconcileCompleted
+    status: "True"
+    type: ReconcileComplete
+  phase: Ready

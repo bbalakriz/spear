@@ -1,0 +1,16 @@
+apiVersion: v1
+imagePullSecrets:
+- name: spear-shield-nemo-guard-spear-shield-nemo-guard-dockercfg-6kqmx
+kind: ServiceAccount
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","kind":"ServiceAccount","metadata":{"annotations":{},"name":"spear-shield-nemo-guard-spear-shield-nemo-guard","namespace":"spear-shield-agents"}}
+    openshift.io/internal-registry-pull-secret-ref: spear-shield-nemo-guard-spear-shield-nemo-guard-dockercfg-6kqmx
+  creationTimestamp: "2026-10-02T07:05:19Z"
+  name: spear-shield-nemo-guard-spear-shield-nemo-guard
+  namespace: spear-shield-agents
+  resourceVersion: "6616956"
+  uid: bd896865-635b-42f0-ac01-1fad40c5de76
+secrets:
+- name: spear-shield-nemo-guard-spear-shield-nemo-guard-dockercfg-6kqmx

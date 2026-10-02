@@ -22,6 +22,21 @@
 # a one time import job, editing this file after the first successful apply
 # does not re run it, use the admin api directly against an already
 # imported realm, same as this realm was fixed up after the fact.
+#
+# a third thing this file does not, and cannot, reproduce: the "spire"
+# spiffe identity provider (trustDomain spiffe://agent-pack.internal,
+# bundleEndpoint the cluster's shared spire oidc discovery route,
+# supportsClientAssertions true) and the custom "clients-federated"
+# authentication flow (a copy of the realm's builtin "clients" flow with
+# federated-jwt wired in, bound as the realm's clientAuthenticationFlow).
+# neither an identity provider nor an authentication flow is representable
+# in a KeycloakRealmImport spec at all, both were created live against the
+# admin api, mirroring the reference's own sync_spiffe_federated_auth and
+# enable_federated_jwt_client_auth functions exactly, section 2. without
+# both, spear-coordinator-workload's federated-jwt token_grant calls 400
+# with client_not_found no matter how correct its own attributes are,
+# confirmed by the reference's own hard won comment on that exact failure
+# mode, not rediscovered here from scratch
 apiVersion: k8s.keycloak.org/v2beta1
 kind: KeycloakRealmImport
 metadata:
@@ -104,7 +119,22 @@ spec:
               multivalued: "false"
               aggregate.attrs: "false"
       # federated-jwt client for openshell token_grant, a2a egress. sub must
-      # match the coordinator sandbox's own spiffe id once it is deployed
+      # match the coordinator sandbox's own spiffe id once it is deployed.
+      #
+      # trust domain corrected after live verification: PHASE2_PLAN.md
+      # originally called for this project's own trust domain,
+      # spiffe://spear-shield.internal, but the real ZeroTrustWorkloadIdentityManager
+      # cr on this cluster is a single cluster wide singleton the
+      # reference project already created, trustDomain: agent-pack.internal,
+      # immutable once set, confirmed live. spire issues every svid on
+      # this cluster under that one trust domain regardless of which
+      # project's workload it is, changing it would break agent-pack's
+      # own already-issued identities, against this project's hard rule
+      # of never touching agent-pack. real isolation here still comes
+      # from the namespace/sandbox-name path segment, ns/spear-shield-agents/
+      # sandbox/spear-coordinator-agent, which spire's own k8s workload
+      # attestation (namespace + service account + pod label) actually
+      # enforces, not from the trust domain string itself
       - clientId: spear-coordinator-workload
         name: spear-coordinator-workload
         enabled: true
@@ -116,7 +146,7 @@ spec:
         clientAuthenticatorType: federated-jwt
         attributes:
           jwt.credential.issuer: spire
-          jwt.credential.sub: spiffe://spear-shield.internal/ns/spear-shield-agents/sandbox/spear-coordinator-agent
+          jwt.credential.sub: spiffe://agent-pack.internal/ns/spear-shield-agents/sandbox/spear-coordinator-agent
       - clientId: spear-retrieval
         name: spear-retrieval
         enabled: true

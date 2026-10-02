@@ -1,16 +1,22 @@
-# externalized, gateway side request/response guardrail enforcement for
-# spear-openproject-mcp, without touching that server's own code, see
-# mcp-servers/spear-shield-mcp-guard-proxy/server.py for why this exists
-# instead of wiring nemo-request-guard/nemo-response-guard as a second
-# envoy ext_proc filter (a real, open upstream bug, confirmed live this
-# same investigation).
+# externalized, gateway side request/response guardrail enforcement,
+# shared by every mcp server in this namespace, without touching any of
+# their own code, see mcp-servers/spear-shield-mcp-guard-proxy/server.py
+# for why this exists instead of wiring nemo-request-guard/nemo-response-
+# guard as a second envoy ext_proc filter (a real, open upstream bug,
+# confirmed live this same investigation).
+#
+# one deployment for all mcp servers, not one per server: the proxy
+# derives each request's real backend from mcp-gateway's own
+# x-mcp-servername header, confirmed live, no per server env var needed.
+# onboarding a new mcp server is a one line httproute backendref change
+# to this same service, nothing else, no redeploy of this proxy.
 #
 # plain Deployment + Service on purpose, not an MCPServer CR: this is a
 # transparent proxy, not an mcp tool server in its own right, it never
-# needs a userSpecificList or its own MCPServerRegistration, the existing
-# spear-openproject-mcp HTTPRoute/MCPServerRegistration/MCPVirtualServer
-# in 07-openproject-mcp.yaml are reused unchanged, only that httproute's
-# backendref moves from the real backend to this proxy
+# needs a userSpecificList or its own MCPServerRegistration, each real
+# server's existing HTTPRoute/MCPServerRegistration/MCPVirtualServer
+# (e.g. 07-openproject-mcp.yaml) is reused unchanged, only that
+# httproute's backendref moves from the real backend to this proxy
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -35,8 +41,10 @@ spec:
           ports:
             - containerPort: 8000
           env:
-            - name: UPSTREAM_URL
-              value: http://spear-openproject-mcp.spear-shield-agents.svc.cluster.local:8000/mcp
+            # no UPSTREAM_URL here on purpose, resolved per request from
+            # mcp-gateway's own x-mcp-servername header, see server.py's
+            # resolve_upstream. UPSTREAM_URL can still be set to give this
+            # a fallback for direct testing that bypasses the gateway
             - name: GUARDRAILS_ROUTE
               value: https://rag-phase1-guardrails-rag-phase1.apps.cluster-rf7lv.dyn.redhatworkshops.io
             - name: GUARDRAILS_CONFIG_ID

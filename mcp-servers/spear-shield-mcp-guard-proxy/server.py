@@ -11,6 +11,17 @@ backend's own response is inspected on the way out (response guard),
 everything else (initialize, tools/list, ping, notifications) passes
 through untouched.
 
+one shared deployment fronts every mcp server, not one per server. found
+live, not guessed: mcp-gateway's own ext_proc filter already stamps
+x-mcp-servername on every request, "<namespace>/<server-name>", the same
+value kuadrant's own tool-access-check AuthPolicy already keys its rbac
+off, see manifests/50-spear-shield-agents/06-auth-policies.yaml. every
+mcp server built here follows the same shape, a Service named after the
+server on port 8000 serving /mcp, so the real upstream is derivable from
+that one header, no per server env var, no mapping file to maintain.
+onboarding a new server is a one line httproute backendref change to
+this same shared proxy service, nothing else.
+
 why this exists instead of wiring nemo-request-guard/nemo-response-guard
 as envoy ext_proc filters: a real, open upstream bug hangs a second
 ext_proc filter trying to read a request body that a first ext_proc
@@ -42,9 +53,15 @@ from urllib.parse import urlparse
 HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8000"))
 
-# the real mcp server this proxy fronts, full mcp path included, e.g.
-# http://spear-openproject-mcp.spear-shield-agents.svc.cluster.local:8000/mcp
-UPSTREAM_URL = os.environ["UPSTREAM_URL"]
+# convention every mcp server here follows: a Service named after the
+# server, same namespace, this port, this path. used to derive the real
+# upstream from x-mcp-servername, see resolve_upstream below
+UPSTREAM_PORT = os.environ.get("UPSTREAM_PORT", "8000")
+UPSTREAM_PATH = os.environ.get("UPSTREAM_PATH", "/mcp")
+
+# only used as a fallback when x-mcp-servername is missing, e.g. a direct
+# test that bypasses mcp-gateway entirely, not expected on real traffic
+UPSTREAM_URL_FALLBACK = os.environ.get("UPSTREAM_URL", "")
 
 GUARDRAILS_ROUTE = os.environ.get("GUARDRAILS_ROUTE", "")
 GUARDRAILS_CONFIG_ID = os.environ.get("GUARDRAILS_CONFIG_ID", "work-tracker-config")
@@ -53,6 +70,20 @@ GUARDRAILS_SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 # headers we don't blindly copy through to the upstream request, urllib
 # manages host and content-length itself based on the real body we send
 HOP_BY_HOP = {"host", "content-length", "connection", "transfer-encoding"}
+
+
+def resolve_upstream(servername_header: str) -> str | None:
+    """turns mcp-gateway's own x-mcp-servername header, "<namespace>/<name>",
+    into this request's real backend url, every mcp server here is a
+    Service named after itself on UPSTREAM_PORT serving UPSTREAM_PATH, so
+    no per server config is needed to add a new one. falls back to
+    UPSTREAM_URL_FALLBACK for direct testing where that header is absent.
+    """
+    if servername_header and "/" in servername_header:
+        namespace, name = servername_header.split("/", 1)
+        if namespace and name:
+            return f"http://{name}.{namespace}.svc.cluster.local:{UPSTREAM_PORT}{UPSTREAM_PATH}"
+    return UPSTREAM_URL_FALLBACK or None
 
 
 def guardrails_check(text: str) -> tuple[bool, str]:
@@ -169,6 +200,15 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length) if length else b"{}"
         accept_header = self.headers.get("accept", "")
 
+        upstream_url = resolve_upstream(self.headers.get("x-mcp-servername", ""))
+        if not upstream_url:
+            self._send(
+                502,
+                b'{"error":"no x-mcp-servername header and no UPSTREAM_URL fallback configured, cannot resolve a backend"}',
+                "application/json",
+            )
+            return
+
         try:
             rpc = json.loads(raw.decode("utf-8") or "{}")
         except json.JSONDecodeError:
@@ -188,7 +228,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, encoded, content_type)
                 return
 
-        upstream_req = urllib.request.Request(UPSTREAM_URL, data=raw, method="POST")
+        upstream_req = urllib.request.Request(upstream_url, data=raw, method="POST")
         for name, value in self.headers.items():
             if name.lower() not in HOP_BY_HOP:
                 upstream_req.add_header(name, value)
@@ -242,7 +282,10 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"spear-shield-mcp-guard-proxy listening on {HOST}:{PORT}, upstream {UPSTREAM_URL}")
+    print(
+        f"spear-shield-mcp-guard-proxy listening on {HOST}:{PORT}, "
+        f"upstream resolved per request from x-mcp-servername, fallback {UPSTREAM_URL_FALLBACK or '(none)'}"
+    )
     server.serve_forever()
 
 

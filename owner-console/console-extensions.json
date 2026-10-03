@@ -23,5 +23,23 @@
       "perspective": "admin",
       "section": "rag-phase1"
     }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/spear-shield-chat",
+      "component": { "$codeRef": "SpearShieldChatPage" }
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "spear-shield-chat",
+      "name": "%plugin__phase1-ingestion-console~Ask SPEAR Shield%",
+      "href": "/spear-shield-chat",
+      "perspective": "admin",
+      "section": "rag-phase1"
+    }
   }
 ]

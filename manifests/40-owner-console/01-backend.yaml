@@ -96,10 +96,24 @@ spec:
             - name: tls
               mountPath: /etc/tls/private
               readOnly: true
+            # spear shield chat's own per persona password lookup and
+            # client secret, see manifests/40-owner-console/02-chat-creds.yaml
+            - name: spear-shield-creds
+              mountPath: /secrets/spear-shield-console-creds
+              readOnly: true
+            - name: spear-coordinator-client-secret
+              mountPath: /secrets/spear-coordinator-client-secret
+              readOnly: true
       volumes:
         - name: tls
           secret:
             secretName: phase1-ingestion-console-backend-tls
+        - name: spear-shield-creds
+          secret:
+            secretName: spear-shield-console-creds
+        - name: spear-coordinator-client-secret
+          secret:
+            secretName: spear-coordinator-client-secret
 ---
 apiVersion: v1
 kind: Service

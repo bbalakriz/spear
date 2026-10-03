@@ -61,6 +61,11 @@ resolve_routes() {
   MLFLOW_URL="$(oc get mlflow mlflow -n "${SHARED_NS}" -o jsonpath='{.status.url}')"
   MINIO_CONSOLE_URL="https://$(oc get route minio-console -n minio -o jsonpath='{.spec.host}')"
   RHOAI_DASHBOARD_URL="https://$(oc get route rhods-dashboard -n "${SHARED_NS}" -o jsonpath='{.spec.host}')"
+  # spear shield chat, section 8: same sso host the agents realm already
+  # lives on, and the coordinator's own inbound a2a route added to the
+  # gateway this session, manifests/50-spear-shield-agents/11-a2a-gateway.yaml
+  SPEAR_SHIELD_ISSUER_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')/realms/spear-shield-agents"
+  SPEAR_COORDINATOR_A2A_URL="http://spear-coordinator-a2a-gateway.spear-shield-agents.svc.cluster.local:80"
   if [[ -z "${DSPA_ROUTE}" || "${DSPA_ROUTE}" == "https://" ]]; then
     echo "could not resolve the dspa route, run scripts/02-install-pipeline-server.sh first" >&2
     exit 1
@@ -81,11 +86,13 @@ resolve_routes() {
     echo "could not resolve the rhods-dashboard route, is this a rhoai cluster?" >&2
     exit 1
   fi
-  log "dspa route:       ${DSPA_ROUTE}"
-  log "guardrails route: ${GUARDRAILS_ROUTE}"
-  log "mlflow url:       ${MLFLOW_URL}"
-  log "minio console:    ${MINIO_CONSOLE_URL}"
-  log "rhoai dashboard:  ${RHOAI_DASHBOARD_URL}"
+  log "dspa route:         ${DSPA_ROUTE}"
+  log "guardrails route:   ${GUARDRAILS_ROUTE}"
+  log "mlflow url:         ${MLFLOW_URL}"
+  log "minio console:      ${MINIO_CONSOLE_URL}"
+  log "rhoai dashboard:    ${RHOAI_DASHBOARD_URL}"
+  log "spear shield issuer:${SPEAR_SHIELD_ISSUER_URL}"
+  log "coordinator a2a url:${SPEAR_COORDINATOR_A2A_URL}"
 }
 
 main() {
@@ -99,8 +106,9 @@ main() {
 
   build_image "${BACKEND_BC}" "${ROOT_DIR}/owner-console-backend"
 
-  log "applying backend rbac and deployment"
+  log "applying backend rbac, chat creds and deployment"
   oc apply -f "${ROOT_DIR}/manifests/40-owner-console/00-backend-rbac.yaml"
+  oc apply -f "${ROOT_DIR}/manifests/40-owner-console/02-chat-creds.yaml"
   oc apply -f "${ROOT_DIR}/manifests/40-owner-console/01-backend.yaml"
 
   local backend_image
@@ -115,7 +123,9 @@ main() {
     "DSPA_ROUTE=${DSPA_ROUTE}" \
     "GUARDRAILS_ROUTE=${GUARDRAILS_ROUTE}" \
     "MINIO_CONSOLE_URL=${MINIO_CONSOLE_URL}" \
-    "RHOAI_DASHBOARD_URL=${RHOAI_DASHBOARD_URL}"
+    "RHOAI_DASHBOARD_URL=${RHOAI_DASHBOARD_URL}" \
+    "SPEAR_SHIELD_ISSUER_URL=${SPEAR_SHIELD_ISSUER_URL}" \
+    "SPEAR_COORDINATOR_A2A_URL=${SPEAR_COORDINATOR_A2A_URL}"
 
   # everything below used to be a python constant baked into server.py, see
   # its own module level defaults for the values this reproduces. setting

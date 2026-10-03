@@ -94,6 +94,20 @@ ARTIFACT_BUCKET = os.environ.get("ARTIFACT_BUCKET", "dsp-pipeline-artifacts")
 MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "")
 
+# phase 2's spear shield chat tab, PHASE2_PLAN.md section 8. this is the
+# first endpoint on this backend that never touches mlflow or kfp at all,
+# it calls out to spear-coordinator-agent instead, through the a2a gateway
+# in the spear-shield-agents namespace. see manifests/40-owner-console/02-chat-creds.yaml
+# for why the per persona password lookup below is a demo-only shortcut,
+# not a real identity federation
+SPEAR_SHIELD_ISSUER_URL = os.environ.get("SPEAR_SHIELD_ISSUER_URL", "")
+SPEAR_COORDINATOR_A2A_URL = os.environ.get("SPEAR_COORDINATOR_A2A_URL", "")
+SPEAR_COORDINATOR_CLIENT_ID = os.environ.get("SPEAR_COORDINATOR_CLIENT_ID", "spear-coordinator")
+SPEAR_SHIELD_CREDS_DIR = os.environ.get("SPEAR_SHIELD_CREDS_DIR", "/secrets/spear-shield-console-creds")
+SPEAR_COORDINATOR_CLIENT_SECRET_PATH = os.environ.get(
+    "SPEAR_COORDINATOR_CLIENT_SECRET_PATH", "/secrets/spear-coordinator-client-secret/client-secret"
+)
+
 
 def sa_token():
     with open(TOKEN_PATH) as f:
@@ -492,6 +506,105 @@ def autorag_leaderboard(run_id, user_token):
     return {"state": state, "patterns_tested": len(pattern_keys), "winner": best}
 
 
+# ---- spear shield chat, PHASE2_PLAN.md section 8 ----
+
+
+def _k8s_api_ctx():
+    # the real in cluster apiserver ca, not the skip verification context
+    # the other helpers above use for routes with their own serving certs
+    return ssl.create_default_context(cafile="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+
+
+def openshift_username(user_token):
+    # a self lookup every token can do regardless of what rbac that user
+    # otherwise holds, this is how the backend learns who is actually
+    # signed into the console right now, never trust a client supplied
+    # username for this
+    req = urllib.request.Request(
+        "https://kubernetes.default.svc/apis/user.openshift.io/v1/users/~",
+        headers={"Authorization": f"Bearer {user_token}"},
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=10, context=_k8s_api_ctx()) as resp:
+        return json.loads(resp.read())["metadata"]["name"]
+
+
+def persona_password(username):
+    # one file per username, filename is the username, same shape
+    # spear-openproject-mcp's own OPENPROJECT_TOKENS_DIR already uses
+    path = os.path.join(SPEAR_SHIELD_CREDS_DIR, username)
+    if not os.path.isfile(path):
+        raise LookupError(f"no spear-shield-agents realm password on file for {username!r}")
+    with open(path) as f:
+        return f.read().strip()
+
+
+def mint_spear_shield_token(username, password):
+    data = urllib.parse.urlencode(
+        {
+            "grant_type": "password",
+            "client_id": SPEAR_COORDINATOR_CLIENT_ID,
+            "client_secret": open(SPEAR_COORDINATOR_CLIENT_SECRET_PATH).read().strip(),
+            "username": username,
+            "password": password,
+            "scope": "openid",
+        }
+    ).encode()
+    req = urllib.request.Request(
+        f"{SPEAR_SHIELD_ISSUER_URL}/protocol/openid-connect/token", data=data, method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=15, context=_no_verify_ctx()) as resp:
+        return json.loads(resp.read())["access_token"]
+
+
+def ask_spear_shield(message_text, user_token):
+    username = openshift_username(user_token)
+    password = persona_password(username)
+    shield_token = mint_spear_shield_token(username, password)
+
+    rpc_body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "message/send",
+        "params": {
+            "callerToken": shield_token,
+            "message": {
+                "role": "user",
+                "parts": [{"kind": "text", "text": message_text}],
+                "messageId": f"console-{int(time.time() * 1000)}",
+            },
+        },
+    }
+    req = urllib.request.Request(
+        SPEAR_COORDINATOR_A2A_URL,
+        data=json.dumps(rpc_body).encode(),
+        headers={
+            "Content-Type": "application/json",
+            # the gateway's own authpolicy needs a real bearer token here too.
+            # confirmed live this header does not survive the openshell
+            # relay hop into the coordinator's own sandbox, which is exactly
+            # why the same token is also sent as callerToken above, that is
+            # the one the coordinator's own code actually reads
+            "Authorization": f"Bearer {shield_token}",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=90, context=_no_verify_ctx()) as resp:
+        rpc_response = json.loads(resp.read())
+
+    if "error" in rpc_response:
+        raise RuntimeError(rpc_response["error"].get("message", "spear shield returned an error"))
+
+    artifacts = rpc_response.get("result", {}).get("artifacts", [])
+    texts = [
+        part["text"]
+        for artifact in artifacts
+        for part in artifact.get("parts", [])
+        if part.get("kind") == "text"
+    ]
+    return "\n\n".join(texts) if texts else "no answer came back from spear shield"
+
+
 class Handler(BaseHTTPRequestHandler):
     def _json(self, status, payload):
         body = json.dumps(payload).encode()
@@ -649,10 +762,19 @@ class Handler(BaseHTTPRequestHandler):
                 result["pattern_name"] = winner["pattern_name"]
                 result["dashboard_url"] = dashboard_run_link(result["run_id"])
                 self._json(200, result)
+            elif path == "/spear-shield/ask":
+                message_text = (body.get("message") or "").strip()
+                if not message_text:
+                    self._json(400, {"error": "message is required"})
+                    return
+                answer = ask_spear_shield(message_text, self._user_token())
+                self._json(200, {"answer": answer})
             else:
                 self._json(404, {"error": "Not found"})
         except PermissionError as exc:
             self._json(401, {"error": str(exc)})
+        except LookupError as exc:
+            self._json(403, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001
             self._json(502, {"error": str(exc)})
 

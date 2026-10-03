@@ -65,7 +65,8 @@
     "displayName": "Knowledge Base",
     "description": "project tab: guardrails audit summary, abac tagging and quarantine counts, retrieval optimization result and winning configuration, sourced from the log-ingestion-report mlflow artifact, no recomputation",
     "exposedModules": {
-      "KnowledgeBasePage": "./components/KnowledgeBasePage"
+      "KnowledgeBasePage": "./components/KnowledgeBasePage",
+      "SpearShieldChatPage": "./components/SpearShieldChatPage"
     },
     "dependencies": {
       "@console/pluginAPI": "^4.21.0"

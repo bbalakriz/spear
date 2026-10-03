@@ -118,49 +118,6 @@ apply_templated() {
 # sandbox create / provider import / policy set sequence for the two
 # agents is still a manual, documented sequence, not scripted end to end
 # yet, see PHASE2_PLAN.md section 7 for the real commands actually run
-# confirmed live: spec.network.policy.ingress is a real, operator
-# supported field on the OGXServer cr (oc explain ogxserver.spec.network.
-# policy.ingress), the right way to add a cross namespace rule, unlike
-# hand patching the derived NetworkPolicy object, which the operator's
-# own reconciler reverts within seconds. also confirmed live, the hard
-# way: this distribution replaces the whole ingress list rather than
-# merging it with its own defaults (the field's own description says
-# "merged", that claim does not hold on this installed version), so the
-# operator's own two default rules (same namespace plus
-# redhat-ods-applications on 8321, monitoring on 9464) have to be
-# repeated here explicitly or they silently disappear
-patch_ogx_network_policy() {
-  oc patch ogxserver rag-phase1-ogx -n "${RAG_NS}" --type=merge -p '
-spec:
-  network:
-    policy:
-      enabled: true
-      ingress:
-        - from:
-            - podSelector: {}
-            - namespaceSelector:
-                matchLabels:
-                  kubernetes.io/metadata.name: redhat-ods-applications
-          ports:
-            - protocol: TCP
-              port: 8321
-        - from:
-            - namespaceSelector:
-                matchLabels:
-                  network.openshift.io/policy-group: monitoring
-          ports:
-            - protocol: TCP
-              port: 9464
-        - from:
-            - namespaceSelector:
-                matchLabels:
-                  kubernetes.io/metadata.name: '"${NS}"'
-          ports:
-            - protocol: TCP
-              port: 8321
-'
-}
-
 render_openshell_file() {
   local src="$1" dest="$2"
   sed \
@@ -420,9 +377,6 @@ main() {
     --from-file=server.py="${ROOT_DIR}/mcp-servers/spear-shield-mcp-guard-proxy/server.py" \
     --dry-run=client -o yaml | oc apply -f -
   apply_templated "${MANIFESTS}/08-mcp-guard-proxy.yaml"
-
-  log "ogx's own NetworkPolicy, allow spear-shield-agents in directly via the OGXServer cr's own ingress field, not a hand patch to the derived NetworkPolicy (the operator reverts that silently within seconds, confirmed live)"
-  patch_ogx_network_policy
 
   log "spear-coordinator-agent's own credential for calling rag-phase1-guardrails directly, a dedicated sa plus a long lived token (sandboxes never automount one, confirmed live)"
   oc apply -f "${MANIFESTS}/openshell/coordinator-guardrails-rbac.yaml"

@@ -89,6 +89,43 @@ spec:
   # rh is its replacement.
   distribution:
     name: rh
+  # declared here, not an imperative oc patch from a script: this file
+  # is already the one place that owns this cr, no reason to split its
+  # own network policy out into a separate shell step. confirmed live
+  # 2026-10-03 this field replaces the operator's own default ingress
+  # rules rather than merging with them, despite the field's own stated
+  # description saying merged, so all three rules are listed explicitly:
+  # same namespace plus redhat-ods-applications on 8321 and monitoring
+  # on 9464 are the operator's own defaults, spear-shield-agents is the
+  # one addition this project actually needs, spear-coordinator-agent's
+  # and spear-retrieval-agent's own calls through rag-phase1-guardrails
+  # and the embeddings endpoint
+  network:
+    policy:
+      enabled: true
+      ingress:
+        - from:
+            - podSelector: {}
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: redhat-ods-applications
+          ports:
+            - protocol: TCP
+              port: 8321
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  network.openshift.io/policy-group: monitoring
+          ports:
+            - protocol: TCP
+              port: 9464
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: spear-shield-agents
+          ports:
+            - protocol: TCP
+              port: 8321
   workload:
     overrides:
       env:

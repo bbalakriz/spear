@@ -21,8 +21,22 @@ import ssl
 import urllib.request
 from typing import Any
 
-_PROXY = os.environ.get("OPENSHELL_HTTP_PROXY", "http://127.0.0.1:3128")
-_SSL_CONTEXT = ssl._create_unverified_context()
+# the sandbox supervisor sets the real, standard HTTPS_PROXY/https_proxy
+# env vars itself, confirmed live by reading env inside a running sandbox,
+# OPENSHELL_HTTP_PROXY is not a real var this platform ever sets, an
+# earlier pass here only worked by coincidence, the literal fallback
+# happened to match the real proxy address. kept as a fallback for local
+# dev outside any sandbox, where neither var exists, not as the primary
+# source of truth anymore
+_PROXY = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or "http://127.0.0.1:3128"
+# same supervisor also injects its own ca bundle, confirmed live at
+# /etc/openshell-tls/proxy/ca-bundle.pem (also exposed as SSL_CERT_FILE,
+# REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE), trusting it properly instead of
+# disabling verification outright when it is actually present
+_CA_BUNDLE = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+_SSL_CONTEXT = (
+    ssl.create_default_context(cafile=_CA_BUNDLE) if _CA_BUNDLE else ssl._create_unverified_context()
+)
 _COOKIE_JAR = http.cookiejar.CookieJar()
 _MCP_SESSIONS: dict[str, str] = {}
 _OPENER = urllib.request.build_opener(

@@ -35,6 +35,7 @@ import json
 import os
 import socket
 import sys
+import urllib.error
 from typing import Any
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "_shared"))
@@ -159,6 +160,27 @@ def chat_completion(messages: list[dict[str, Any]]) -> dict[str, Any]:
     )
 
 
+# spear-shield-ogx-relay (relays/spear-shield-ogx-relay/server.py) blocks
+# this call with a real http 400 when either the user's own prompt or the
+# model's own answer trips coordinator-agent-config, confirmed live. that
+# surfaced as a raw "HTTP Error 400: Bad Request" json-rpc error before
+# this wrapper existed, technically correct (the request really was
+# refused) but not something worth showing a real user, so this turns it
+# into a plain answer instead of an exception
+def guarded_chat_completion(messages: list[dict[str, Any]]) -> dict[str, Any] | str:
+    try:
+        return chat_completion(messages)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(body).get("error", {})
+        except json.JSONDecodeError:
+            detail = {}
+        if detail.get("type") == "guardrails_blocked":
+            return "i can't help with that request, it was flagged by this agent's own safety checks."
+        raise
+
+
 def delegate_tool_calls(tool_calls: list[dict[str, Any]], caller_token: str) -> dict[str, str]:
     """hands the model's own chosen tool calls to spear-retrieval-agent in
     one batch, over a2a, and returns {tool_call_id: result_text}. the
@@ -200,7 +222,9 @@ def answer(user_text: str, caller_token: str) -> str:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_text},
     ]
-    first = chat_completion(messages)
+    first = guarded_chat_completion(messages)
+    if isinstance(first, str):
+        return first
     choice = (first.get("choices") or [{}])[0]
     message = choice.get("message") or {}
     tool_calls = message.get("tool_calls") or []
@@ -219,7 +243,9 @@ def answer(user_text: str, caller_token: str) -> str:
             }
         )
 
-    final = chat_completion(messages)
+    final = guarded_chat_completion(messages)
+    if isinstance(final, str):
+        return final
     final_message = (final.get("choices") or [{}])[0].get("message") or {}
     return final_message.get("content") or "no synthesized answer came back from the model"
 

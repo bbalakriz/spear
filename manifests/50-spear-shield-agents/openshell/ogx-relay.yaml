@@ -1,14 +1,20 @@
-# plain http relay for ogx embeddings, deployed inside rag-phase1 itself,
-# not spear-shield-agents, for one concrete reason confirmed live: ogx's
-# own NetworkPolicy (rag-phase1-ogx-network-policy, owned by the
+# http relay for ogx, deployed inside rag-phase1 itself, not
+# spear-shield-agents, for one concrete reason confirmed live: ogx's own
+# NetworkPolicy (rag-phase1-ogx-network-policy, owned by the
 # ogx-operator) only allows ingress from pods already inside rag-phase1
 # plus redhat-ods-applications, and a direct edit to that policy gets
 # silently reverted by the operator's own reconciler within seconds,
 # confirmed by patching it live and immediately re-reading it back
 # unchanged. a relay pod that itself lives inside rag-phase1 already
-# satisfies that same namespace rule, same shape as
-# manifests/50-spear-shield-agents/openshell/auth-token-relay.yaml, a
-# different constraint, the same kind of fix.
+# satisfies that same namespace rule.
+#
+# promoted from a blind inline byte for byte relay to a real file,
+# relays/spear-shield-ogx-relay/server.py, once it needed to do
+# something: a real guardrail check in front of the coordinator's own
+# /v1/chat/completions call, see that file's own docstring for why this
+# is two separate /v1/guardrail/checks calls around an untouched
+# completions call rather than wrapping it. /v1/embeddings (the
+# retrieval agent's own calls through this same relay) is never touched.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,57 +32,39 @@ spec:
       labels:
         app: spear-shield-ogx-relay
     spec:
+      serviceAccountName: spear-shield-ogx-relay
       containers:
         - name: relay
           image: registry.access.redhat.com/ubi9/python-312:latest
+          command: ["python3", "/relay/server.py"]
           ports:
             - name: http
               containerPort: 8080
           env:
             - name: TARGET
               value: http://rag-phase1-ogx-service.rag-phase1.svc.cluster.local:8321
-          command:
-            - python3
-            - -c
-            - |
-              import os
-              import urllib.request
-              from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-              target = os.environ["TARGET"].rstrip("/")
-
-              class Handler(BaseHTTPRequestHandler):
-                  def do_GET(self) -> None:
-                      self._relay("GET")
-
-                  def do_POST(self) -> None:
-                      self._relay("POST")
-
-                  def _relay(self, method: str) -> None:
-                      length = int(self.headers.get("content-length", "0"))
-                      body = self.rfile.read(length) if length else None
-                      req = urllib.request.Request(f"{target}{self.path}", data=body, method=method)
-                      for key, value in self.headers.items():
-                          if key.lower() != "host":
-                              req.add_header(key, value)
-                      try:
-                          with urllib.request.urlopen(req, timeout=30) as resp:
-                              payload = resp.read()
-                              self.send_response(resp.status)
-                              for key, value in resp.headers.items():
-                                  if key.lower() not in ("transfer-encoding", "connection"):
-                                      self.send_header(key, value)
-                              self.end_headers()
-                              if payload:
-                                  self.wfile.write(payload)
-                      except urllib.error.HTTPError as exc:
-                          payload = exc.read()
-                          self.send_response(exc.code)
-                          self.end_headers()
-                          if payload:
-                              self.wfile.write(payload)
-
-              ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+            - name: GUARDRAILS_ROUTE
+              value: GUARDRAILS_ROUTE_PLACEHOLDER
+            - name: GUARDRAILS_CONFIG_ID
+              value: coordinator-agent-config
+          volumeMounts:
+            - name: code
+              mountPath: /relay
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: code
+          configMap:
+            name: spear-shield-ogx-relay-code
 ---
 apiVersion: v1
 kind: Service

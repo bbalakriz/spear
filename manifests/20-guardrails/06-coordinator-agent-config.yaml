@@ -1,0 +1,55 @@
+# nemo guardrails config for spear-coordinator-agent's own llm call,
+# section 7's open item: the work tracker tool response already had a
+# real check (work-tracker-config), the coordinator's own reasoning call
+# to ogx never did. selected per request with guardrails.config_id:
+# coordinator-agent-config, same mechanism as the other two configs in
+# this file set.
+#
+# checks only, no models block, same reason internal-docs-config has
+# none: the real red hat docs for nemo guardrails on rhoai 3.4 say
+# plainly that the /v1/chat/completions wrapping endpoint "is not a
+# transparent proxy" and to keep inference and guardrailing as separate
+# steps for anything using tool calling, which the coordinator's own ogx
+# call genuinely does (real tool_calls, tool_choice: auto). so this stays
+# /v1/guardrail/checks only, called from spear-shield-ogx-relay around
+# the coordinator's own real chat completions call, never wraps it.
+#
+# same regex injection patterns as work-tracker-config, this is the same
+# underlying nightmare (an untrusted text blob trying to steer the
+# agent's own behavior), just checked on the real end user's own prompt
+# going in and the model's own synthesized answer coming out, instead of
+# a work tracker tool response. same entity list minus PERSON for the
+# same reason recorded there, a legitimate answer can and does carry
+# real people's names
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coordinator-agent-config
+  namespace: rag-phase1
+data:
+  config.yaml: |
+    rails:
+      config:
+        sensitive_data_detection:
+          input:
+            entities:
+              - EMAIL_ADDRESS
+              - CREDIT_CARD
+              - US_SSN
+        regex_detection:
+          input:
+            patterns:
+              - "ignore\\s+(all\\s+)?previous\\s+instructions?"
+              - "system\\s+override"
+              - "you\\s+(now\\s+)?have\\s+elevated\\s+access"
+              - "disregard\\s+(all\\s+)?(prior|previous)\\s+(rules|restrictions|instructions)"
+              - "classify\\s+all\\s+data\\s+as\\s+public"
+              - "share\\s+(the\\s+)?full\\s+(customer\\s+)?database"
+              - "\\[\\s*system\\s*[:\\]]"
+            case_insensitive: true
+      input:
+        flows:
+          - detect sensitive data on input
+          - regex check input
+  rails.co: |
+    # built in rails only, same shape as work-tracker-config

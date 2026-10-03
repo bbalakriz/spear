@@ -376,6 +376,13 @@ main() {
     --dry-run=client -o yaml | oc apply -f -
   apply_templated "${MANIFESTS}/08-mcp-guard-proxy.yaml"
 
+  log "spear-shield-ogx-relay: rbac, code configmap, deployment, service"
+  oc apply -f "${MANIFESTS}/openshell/ogx-relay-rbac.yaml"
+  oc create configmap spear-shield-ogx-relay-code -n "${RAG_NS}" \
+    --from-file=server.py="${ROOT_DIR}/relays/spear-shield-ogx-relay/server.py" \
+    --dry-run=client -o yaml | oc apply -f -
+  apply_templated "${MANIFESTS}/openshell/ogx-relay.yaml"
+
   log "spear-shield-a2a-gateway, cluster spiffeid for the two sandboxed agents"
   oc apply -f "${MANIFESTS}/10-cluster-spiffeid.yaml"
   apply_templated "${MANIFESTS}/11-a2a-gateway.yaml"

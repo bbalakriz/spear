@@ -1,4 +1,4 @@
-# one NemoGuardrails cr, three named configs, config_id switches between
+# one NemoGuardrails cr, four named configs, config_id switches between
 # them per request. internal-docs-config is default: true so a request
 # that omits guardrails.config_id (the common case for internal documents)
 # gets it automatically. OPENAI_API_KEY is a required field on the cr even
@@ -25,6 +25,9 @@ spec:
     - name: work-tracker-config
       configMaps:
         - work-tracker-config
+    - name: coordinator-agent-config
+      configMaps:
+        - coordinator-agent-config
   env:
     - name: OPENAI_API_KEY
       value: not-used

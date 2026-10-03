@@ -5,14 +5,18 @@
 # coordinator-agent-config, same mechanism as the other two configs in
 # this file set.
 #
-# checks only, no models block, same reason internal-docs-config has
-# none: the real red hat docs for nemo guardrails on rhoai 3.4 say
-# plainly that the /v1/chat/completions wrapping endpoint "is not a
-# transparent proxy" and to keep inference and guardrailing as separate
-# steps for anything using tool calling, which the coordinator's own ogx
-# call genuinely does (real tool_calls, tool_choice: auto). so this stays
-# /v1/guardrail/checks only, called from spear-shield-ogx-relay around
-# the coordinator's own real chat completions call, never wraps it.
+# real models block this time, the documented rhoai 3.4 pattern: the
+# coordinator points OGX_BASE_URL straight at this guardrails route's
+# own /v1/chat/completions instead of at ogx directly, guardrails runs
+# these input/output rails then forwards to the real model itself. ogx
+# reachable directly from this pod since both live in rag-phase1, no
+# network policy change needed on this leg.
+#
+# base_url, not openai_api_base, confirmed live against the real
+# version installed on this cluster: the doc's own example field name
+# got a real, specific rejection, "config uses 0.21-style langchain
+# conventions... rename openai_api_base to base_url", a genuine doc vs
+# installed version mismatch, not a typo on this file's part
 #
 # same regex injection patterns as work-tracker-config, this is the same
 # underlying nightmare (an untrusted text blob trying to steer the
@@ -28,6 +32,13 @@ metadata:
   namespace: rag-phase1
 data:
   config.yaml: |
+    passthrough: true
+    models:
+      - type: main
+        engine: openai
+        parameters:
+          base_url: "http://rag-phase1-ogx-service.rag-phase1.svc.cluster.local:8321/v1"
+          model_name: "openai/publishers/prelude-maas/models/glm-53-flash"
     rails:
       config:
         sensitive_data_detection:

@@ -40,22 +40,22 @@ network_policies:
       - path: /usr/bin/python3*
       - path: /usr/local/bin/python3*
       - path: /opt/app-root/bin/python3*
-  cluster_ogx:
-    name: cluster-ogx
+  cluster_guardrails:
+    name: cluster-guardrails
     endpoints:
       # the generation model call, glm-53-flash's own real tool calling
-      # confirmed live before this policy was written, not assumed.
-      # routed through spear-shield-ogx-relay, not ogx's own service
-      # directly, same NetworkPolicy constraint spear-retrieval-agent's
-      # own policy hit live, see ../ogx-relay.yaml's own comment
-      - host: spear-shield-ogx-relay.rag-phase1.svc.cluster.local
-        port: 8080
+      # confirmed live before this policy was written, not assumed. goes
+      # straight to rag-phase1-guardrails's own real route, not ogx
+      # directly, coordinator-agent-config's own input/output rails run
+      # here and it forwards to the real model itself, see that config's
+      # own comment. an externally routed hostname, same shape as
+      # cluster_auth above, no allowed_ips for the same reason: the
+      # wildcard apps route resolves outside the cluster/service cidrs
+      - host: GUARDRAILS_HOST_PLACEHOLDER
+        port: 443
         protocol: rest
         enforcement: enforce
         access: read-write
-        allowed_ips:
-          - CLUSTER_NETWORK_CIDR_PLACEHOLDER
-          - SERVICE_NETWORK_CIDR_PLACEHOLDER
     binaries:
       - path: /usr/bin/python3*
       - path: /usr/local/bin/python3*

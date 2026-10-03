@@ -58,11 +58,12 @@ resolve_hosts() {
     echo "could not resolve the sso realm's own route (route 'keycloak' in namespace 'keycloak')" >&2
     exit 1
   fi
-  GUARDRAILS_ROUTE="https://$(oc get route rag-phase1-guardrails -n "${RAG_NS}" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
-  if [[ -z "${GUARDRAILS_ROUTE}" || "${GUARDRAILS_ROUTE}" == "https://" ]]; then
+  GUARDRAILS_HOST="$(oc get route rag-phase1-guardrails -n "${RAG_NS}" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+  if [[ -z "${GUARDRAILS_HOST}" ]]; then
     echo "could not resolve the guardrails route, run scripts/10-install-guardrails.sh first" >&2
     exit 1
   fi
+  GUARDRAILS_ROUTE="https://${GUARDRAILS_HOST}"
   SPIRE_OIDC_ROUTE="https://$(oc get route spire-oidc-discovery-provider -n zero-trust-workload-identity-manager -o jsonpath='{.spec.host}' 2>/dev/null || true)"
   if [[ -z "${SPIRE_OIDC_ROUTE}" || "${SPIRE_OIDC_ROUTE}" == "https://" ]]; then
     echo "could not resolve spire's own oidc discovery route (route 'spire-oidc-discovery-provider' in namespace 'zero-trust-workload-identity-manager')" >&2
@@ -117,11 +118,55 @@ apply_templated() {
 # sandbox create / provider import / policy set sequence for the two
 # agents is still a manual, documented sequence, not scripted end to end
 # yet, see PHASE2_PLAN.md section 7 for the real commands actually run
+# confirmed live: spec.network.policy.ingress is a real, operator
+# supported field on the OGXServer cr (oc explain ogxserver.spec.network.
+# policy.ingress), the right way to add a cross namespace rule, unlike
+# hand patching the derived NetworkPolicy object, which the operator's
+# own reconciler reverts within seconds. also confirmed live, the hard
+# way: this distribution replaces the whole ingress list rather than
+# merging it with its own defaults (the field's own description says
+# "merged", that claim does not hold on this installed version), so the
+# operator's own two default rules (same namespace plus
+# redhat-ods-applications on 8321, monitoring on 9464) have to be
+# repeated here explicitly or they silently disappear
+patch_ogx_network_policy() {
+  oc patch ogxserver rag-phase1-ogx -n "${RAG_NS}" --type=merge -p '
+spec:
+  network:
+    policy:
+      enabled: true
+      ingress:
+        - from:
+            - podSelector: {}
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: redhat-ods-applications
+          ports:
+            - protocol: TCP
+              port: 8321
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  network.openshift.io/policy-group: monitoring
+          ports:
+            - protocol: TCP
+              port: 9464
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: '"${NS}"'
+          ports:
+            - protocol: TCP
+              port: 8321
+'
+}
+
 render_openshell_file() {
   local src="$1" dest="$2"
   sed \
     -e "s|SSO_HOST_PLACEHOLDER|${SSO_HOST}|g" \
     -e "s|ISSUER_URL_PLACEHOLDER|${ISSUER_URL}|g" \
+    -e "s|GUARDRAILS_HOST_PLACEHOLDER|${GUARDRAILS_HOST}|g" \
     -e "s|CLUSTER_NETWORK_CIDR_PLACEHOLDER|${CLUSTER_NETWORK_CIDR}|g" \
     -e "s|SERVICE_NETWORK_CIDR_PLACEHOLDER|${SERVICE_NETWORK_CIDR}|g" \
     "${src}" > "${dest}"
@@ -376,12 +421,11 @@ main() {
     --dry-run=client -o yaml | oc apply -f -
   apply_templated "${MANIFESTS}/08-mcp-guard-proxy.yaml"
 
-  log "spear-shield-ogx-relay: rbac, code configmap, deployment, service"
-  oc apply -f "${MANIFESTS}/openshell/ogx-relay-rbac.yaml"
-  oc create configmap spear-shield-ogx-relay-code -n "${RAG_NS}" \
-    --from-file=server.py="${ROOT_DIR}/relays/spear-shield-ogx-relay/server.py" \
-    --dry-run=client -o yaml | oc apply -f -
-  apply_templated "${MANIFESTS}/openshell/ogx-relay.yaml"
+  log "ogx's own NetworkPolicy, allow spear-shield-agents in directly via the OGXServer cr's own ingress field, not a hand patch to the derived NetworkPolicy (the operator reverts that silently within seconds, confirmed live)"
+  patch_ogx_network_policy
+
+  log "spear-coordinator-agent's own credential for calling rag-phase1-guardrails directly, a dedicated sa plus a long lived token (sandboxes never automount one, confirmed live)"
+  oc apply -f "${MANIFESTS}/openshell/coordinator-guardrails-rbac.yaml"
 
   log "spear-shield-a2a-gateway, cluster spiffeid for the two sandboxed agents"
   oc apply -f "${MANIFESTS}/10-cluster-spiffeid.yaml"

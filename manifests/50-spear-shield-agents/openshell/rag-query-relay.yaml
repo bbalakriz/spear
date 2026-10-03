@@ -1,10 +1,14 @@
 # unsandboxed http wrapper around rag_query.py's own abac_filtered_search,
-# deployed inside rag-phase1 itself, same reasoning as ogx-relay.yaml,
-# a different constraint: this cluster's openshell build does not
-# advertise transparent tcp support, so the sandboxed retrieval agent
+# deployed inside rag-phase1 itself: this cluster's openshell build does
+# not advertise transparent tcp support, so the sandboxed retrieval agent
 # cannot open a raw postgres connection to pgvector at all, see
 # agents/spear-retrieval-agent/rag_query_server.py's own module
-# docstring for the exact error message that proved this live.
+# docstring for the exact error message that proved this live. the
+# ogx embeddings call below needs no such workaround, this pod already
+# lives in rag-phase1 itself, same namespace ogx's own default
+# NetworkPolicy already allows, calling it directly was always possible,
+# an earlier revision of this file routed it through a now removed relay
+# that this one specific call never actually needed
 #
 # built from the same image as spear-coordinator-agent's own sibling,
 # spear-retrieval-agent, already pushed to spear-shield-agents' internal
@@ -39,7 +43,7 @@ spec:
             - name: PORT
               value: "8080"
             - name: OGX_BASE_URL
-              value: http://spear-shield-ogx-relay.rag-phase1.svc.cluster.local:8080
+              value: http://rag-phase1-ogx-service.rag-phase1.svc.cluster.local:8321
             - name: PGVECTOR_HOST
               value: pgvector.rag-phase1.svc.cluster.local
             - name: PGVECTOR_DB_PORT

@@ -1,0 +1,53 @@
+# spear-coordinator-agent's own credential for calling
+# rag-phase1-guardrails directly, same plain unscoped "get services" rbac
+# shape as 09-guardrails-rbac.yaml, not the resourceName scoped one in
+# 04-pipeline-rbac.yaml (confirmed live earlier in this project that the
+# resourceName scoped version silently 403s despite a passing
+# subjectaccessreview).
+#
+# a long lived token secret, not a projected volume, on purpose: the
+# coordinator sandbox pod sets automountServiceAccountToken: false,
+# confirmed live, openshell sandboxes never get one, so there is no
+# per-pod sa token this sandbox could read the way
+# spear-shield-mcp-guard-proxy does. this static token gets handed to
+# the sandbox instead, as OGX_API_KEY, the same env var main.py already
+# supports for an openai-style Authorization bearer header, no new code
+# needed on the coordinator's own side for this
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-coordinator-guardrails-caller
+  namespace: rag-phase1
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spear-coordinator-guardrails-caller-token
+  namespace: rag-phase1
+  annotations:
+    kubernetes.io/service-account.name: spear-coordinator-guardrails-caller
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rag-phase1-guardrails-caller-spear-coordinator
+  namespace: rag-phase1
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rag-phase1-guardrails-caller-spear-coordinator
+  namespace: rag-phase1
+subjects:
+  - kind: ServiceAccount
+    name: spear-coordinator-guardrails-caller
+    namespace: rag-phase1
+roleRef:
+  kind: Role
+  name: rag-phase1-guardrails-caller-spear-coordinator
+  apiGroup: rbac.authorization.k8s.io

@@ -27,7 +27,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.append(os.path.dirname(__file__))
 from rag_query import abac_filtered_search, connect, embed_query  # noqa: E402
 
-OGX_BASE_URL = os.environ.get("OGX_BASE_URL", "http://spear-shield-ogx-relay.rag-phase1.svc.cluster.local:8080")
+# this pod already lives in rag-phase1 itself, same namespace ogx's own
+# default NetworkPolicy already allows, no relay needed for this call
+OGX_BASE_URL = os.environ.get("OGX_BASE_URL", "http://rag-phase1-ogx-service.rag-phase1.svc.cluster.local:8321")
 
 
 class Handler(BaseHTTPRequestHandler):

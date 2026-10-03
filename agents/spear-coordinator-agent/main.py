@@ -35,7 +35,6 @@ import json
 import os
 import socket
 import sys
-import urllib.error
 from typing import Any
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "_shared"))
@@ -58,13 +57,23 @@ RETRIEVAL_A2A_URL = os.environ.get(
     "RETRIEVAL_A2A_URL", "http://spear-retrieval-a2a-gateway.spear-shield-agents.svc.cluster.local:80"
 ).rstrip("/")
 
-# routed through spear-shield-ogx-relay, not ogx's own service
-# directly, same reason spear-retrieval-agent's own main.py documents:
-# ogx's own NetworkPolicy only allows ingress from pods already inside
-# rag-phase1 itself, confirmed live, a manual patch to that policy got
-# silently reverted by the ogx-operator's own reconciler within seconds
-OGX_BASE_URL = os.environ.get("OGX_BASE_URL", "http://spear-shield-ogx-relay.rag-phase1.svc.cluster.local:8080")
+# points straight at rag-phase1-guardrails's own route, not at ogx
+# directly: this agent's own reasoning call now runs through
+# coordinator-agent-config's input/output rails, manifests/20-guardrails,
+# which itself forwards to the real model (its own models: block). ogx's
+# NetworkPolicy, confirmed live, only allows ingress from rag-phase1
+# itself plus redhat-ods-applications, resolved the right way, through
+# the OGXServer cr's own spec.network.policy.ingress field rather than
+# hand patching the derived NetworkPolicy (which the operator silently
+# reverts), see scripts/08-install-spear-shield-agents.sh's own
+# patch_ogx_network_policy
+OGX_BASE_URL = os.environ.get("OGX_BASE_URL", "https://GUARDRAILS_HOST_PLACEHOLDER")
+# a dedicated service account's own long lived token, not a dynamic grant:
+# openshell sandboxes set automountServiceAccountToken: false, confirmed
+# live, so there is no per-pod token to read the way an ordinary
+# deployment would, see coordinator-guardrails-rbac.yaml's own comment
 OGX_API_KEY = os.environ.get("OGX_API_KEY", "")
+GUARDRAILS_CONFIG_ID = os.environ.get("GUARDRAILS_CONFIG_ID", "coordinator-agent-config")
 # glm-53-flash's own /v1/chat/completions tool calling confirmed live
 # before writing this file, real finish_reason tool_calls, real
 # function name and arguments back, not assumed from the "tool calling
@@ -150,35 +159,28 @@ def agent_card() -> dict[str, Any]:
 
 
 def chat_completion(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    # passthrough: true in coordinator-agent-config is what makes tools/
+    # tool_choice actually work here, confirmed live: without it nemo
+    # guardrails' own /v1/chat/completions rejects any request carrying
+    # them outright, "only supported for non-streaming requests when the
+    # guardrails configuration has 'passthrough: true'". a blocked rail
+    # still fires in passthrough mode, confirmed live too, it comes back
+    # as a normal 200 with a refusal message in message.content, same
+    # shape as any other answer, nothing special to catch here
     headers = {"content-type": "application/json"}
     if OGX_API_KEY:
         headers["authorization"] = f"Bearer {OGX_API_KEY}"
     return http_json(
         f"{OGX_BASE_URL}/v1/chat/completions",
-        {"model": GENERATION_MODEL, "messages": messages, "tools": TOOLS, "tool_choice": "auto"},
+        {
+            "model": GENERATION_MODEL,
+            "messages": messages,
+            "tools": TOOLS,
+            "tool_choice": "auto",
+            "guardrails": {"config_id": GUARDRAILS_CONFIG_ID},
+        },
         extra_headers=headers,
     )
-
-
-# spear-shield-ogx-relay (relays/spear-shield-ogx-relay/server.py) blocks
-# this call with a real http 400 when either the user's own prompt or the
-# model's own answer trips coordinator-agent-config, confirmed live. that
-# surfaced as a raw "HTTP Error 400: Bad Request" json-rpc error before
-# this wrapper existed, technically correct (the request really was
-# refused) but not something worth showing a real user, so this turns it
-# into a plain answer instead of an exception
-def guarded_chat_completion(messages: list[dict[str, Any]]) -> dict[str, Any] | str:
-    try:
-        return chat_completion(messages)
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        try:
-            detail = json.loads(body).get("error", {})
-        except json.JSONDecodeError:
-            detail = {}
-        if detail.get("type") == "guardrails_blocked":
-            return "i can't help with that request, it was flagged by this agent's own safety checks."
-        raise
 
 
 def delegate_tool_calls(tool_calls: list[dict[str, Any]], caller_token: str) -> dict[str, str]:
@@ -217,37 +219,51 @@ def delegate_tool_calls(tool_calls: list[dict[str, Any]], caller_token: str) -> 
     return {tc["id"]: by_id.get(tc["id"], json.dumps({"error": "no result returned for this tool call"})) for tc in tool_calls}
 
 
+# a real refusal (e.g. a 403 on someone else's work package, confirmed
+# live) often makes the model try a second, different tool before it
+# gives up and writes an actual answer, a genuine multi round agent
+# loop, not a single question/single tool/single answer shape. found
+# live when the privilege escalation test's first tool call came back
+# 403 and the model's very next move was another tool_calls response,
+# which the old single round version here had no way to handle and
+# just returned an empty "no synthesized answer" placeholder
+MAX_TOOL_ROUNDS = 4
+
+
 def answer(user_text: str, caller_token: str) -> str:
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_text},
     ]
-    first = guarded_chat_completion(messages)
-    if isinstance(first, str):
-        return first
-    choice = (first.get("choices") or [{}])[0]
-    message = choice.get("message") or {}
-    tool_calls = message.get("tool_calls") or []
 
-    if not tool_calls:
-        return message.get("content") or "no answer came back from the model"
+    for _ in range(MAX_TOOL_ROUNDS):
+        response = chat_completion(messages)
+        choice = (response.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        tool_calls = message.get("tool_calls") or []
 
-    messages.append(message)
-    results_by_id = delegate_tool_calls(tool_calls, caller_token)
-    for tc in tool_calls:
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": results_by_id.get(tc["id"], json.dumps({"error": "no result"})),
-            }
-        )
+        if not tool_calls:
+            return message.get("content") or "no answer came back from the model"
 
-    final = guarded_chat_completion(messages)
-    if isinstance(final, str):
-        return final
-    final_message = (final.get("choices") or [{}])[0].get("message") or {}
-    return final_message.get("content") or "no synthesized answer came back from the model"
+        # nemo guardrails own get_history_cache_key indexes every message
+        # by msg["content"] unconditionally, confirmed live via a real
+        # KeyError in its pod logs, so a tool call message with no
+        # content key at all (the plain openai shape) blows up the next
+        # call. append a content key even though it is empty, this is a
+        # guardrails quirk not an openai requirement
+        message.setdefault("content", "")
+        messages.append(message)
+        results_by_id = delegate_tool_calls(tool_calls, caller_token)
+        for tc in tool_calls:
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": results_by_id.get(tc["id"], json.dumps({"error": "no result"})),
+                }
+            )
+
+    return "the model kept calling tools without giving a final answer, stopping after too many rounds"
 
 
 def on_rpc(body: dict[str, Any], auth_header: str) -> dict[str, Any] | None:

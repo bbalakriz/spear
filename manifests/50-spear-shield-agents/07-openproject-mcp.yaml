@@ -102,7 +102,11 @@ spec:
               - name: X-Spear-Shield-Backend-Secret
                 value: MCP_BACKEND_SECRET_PLACEHOLDER
       backendRefs:
-        - name: spear-openproject-mcp
+        # points at the guard proxy, not this server directly, confirmed
+        # live this backendref was hand patched during this session and
+        # never written back here until now, see 08-mcp-guard-proxy.yaml's
+        # own comment for why this hop exists
+        - name: spear-shield-mcp-guard-proxy
           port: 8000
 ---
 apiVersion: mcp.kuadrant.io/v1alpha1

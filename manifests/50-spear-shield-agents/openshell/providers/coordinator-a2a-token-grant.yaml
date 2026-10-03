@@ -27,8 +27,8 @@ credentials:
     header_name: Authorization
     token_grant:
       grant_type: client_credentials
-      token_endpoint: https://sso.apps.cluster-rf7lv.dyn.redhatworkshops.io/realms/spear-shield-agents/protocol/openid-connect/token
-      jwt_svid_audience: https://sso.apps.cluster-rf7lv.dyn.redhatworkshops.io/realms/spear-shield-agents
+      token_endpoint: ISSUER_URL_PLACEHOLDER/protocol/openid-connect/token
+      jwt_svid_audience: ISSUER_URL_PLACEHOLDER
       client_assertion_type: urn:ietf:params:oauth:client-assertion-type:jwt-spiffe
       cache_ttl_seconds: 240
 endpoints:

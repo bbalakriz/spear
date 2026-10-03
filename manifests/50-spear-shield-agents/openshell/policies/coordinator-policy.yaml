@@ -26,7 +26,7 @@ network_policies:
       # a plain rest endpoint on port 443, no separate protocol literal
       # needed. an earlier pass here went through a plaintext relay on
       # the wrong assumption that the rest proxy could not do tls at all
-      - host: sso.apps.cluster-rf7lv.dyn.redhatworkshops.io
+      - host: SSO_HOST_PLACEHOLDER
         port: 443
         protocol: rest
         enforcement: enforce

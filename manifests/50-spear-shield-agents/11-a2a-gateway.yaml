@@ -105,19 +105,19 @@ spec:
   # authorino accepts the request if either issuer validates, same
   # dual path shape as the reference's own specialist-a2a-auth: a
   # keycloak jwt for spear-coordinator-workload's own client credentials
-  # grant (works today) or a spire issued jwt-svid asserted straight
-  # from the coordinator sandbox's own token_grant provider (the real
-  # path this project actually wants, confirmed live this session that
-  # the realm's federated-jwt client authenticator is wired up, not yet
-  # confirmed end to end against this specific authpolicy)
+  # grant, or a spire issued jwt-svid asserted straight from the
+  # coordinator sandbox's own token_grant provider, confirmed live end
+  # to end this session, gateway policy engine logs show ALLOWED on the
+  # coordinator's real a2a call using a token minted through this exact
+  # path, not just the realm's own federated-jwt authenticator in isolation
   rules:
     authentication:
       spear-shield-keycloak:
         jwt:
-          issuerUrl: https://sso.apps.cluster-rf7lv.dyn.redhatworkshops.io/realms/spear-shield-agents
+          issuerUrl: ISSUER_URL_PLACEHOLDER
       spear-shield-spire:
         jwt:
-          issuerUrl: https://spire-oidc.apps.cluster-rf7lv.dyn.redhatworkshops.io
+          issuerUrl: SPIRE_OIDC_ROUTE_PLACEHOLDER
     response:
       unauthenticated:
         code: 401

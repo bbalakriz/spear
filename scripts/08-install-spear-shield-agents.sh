@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # phase 2's spear-shield-agents namespace: the realm, the self hosted
-# openproject work tracker, spear-openproject-mcp, and the gateway/auth
-# policy chain in front of it. see PHASE2_PLAN.md sections 2, 4, 5, 6.
+# openproject work tracker, spear-openproject-mcp, the gateway/auth
+# policy chain in front of it, the guard proxy, and the a2a gateway plus
+# cluster spiffeid the two sandboxed agents depend on. see PHASE2_PLAN.md
+# sections 2, 4, 5, 6, 7. the sandboxed agents themselves (image builds,
+# sandbox create, policy, provider) are still a manual command sequence,
+# not scripted end to end here, see the comment above the agents block
+# in main() below
 #
 # nothing in here is cluster specific. every hostname (this cluster's own
 # apps domain, the sso route, the guardrails route) is either constructed
@@ -58,6 +63,20 @@ resolve_hosts() {
     echo "could not resolve the guardrails route, run scripts/10-install-guardrails.sh first" >&2
     exit 1
   fi
+  SPIRE_OIDC_ROUTE="https://$(oc get route spire-oidc-discovery-provider -n zero-trust-workload-identity-manager -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+  if [[ -z "${SPIRE_OIDC_ROUTE}" || "${SPIRE_OIDC_ROUTE}" == "https://" ]]; then
+    echo "could not resolve spire's own oidc discovery route (route 'spire-oidc-discovery-provider' in namespace 'zero-trust-workload-identity-manager')" >&2
+    exit 1
+  fi
+  # the two cidrs every openshell sandbox network policy in this project
+  # allowlists, read from the real cluster config, not typed in, same
+  # values confirmed live earlier this session via this exact command
+  CLUSTER_NETWORK_CIDR="$(oc get network.config.openshift.io cluster -o jsonpath='{.spec.clusterNetwork[0].cidr}')"
+  SERVICE_NETWORK_CIDR="$(oc get network.config.openshift.io cluster -o jsonpath='{.spec.serviceNetwork[0]}')"
+  if [[ -z "${CLUSTER_NETWORK_CIDR}" || -z "${SERVICE_NETWORK_CIDR}" ]]; then
+    echo "could not resolve this cluster's own network/service cidrs" >&2
+    exit 1
+  fi
 
   # these two are ours, not pre-existing, constructed the same way the
   # reference's own deploy-agent-pack.sh builds MCP_PUBLIC_HOST, not
@@ -72,6 +91,7 @@ resolve_hosts() {
   log "openproject host:  ${OPENPROJECT_HOST}"
   log "mcp public host:   ${MCP_PUBLIC_HOST}"
   log "guardrails route:  ${GUARDRAILS_ROUTE}"
+  log "spire oidc route:  ${SPIRE_OIDC_ROUTE}"
 }
 
 apply_templated() {
@@ -81,8 +101,31 @@ apply_templated() {
     -e "s|MCP_PUBLIC_HOST_PLACEHOLDER|${MCP_PUBLIC_HOST}|g" \
     -e "s|ISSUER_URL_PLACEHOLDER|${ISSUER_URL}|g" \
     -e "s|GUARDRAILS_ROUTE_PLACEHOLDER|${GUARDRAILS_ROUTE}|g" \
+    -e "s|SPIRE_OIDC_ROUTE_PLACEHOLDER|${SPIRE_OIDC_ROUTE}|g" \
     -e "s|MCP_BACKEND_SECRET_PLACEHOLDER|${MCP_BACKEND_SECRET}|g" \
     "${file}" | oc apply -f -
+}
+
+# same placeholder convention as apply_templated above, but for files the
+# openshell cli consumes directly from a local path rather than oc apply,
+# manifests/50-spear-shield-agents/openshell/policies/coordinator-policy.yaml
+# and openshell/providers/coordinator-a2a-token-grant.yaml. writes the
+# substituted copy to a tmp path and prints it, caller passes that path to
+# the relevant openshell command. SSO_HOST_PLACEHOLDER is the bare host
+# (no scheme), the policy's own network_policies entries need a bare host,
+# not a url. this only substitutes, it does not itself run openshell, the
+# sandbox create / provider import / policy set sequence for the two
+# agents is still a manual, documented sequence, not scripted end to end
+# yet, see PHASE2_PLAN.md section 7 for the real commands actually run
+render_openshell_file() {
+  local src="$1" dest="$2"
+  sed \
+    -e "s|SSO_HOST_PLACEHOLDER|${SSO_HOST}|g" \
+    -e "s|ISSUER_URL_PLACEHOLDER|${ISSUER_URL}|g" \
+    -e "s|CLUSTER_NETWORK_CIDR_PLACEHOLDER|${CLUSTER_NETWORK_CIDR}|g" \
+    -e "s|SERVICE_NETWORK_CIDR_PLACEHOLDER|${SERVICE_NETWORK_CIDR}|g" \
+    "${src}" > "${dest}"
+  log "rendered ${src} -> ${dest}"
 }
 
 # same known limitation as the reference project's own
@@ -326,6 +369,25 @@ main() {
 
   log "ext_proc body mode fix (see comment on patch_mcp_ext_proc_buffered)"
   patch_mcp_ext_proc_buffered
+
+  log "spear-shield-mcp-guard-proxy code configmap, deployment, service"
+  oc create configmap spear-shield-mcp-guard-proxy-code -n "${NS}" \
+    --from-file=server.py="${ROOT_DIR}/mcp-servers/spear-shield-mcp-guard-proxy/server.py" \
+    --dry-run=client -o yaml | oc apply -f -
+  apply_templated "${MANIFESTS}/08-mcp-guard-proxy.yaml"
+
+  log "spear-shield-a2a-gateway, cluster spiffeid for the two sandboxed agents"
+  oc apply -f "${MANIFESTS}/10-cluster-spiffeid.yaml"
+  apply_templated "${MANIFESTS}/11-a2a-gateway.yaml"
+
+  # the sandboxed agents themselves, build/create/policy/provider, are
+  # still a manual, documented command sequence, not scripted end to end
+  # here, see PHASE2_PLAN.md section 7 for the real commands. the two
+  # files those commands consume, openshell/policies/coordinator-policy.yaml
+  # and openshell/providers/coordinator-a2a-token-grant.yaml, now carry
+  # the same placeholder convention as everything else in this script,
+  # render_openshell_file above substitutes them the same way, run it
+  # before passing either file to an openshell command
 
   cat <<EOF
 

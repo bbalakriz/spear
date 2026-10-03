@@ -66,9 +66,11 @@ PUBLIC_URL = os.environ.get("AGENT_PUBLIC_URL", f"http://{NAME}:{PORT}/")
 MCP_GATEWAY_URL = os.environ.get(
     "MCP_GATEWAY_URL", "http://spear-shield-gateway-istio.spear-shield-agents.svc.cluster.local:8080/mcp"
 )
-MCP_GATEWAY_HOST_HEADER = os.environ.get(
-    "MCP_GATEWAY_HOST_HEADER", "mcp-spear-shield-agents.apps.cluster-rf7lv.dyn.redhatworkshops.io"
-)
+# no cluster specific fallback on purpose, nothing in this source tree
+# should bake in one cluster's own hostname, this always comes from the
+# --env the sandbox was created with (scripts/08-install-spear-shield-agents.sh's
+# own resolve_hosts, MCP_PUBLIC_HOST)
+MCP_GATEWAY_HOST_HEADER = os.environ["MCP_GATEWAY_HOST_HEADER"]
 # the broker prefixes every federated tool name with the registered mcp
 # server's own short name, confirmed live in section 4,
 # openproject_search_work_packages / openproject_update_work_package,

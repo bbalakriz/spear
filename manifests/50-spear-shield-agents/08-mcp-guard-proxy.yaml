@@ -46,7 +46,7 @@ spec:
             # resolve_upstream. UPSTREAM_URL can still be set to give this
             # a fallback for direct testing that bypasses the gateway
             - name: GUARDRAILS_ROUTE
-              value: https://rag-phase1-guardrails-rag-phase1.apps.cluster-rf7lv.dyn.redhatworkshops.io
+              value: GUARDRAILS_ROUTE_PLACEHOLDER
             - name: GUARDRAILS_CONFIG_ID
               value: work-tracker-config
           volumeMounts:

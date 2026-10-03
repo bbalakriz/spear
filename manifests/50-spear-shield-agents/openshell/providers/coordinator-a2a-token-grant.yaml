@@ -8,6 +8,13 @@
 # own coordinator-a2a-token-grant.yaml.tmpl, same shape, this project's
 # own real values already substituted, not left as placeholders, since
 # this runs against a single known realm rather than a templated script.
+#
+# token_endpoint points straight at keycloak's own real https route, confirmed
+# live openshell 0.0.116 does tls to the real backend automatically for a plain
+# rest endpoint on port 443, no separate protocol literal needed. an earlier
+# pass here routed this through a plaintext http relay (auth-token-relay.yaml)
+# on the wrong assumption that the sandbox's rest proxy could not do tls at
+# all, now removed since the direct route is live tested and simpler.
 id: coordinator-a2a-token-grant
 display_name: coordinator a2a via spiffe token grant
 description: spiffe jwt-svid client assertion to keycloak for retrieval agent a2a
@@ -20,9 +27,7 @@ credentials:
     header_name: Authorization
     token_grant:
       grant_type: client_credentials
-      # routed through the plain http relay, not keycloak's real https
-      # endpoint directly, see ../auth-token-relay.yaml's own comment
-      token_endpoint: http://spear-shield-auth-token.spear-shield-agents.svc.cluster.local:8080/realms/spear-shield-agents/protocol/openid-connect/token
+      token_endpoint: https://sso.apps.cluster-rf7lv.dyn.redhatworkshops.io/realms/spear-shield-agents/protocol/openid-connect/token
       jwt_svid_audience: https://sso.apps.cluster-rf7lv.dyn.redhatworkshops.io/realms/spear-shield-agents
       client_assertion_type: urn:ietf:params:oauth:client-assertion-type:jwt-spiffe
       cache_ttl_seconds: 240

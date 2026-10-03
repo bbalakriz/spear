@@ -20,21 +20,22 @@ network_policies:
     name: cluster-auth
     endpoints:
       # the sandbox supervisor's own token_grant provider needs to reach
-      # keycloak to mint this sandbox's workload access token, same
-      # reason the reference needed its own auth-token-relay: the
-      # sandbox's rest protocol handler only bridges plain http, so a
-      # plain http to https relay stands in front of the real keycloak
-      # hostname, see manifests/50-spear-shield-agents/openshell/auth-token-relay.yaml
-      - host: spear-shield-auth-token.spear-shield-agents.svc.cluster.local
-        # service name is spear-shield-auth-token, the -relay suffix only
-        # applies to the deployment name, see auth-token-relay.yaml
-        port: 8080
+      # keycloak to mint this sandbox's workload access token. goes
+      # straight to keycloak's own real https route now, confirmed live
+      # openshell 0.0.116 does tls to the real backend automatically for
+      # a plain rest endpoint on port 443, no separate protocol literal
+      # needed. an earlier pass here went through a plaintext relay on
+      # the wrong assumption that the rest proxy could not do tls at all
+      - host: sso.apps.cluster-rf7lv.dyn.redhatworkshops.io
+        port: 443
         protocol: rest
         enforcement: enforce
         access: read-write
-        allowed_ips:
-          - CLUSTER_NETWORK_CIDR_PLACEHOLDER
-          - SERVICE_NETWORK_CIDR_PLACEHOLDER
+        # no allowed_ips here on purpose, this is the one endpoint in this
+        # policy that is not an in cluster service. confirmed live the
+        # wildcard apps route resolves to 10.10.10.101, outside both the
+        # cluster and service network cidrs used everywhere else below, so
+        # restricting to those two cidrs would wrongly block this one
     binaries:
       - path: /usr/bin/python3*
       - path: /usr/local/bin/python3*

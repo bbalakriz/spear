@@ -219,14 +219,15 @@ def delegate_tool_calls(tool_calls: list[dict[str, Any]], caller_token: str) -> 
     return {tc["id"]: by_id.get(tc["id"], json.dumps({"error": "no result returned for this tool call"})) for tc in tool_calls}
 
 
-# a real refusal (e.g. a 403 on someone else's work package, confirmed
-# live) often makes the model try a second, different tool before it
-# gives up and writes an actual answer, a genuine multi round agent
-# loop, not a single question/single tool/single answer shape. found
-# live when the privilege escalation test's first tool call came back
-# 403 and the model's very next move was another tool_calls response,
-# which the old single round version here had no way to handle and
-# just returned an empty "no synthesized answer" placeholder
+# a real tool refusal (e.g. openproject's own rbac returning a 403 on
+# someone else's work package, confirmed live) often makes the model try
+# a second, different tool before it gives up and writes an actual
+# answer, a genuine multi round agent loop, not a single question/single
+# tool/single answer shape. found live when a real cross user update
+# attempt's first tool call came back 403 and the model's very next move
+# was another tool_calls response, which the old single round version
+# here had no way to handle and just returned an empty "no synthesized
+# answer" placeholder
 MAX_TOOL_ROUNDS = 4
 
 

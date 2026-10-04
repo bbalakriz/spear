@@ -1,0 +1,33 @@
+# the phase 2 namespace, spear-shield-agents. holds spear-shield-mcp-guard-proxy
+# and both agent sandboxes. the work tracker itself moved out to its own
+# spear-worktracker namespace, see NAMESPACE_MIGRATION_PLAN.md. entirely
+# separate from agent-pack, which stays reference only, see PHASE2_PLAN.md
+# section 2
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+    kubernetes.io/metadata.name: spear-shield-agents
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-shield-agents
+  namespace: spear-shield-agents
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: spear-shield-agents
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - {}
+  egress:
+    - {}

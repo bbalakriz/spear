@@ -1,0 +1,21 @@
+# backend for the phase1-ingestion-console ConsolePlugin's spec.proxy,
+# PHASE1_PLAN.md section 6, just the service account identity here. its
+# mlflow read grant lives in manifests/spear-pipelines/04-console-backend-mlflow-rbac.yaml
+# instead, not here: correction, 2026-10-04, this file used to also carry
+# a get/list Role+RoleBinding scoped to this same spear-console namespace,
+# believing that was mlflow's own SubjectAccessReview check scope. live
+# behaviour proved otherwise: mlflow checks against the namespace matching
+# the request's X-MLflow-Workspace header value (spear-pipelines), not the
+# caller's own home namespace, so that grant here did nothing at all, and
+# this service account kept getting {"experiments": []} back regardless.
+#
+# NAMESPACE_MIGRATION_PLAN.md: resource names kept as is
+# (phase1-ingestion-console-backend), only the namespace moved, see that
+# file's own section 1 for why the deeper owner-console/owner-console-backend
+# source tree and component rename is deliberately out of scope for
+# this pass
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: phase1-ingestion-console-backend
+  namespace: spear-console

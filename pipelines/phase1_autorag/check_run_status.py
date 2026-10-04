@@ -19,7 +19,7 @@ def current_token() -> str:
 def dspa_route() -> str:
     # resolved live, this route hostname is unique per cluster, never hardcode it
     host = subprocess.run(
-        ["oc", "get", "route", "ds-pipeline-rag-phase1-dspa", "-n", "rag-phase1",
+        ["oc", "get", "route", "ds-pipeline-rag-phase1-dspa", "-n", "spear-pipelines",
          "-o", "jsonpath={.spec.host}"],
         check=True, capture_output=True, text=True,
     ).stdout.strip()

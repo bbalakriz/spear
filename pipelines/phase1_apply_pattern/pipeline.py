@@ -48,8 +48,8 @@ BASE_IMAGE = "registry.access.redhat.com/ubi9/python-311:latest"
 MINIO_ENDPOINT_DEFAULT = "minio.minio.svc.cluster.local:9000"
 RAW_BUCKET_DEFAULT = "rag-documents"
 SANITIZED_PREFIX_DEFAULT = "sanitized/"
-OGX_BASE_URL_DEFAULT = "http://rag-phase1-ogx-service.rag-phase1.svc.cluster.local:8321"
-MLFLOW_WORKSPACE_DEFAULT = "rag-phase1"
+OGX_BASE_URL_DEFAULT = "http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321"
+MLFLOW_WORKSPACE_DEFAULT = "spear-pipelines"
 INGESTION_EXPERIMENT_NAME_DEFAULT = "phase1-ingestion"
 APPLY_EXPERIMENT_NAME_DEFAULT = "phase1-apply-pattern"
 
@@ -430,7 +430,7 @@ def phase1_apply_pattern_pipeline(
     minio_endpoint: str = MINIO_ENDPOINT_DEFAULT,
     raw_bucket: str = RAW_BUCKET_DEFAULT,
     sanitized_prefix: str = SANITIZED_PREFIX_DEFAULT,
-    pgvector_host: str = "pgvector.rag-phase1.svc.cluster.local",
+    pgvector_host: str = "pgvector.spear-data.svc.cluster.local",
     pgvector_port: str = "5432",
     pgvector_db: str = "ragdb",
     ogx_base_url: str = OGX_BASE_URL_DEFAULT,

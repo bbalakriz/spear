@@ -1,0 +1,22 @@
+# new, required by NAMESPACE_MIGRATION_PLAN.md: spear-openproject-mcp's
+# own HTTPRoute moved into spear-worktracker, a different namespace than
+# spear-shield-mcp-guard-proxy's own Service it still needs to reach as
+# its backendref target. gateway api's own cross namespace backendref
+# rule requires a ReferenceGrant living in the target namespace (here)
+# naming both the source kind/namespace and the target kind, plain name
+# matching is not enough on its own, re verify live once applied, not
+# assumed
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: spear-worktracker-to-guard-proxy
+  namespace: spear-shield-agents
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: spear-worktracker
+  to:
+    - group: ""
+      kind: Service
+      name: spear-shield-mcp-guard-proxy

@@ -1,0 +1,27 @@
+# external route to the shared openshell gateway, same shape as the
+# reference's own manifests/30-openshell/route.yaml. not applied by any
+# script in this project, 09-install-worktracker-and-agents.sh reaches
+# the gateway through a local port-forward instead, kept here only for
+# anyone who wants real external cli access later.
+#
+# NAMESPACE_MIGRATION_PLAN.md: this used to target a second, independent
+# release in its own spear-shield-openshell namespace, confirmed live
+# that namespace was never actually created on this cluster, the real
+# release is the single shared one, name openshell, namespace openshell,
+# see 07-a2a-gateway.yaml's own comment for how that was confirmed.
+# CLUSTER_DOMAIN_PLACEHOLDER substituted at apply time, same pattern.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: openshell
+  namespace: openshell
+spec:
+  host: openshell-gw.CLUSTER_DOMAIN_PLACEHOLDER
+  to:
+    kind: Service
+    name: openshell
+  port:
+    targetPort: grpc
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Allow

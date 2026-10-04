@@ -1,0 +1,76 @@
+# unsandboxed http wrapper around rag_query.py's own abac_filtered_search,
+# deployed inside spear-data itself, alongside pgvector,
+# NAMESPACE_MIGRATION_PLAN.md section 8: this cluster's openshell build
+# does not advertise transparent tcp support, so the sandboxed retrieval
+# agent cannot open a raw postgres connection to pgvector at all, see
+# agents/spear-retrieval-agent/rag_query_server.py's own module
+# docstring for the exact error message that proved this live. the ogx
+# embeddings call below crosses into spear-inference now that pgvector
+# and ogx no longer share a namespace, needs a matching ingress rule on
+# ogx's own network policy, see manifests/spear-inference/01-ogxserver.yaml
+#
+# built from the same image as spear-coordinator-agent's own sibling,
+# spear-retrieval-agent, already pushed to spear-shield-agents' internal
+# registry, just run with a different command here: a container image
+# is not sandbox specific, only the openshell sandbox create invocation
+# that uses it is.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spear-shield-rag-query-relay
+  namespace: spear-data
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spear-shield-rag-query-relay
+  template:
+    metadata:
+      labels:
+        app: spear-shield-rag-query-relay
+    spec:
+      containers:
+        - name: relay
+          image: image-registry.openshift-image-registry.svc:5000/spear-shield-agents/spear-retrieval-agent:latest
+          command: ["python3", "/sandbox/rag_query_server.py"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: OGX_BASE_URL
+              value: http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321
+            - name: PGVECTOR_HOST
+              value: pgvector.spear-data.svc.cluster.local
+            - name: PGVECTOR_DB_PORT
+              value: "5432"
+            - name: PGVECTOR_DB
+              value: ragdb
+            - name: PGVECTOR_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-creds
+                  key: user
+            - name: PGVECTOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-creds
+                  key: password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-shield-rag-query-relay
+  namespace: spear-data
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  selector:
+    app: spear-shield-rag-query-relay
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

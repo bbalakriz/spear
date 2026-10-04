@@ -56,24 +56,32 @@ VECTOR_IO_PROVIDER_ID = "pgvector"
 # litemaas is hard capped at 512 tokens server side (below the 700 token
 # minimum this pipeline itself requires), replaced with a self hosted
 # tei server serving nomic-embed-text-v1.5 at a real 8192 token context,
-# see manifests/30-ogx/01-ogxserver.yaml and
-# 04-embed-server.yaml
+# see manifests/spear-inference/01-ogxserver.yaml and
+# 02-embed-server.yaml
 #
-# glm-53-flash is genuinely unusable here, confirmed 2026-09-28 by a
-# real failed run, not by a listing check: a direct /v1/chat/completions
-# call against it does return a real 200 (that part of the earlier
-# 2026-09-27 investigation was correct), but ai4rag's own search space
-# preparation step never makes that call at all, it only ever checks
-# ogx's /v1/models listing, and glm-53-flash has never once appeared in
-# that listing on this cluster. the run failed with
+# glm-53-flash was genuinely unusable on 2026-09-28: ai4rag's own search
+# space preparation step checks ogx's /v1/models listing (never makes a
+# real chat completion call itself), and glm-53-flash had not appeared
+# in that listing yet, so the run failed with
 # `SearchSpaceValueError: Provided models of type 'llm' are not
 # registered in OGX: ['openai/publishers/prelude-maas/models/
 # glm-53-flash']`, see PHASE1_PLAN.md. routable is not the same thing as
-# registered, autorag only ever cares about the latter, replaced with
-# qwen38-27b, confirmed present in that same /v1/models listing.
+# registered, autorag only ever cares about the latter. this was fixed
+# on the ogx side (model listing now includes it, confirmed live in a
+# later session after an intervening pod restart), so glm-53-flash is
+# back in this list.
+#
+# note: even with both models correctly accepted into the search space
+# (confirmed live in search_space_prep_report's foundation_model axis),
+# a given run's actual 8 patterns can still end up all using one model.
+# that is ai4rag's own GAMOptimizer, a seeded surrogate model search
+# capped at max_evals=8 over a combinatorial space of hundreds of
+# chunking/retrieval/model combinations, not a config bug here. confirmed
+# live for one real run where all 8 real objective function evaluations
+# logged foundation_model=glm-53-flash, qwen3.6-35b-a3b never sampled.
 GENERATION_MODELS = [
     "vllm-inference/Qwen3.6-35B-A3B",
-    "openai/publishers/prelude-maas/models/qwen38-27b",
+    "openai/publishers/prelude-maas/models/glm-53-flash",
 ]
 # only 1 embedding model, not the section 5 spec's 2: confirmed by
 # reading ogx's own baked in config.yaml directly that
@@ -114,7 +122,7 @@ def current_token() -> str:
 def dspa_route() -> str:
     # resolved live, this route hostname is unique per cluster, never hardcode it
     host = subprocess.run(
-        ["oc", "get", "route", "ds-pipeline-rag-phase1-dspa", "-n", "rag-phase1",
+        ["oc", "get", "route", "ds-pipeline-rag-phase1-dspa", "-n", "spear-pipelines",
          "-o", "jsonpath={.spec.host}"],
         check=True, capture_output=True, text=True,
     ).stdout.strip()

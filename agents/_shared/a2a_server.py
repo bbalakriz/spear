@@ -112,20 +112,28 @@ def caller_token_from_message(payload: dict[str, Any]) -> str | None:
     return str(token) if token else None
 
 
-def completed_task(request_id: Any, text: str) -> dict[str, Any]:
+def completed_task(request_id: Any, text: str, trace: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "id": f"task-{request_id}",
+        "contextId": f"ctx-{request_id}",
+        "status": {"state": "completed"},
+        "artifacts": [
+            {
+                "artifactId": "result",
+                "name": "result",
+                "parts": [{"kind": "text", "type": "text", "text": text}],
+            }
+        ],
+    }
+    # not part of the a2a spec, same kind of project specific extra field
+    # as params.callerToken above: a real per hop timing breakdown of the
+    # request this agent just handled, owner-console's chat page renders
+    # it as a live trace. only the coordinator populates this today, see
+    # main.py's own answer()
+    if trace:
+        result["trace"] = trace
     return {
         "jsonrpc": "2.0",
         "id": request_id,
-        "result": {
-            "id": f"task-{request_id}",
-            "contextId": f"ctx-{request_id}",
-            "status": {"state": "completed"},
-            "artifacts": [
-                {
-                    "artifactId": "result",
-                    "name": "result",
-                    "parts": [{"kind": "text", "type": "text", "text": text}],
-                }
-            ],
-        },
+        "result": result,
     }

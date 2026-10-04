@@ -1,0 +1,18 @@
+# merge patch applied to the cluster's single odh-dashboard-config by
+# scripts/01-install-namespaces.sh, not applied with a plain oc apply since
+# this cr is shared cluster state, see ensure_dashboard_flags in that
+# script for the check-before-patch logic. kept here as a readable record
+# of exactly what gets merged in. lives under spear-inference since both
+# flags gate capabilities ogx/autorag actually use, genAiStudio and
+# autorag itself, not because the patch target is namespace scoped, it
+# is not, this is a single cluster wide object
+spec:
+  dashboardConfig:
+    genAiStudio: true
+    autorag: true
+    agentsCatalog: true
+    agentConfigManagement: true
+    agentOps: true
+    mcpCatalog: true
+    mcpRegistry: true
+    genAiTracing: true    

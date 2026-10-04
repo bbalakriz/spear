@@ -1,0 +1,32 @@
+# mlflow does its own kubernetes SubjectAccessReview per request. copied the
+# relevant verbs straight off the platform's own mlflow-operator-mlflow-
+# edit clusterrole (get/list/create/update on experiments), scoped down
+# to only what log-ingestion-report actually needs and only in
+# spear-pipelines, rather than granting the platform's full edit role.
+#
+# NAMESPACE_MIGRATION_PLAN.md: this moved here, same namespace as the
+# calling pipeline-runner service account now, no cross namespace
+# subject needed anymore
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spear-pipelines-mlflow-caller
+  namespace: spear-pipelines
+rules:
+  - apiGroups: [mlflow.kubeflow.org]
+    resources: [experiments]
+    verbs: [get, list, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-pipelines-mlflow-caller
+  namespace: spear-pipelines
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-runner-rag-phase1-dspa
+    namespace: spear-pipelines
+roleRef:
+  kind: Role
+  name: spear-pipelines-mlflow-caller
+  apiGroup: rbac.authorization.k8s.io

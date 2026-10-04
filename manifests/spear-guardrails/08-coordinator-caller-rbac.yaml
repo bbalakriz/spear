@@ -1,0 +1,36 @@
+# the Role/RoleBinding half of spear-coordinator-agent's own credential
+# for calling guardrails directly, same plain unscoped "get services"
+# shape as 07-guard-proxy-rbac.yaml, not the resourceName scoped one in
+# 06-pipeline-rbac.yaml (confirmed live earlier in this project that the
+# resourceName scoped version silently 403s despite a passing
+# subjectaccessreview).
+#
+# NAMESPACE_MIGRATION_PLAN.md: this Role/RoleBinding moved here since
+# this is where the real Service object they grant access to now
+# lives. the matching ServiceAccount/Secret this RoleBinding's subject
+# points at stay in spear-shield-agents, see
+# manifests/spear-shield-agents/openshell/coordinator-guardrails-rbac.yaml,
+# co-located with the sandbox that actually reads this token, not here
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rag-phase1-guardrails-caller-spear-coordinator
+  namespace: spear-guardrails
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rag-phase1-guardrails-caller-spear-coordinator
+  namespace: spear-guardrails
+subjects:
+  - kind: ServiceAccount
+    name: spear-coordinator-guardrails-caller
+    namespace: spear-shield-agents
+roleRef:
+  kind: Role
+  name: rag-phase1-guardrails-caller-spear-coordinator
+  apiGroup: rbac.authorization.k8s.io

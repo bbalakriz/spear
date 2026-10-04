@@ -1,0 +1,47 @@
+# the guardrails route sits behind kube-rbac-proxy, reading
+# rag-phase1-guardrails-rbac-proxy-config shows a static SubjectAccessReview
+# for "get" on services/rag-phase1-guardrails-service, apparently scoped to
+# that one resourceName. that config's own yaml key is "resourceName", but
+# the real schema kube-rbac-proxy actually reads this field from, confirmed
+# against its own upstream source, is "name", not "resourceName", so this
+# operator generated configmap's own name restriction is silently dropped
+# on load and never makes it into the real SubjectAccessReview at all.
+#
+# correction, 2026-10-04: this file originally kept the resourceNames
+# restriction below believing it was enforced, same mistaken assumption
+# manifests/spear-guardrails/07-guard-proxy-rbac.yaml's own earlier pass
+# already found and fixed for a different caller, confirmed live here too
+# now: three SubjectAccessReview reproductions with name set all returned
+# allowed true, the real call still 403'd, and the plain unscoped "get
+# services" check is what actually matches the real denial. dropped the
+# resourceNames restriction to match 07-guard-proxy-rbac.yaml's own fix,
+# this pipeline's own ingestion run was tagging every single document
+# "error" because of exactly this, not a real guardrails finding
+#
+# NAMESPACE_MIGRATION_PLAN.md: the pipeline server itself moved to its
+# own spear-pipelines namespace, so the subject below crosses into it
+# now, the Role/RoleBinding stay here since that is where the real
+# Service object they grant access to actually lives
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rag-phase1-guardrails-caller
+  namespace: spear-guardrails
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rag-phase1-guardrails-caller-pipeline-runner
+  namespace: spear-guardrails
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-runner-rag-phase1-dspa
+    namespace: spear-pipelines
+roleRef:
+  kind: Role
+  name: rag-phase1-guardrails-caller
+  apiGroup: rbac.authorization.k8s.io

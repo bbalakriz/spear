@@ -16,6 +16,17 @@ endpoint this script cannot reach.
 
 usage: source .venv-kfp/bin/activate && python compile_and_run.py \
     <batch_id> <autorag_run_id> <pattern_name> <chunk_size> <chunk_overlap> <embedding_model>
+
+a bare `python compile_and_run.py --register-only` compiles and uploads
+the pipeline definition without triggering a run, no batch_id/pattern
+needed for that half. scripts/04-install-pipelines.sh calls this mode so
+the pipeline is registered on rag-phase1-dspa as part of the normal
+install chain, before scripts/90-verify.sh ever checks for it, same
+registered-but-not-run state documents-rag-optimization-pipeline is
+already in right after rhoai auto registers it. an actual run still
+needs a real batch_id and a real winning pattern from a completed
+autorag run, copied from the owner console's own autorag leaderboard
+response, see the module docstring above, and stays a manual step.
 """
 import subprocess
 import sys
@@ -47,7 +58,7 @@ def route_host(name: str, namespace: str) -> str:
 
 
 def dspa_route() -> str:
-    return f"https://{route_host('ds-pipeline-rag-phase1-dspa', 'rag-phase1')}"
+    return f"https://{route_host('ds-pipeline-rag-phase1-dspa', 'spear-pipelines')}"
 
 
 def mlflow_url() -> str:
@@ -58,16 +69,10 @@ def mlflow_url() -> str:
     ).stdout.strip()
 
 
-def main() -> None:
-    if len(sys.argv) != 7:
-        print(
-            f"usage: python {sys.argv[0]} <batch_id> <autorag_run_id> "
-            "<pattern_name> <chunk_size> <chunk_overlap> <embedding_model>"
-        )
-        sys.exit(1)
-    batch_id, autorag_run_id, pattern_name = sys.argv[1], sys.argv[2], sys.argv[3]
-    chunk_size, chunk_overlap, embedding_model = int(sys.argv[4]), int(sys.argv[5]), sys.argv[6]
-
+def register() -> tuple[Client, str, str]:
+    """compiles and uploads the pipeline definition, no run triggered.
+    safe to call with no batch/pattern data at all, idempotent, a rerun
+    against an already registered pipeline just uploads a new version."""
     compiler.Compiler().compile(phase1_apply_pattern_pipeline, str(PIPELINE_YAML))
     print(f"compiled {PIPELINE_YAML.name}")
 
@@ -92,6 +97,26 @@ def main() -> None:
         default_versions = client.list_pipeline_versions(pipeline_id).pipeline_versions or []
         version_id = default_versions[0].pipeline_version_id
         print(f"uploaded new pipeline {pipeline_id}, version {version_id}")
+
+    return client, pipeline_id, version_id
+
+
+def main() -> None:
+    if len(sys.argv) == 2 and sys.argv[1] == "--register-only":
+        register()
+        return
+
+    if len(sys.argv) != 7:
+        print(
+            f"usage: python {sys.argv[0]} <batch_id> <autorag_run_id> "
+            "<pattern_name> <chunk_size> <chunk_overlap> <embedding_model>\n"
+            f"   or: python {sys.argv[0]} --register-only"
+        )
+        sys.exit(1)
+    batch_id, autorag_run_id, pattern_name = sys.argv[1], sys.argv[2], sys.argv[3]
+    chunk_size, chunk_overlap, embedding_model = int(sys.argv[4]), int(sys.argv[5]), sys.argv[6]
+
+    client, pipeline_id, version_id = register()
 
     experiment = client.create_experiment(name=EXPERIMENT_NAME)
     run = client.run_pipeline(

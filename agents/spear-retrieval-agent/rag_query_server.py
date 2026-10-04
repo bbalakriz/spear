@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """unsandboxed http wrapper around rag_query.py's own embed_query and
-abac_filtered_search, deployed inside rag-phase1 itself, not inside the
+abac_filtered_search, deployed inside spear-data itself, not inside the
 kata sandboxed retrieval agent.
 
 exists for one concrete reason, confirmed live: this cluster's openshell
@@ -27,9 +27,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.append(os.path.dirname(__file__))
 from rag_query import abac_filtered_search, connect, embed_query  # noqa: E402
 
-# this pod already lives in rag-phase1 itself, same namespace ogx's own
-# default NetworkPolicy already allows, no relay needed for this call
-OGX_BASE_URL = os.environ.get("OGX_BASE_URL", "http://rag-phase1-ogx-service.rag-phase1.svc.cluster.local:8321")
+# NAMESPACE_MIGRATION_PLAN.md: this pod lives in spear-data, a different
+# namespace than ogx (spear-inference) now, ogx's own NetworkPolicy needs
+# an explicit namespaceSelector rule for spear-data to still allow this
+# call, see manifests/spear-inference/01-ogxserver.yaml
+OGX_BASE_URL = os.environ.get("OGX_BASE_URL", "http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321")
 
 
 class Handler(BaseHTTPRequestHandler):

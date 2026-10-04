@@ -1,0 +1,52 @@
+# one NemoGuardrails cr, four named configs, config_id switches between
+# them per request. internal-docs-config is default: true so a request
+# that omits guardrails.config_id (the common case for internal documents)
+# gets it automatically. OPENAI_API_KEY is a required field on the cr even
+# though none of these configs use an llm, the built in Presidio and regex
+# detectors run entirely inside this pod, see
+# https://eformat.github.io/ralf-wiggum-rhoai-kitchen-sink/nemo-guardrails
+# module 2 exercise 1.
+#
+# correction, 2026-10-04: an earlier pass here added spec.template.pod.mcpGateway
+# back after finding it live on this cr during the phase 3 telemetry
+# investigation, believing it was real drift that needed writing back.
+# confirmed live since that the field is not needed at all: the operator
+# discovers spear-shield-gateway on its own via the MCPGatewayExtension
+# object already targeting it (manifests/spear-shield-agents/02-gateway.yaml),
+# status.mcpGateway.mcpGatewayFound stays true with this field removed
+# entirely. this field only exists to enable a separate, unused tech
+# preview feature, guardrails enforcement on mcp tool call traffic via an
+# auto provisioned mcp-sse-strip EnvoyFilter, which additionally requires
+# the nemo-request-guard/nemo-response-guard BBR ext_proc plugins
+# installed in the gateway namespace, a prerequisite this project never
+# set up. with this field set, the operator keeps logging "BBR plugin
+# not found, will retry" every 30s, documented, expected behaviour for
+# mcpGatewayFound true + bbrPluginFound false, see
+# https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/enabling_ai_safety_with_guardrails/enabling-ai-safety-with-nemo-guardrails_nemo-guardrails#nemo-guardrails-mcp-gateway-integration-overview_nemo-guardrails
+# removing the field is the documented way to stop it (operator auto
+# deletes the EnvoyFilter), confirmed live, left out on purpose now
+apiVersion: trustyai.opendatahub.io/v1alpha1
+kind: NemoGuardrails
+metadata:
+  name: rag-phase1-guardrails
+  namespace: spear-guardrails
+  annotations:
+    security.opendatahub.io/enable-auth: 'true'
+spec:
+  nemoConfigs:
+    - name: internal-docs-config
+      configMaps:
+        - internal-docs-config
+      default: true
+    - name: vendor-submission-config
+      configMaps:
+        - vendor-submission-config
+    - name: work-tracker-config
+      configMaps:
+        - work-tracker-config
+    - name: coordinator-agent-config
+      configMaps:
+        - coordinator-agent-config
+  env:
+    - name: OPENAI_API_KEY
+      value: not-used

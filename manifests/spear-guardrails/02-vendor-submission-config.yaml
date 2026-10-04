@@ -1,0 +1,48 @@
+# stricter policy for anything the intake manifest marks source:
+# external-vendor, selected per request with guardrails.config_id:
+# vendor-submission-config, see
+# https://eformat.github.io/ralf-wiggum-rhoai-kitchen-sink/nemo-guardrails
+# module 3 exercise 1 for the config_id switching mechanism this relies on.
+# same detector types as internal-docs-config, wider entity list and one
+# broader regex that flags any bracketed instruction-shaped block outright,
+# not just ones matching a specific known phrase, since vendor content is
+# untrusted by default rather than trusted until proven otherwise.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vendor-submission-config
+  namespace: spear-guardrails
+data:
+  config.yaml: |
+    rails:
+      config:
+        sensitive_data_detection:
+          input:
+            entities:
+              - EMAIL_ADDRESS
+              - PERSON
+              - CREDIT_CARD
+              - US_SSN
+              - LOCATION
+              - IP_ADDRESS
+        regex_detection:
+          input:
+            patterns:
+              - "ignore\\s+(all\\s+)?previous\\s+instructions?"
+              - "system\\s+override"
+              - "you\\s+(now\\s+)?have\\s+elevated\\s+access"
+              - "disregard\\s+(all\\s+)?(prior|previous)\\s+(rules|restrictions|instructions)"
+              - "classify\\s+all\\s+data\\s+as\\s+public"
+              - "share\\s+(the\\s+)?full\\s+(customer\\s+)?database"
+              - "\\[\\s*system\\s*[:\\]]"
+              # vendor only: any bracketed block that reads like an
+              # instruction to an ai system, not just the specific phrasings
+              # above. wider net, deliberately, for untrusted content only.
+              - "\\[[^\\]]{0,120}\\b(ignore|override|elevated|system)\\b[^\\]]{0,120}\\]"
+            case_insensitive: true
+      input:
+        flows:
+          - detect sensitive data on input
+          - regex check input
+  rails.co: |
+    # built in rails only, wider net than internal-docs-config

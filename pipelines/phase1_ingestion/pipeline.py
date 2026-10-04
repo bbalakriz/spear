@@ -41,10 +41,10 @@ SANITIZED_PREFIX_DEFAULT = "sanitized/"
 # caller (compile_and_run.py, the owner console backend's trigger
 # endpoint) resolves them live via `oc get route` and passes them in
 # explicitly instead.
-MLFLOW_WORKSPACE_DEFAULT = "rag-phase1"
+MLFLOW_WORKSPACE_DEFAULT = "spear-pipelines"
 MLFLOW_EXPERIMENT_NAME_DEFAULT = "phase1-ingestion"
 EVAL_PREFIX_DEFAULT = "autorag-eval/"
-OGX_BASE_URL_DEFAULT = "http://rag-phase1-ogx-service.rag-phase1.svc.cluster.local:8321"
+OGX_BASE_URL_DEFAULT = "http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321"
 # glm-53-flash's maas gateway moved to root, body based routing on
 # 2026-09-27 (see PHASE1_PLAN.md and pipelines/phase1_autorag/
 # run_autorag.py), restored here once that was confirmed live through
@@ -166,7 +166,7 @@ def sanitize_documents(
 
     auth: the pod's own projected service account token, the in cluster
     equivalent of `oc whoami -t`, works here because
-    manifests/20-guardrails/04-pipeline-rbac.yaml grants this pipeline's
+    manifests/spear-guardrails/06-pipeline-rbac.yaml grants this pipeline's
     service account get on exactly the one service the guardrails route's
     kube-rbac-proxy checks for, confirmed by reading its config live.
     """
@@ -420,8 +420,8 @@ def log_ingestion_report(
 ) -> str:
     """PHASE1_PLAN.md section 3, step 8: one json artifact aggregating
     every earlier step's real output, logged to the shared mlflow
-    instance under the rag-phase1 workspace (X-MLflow-Workspace header,
-    see manifests/00-platform/06-mlflow.yaml for why that header is
+    instance under the spear-pipelines workspace (X-MLflow-Workspace header,
+    see manifests/spear-pipelines/03-mlflow.yaml for why that header is
     required on this build). this is what the eventual console plugin
     backend reads, nothing there should ever recompute anything this
     step already produced.

@@ -11,7 +11,7 @@ comment on why), and executes each one for real:
 - rag_search: decodes the caller's own clearance_level/dept/team out of
   their real jwt and forwards them to rag-query-relay, a small
   unsandboxed http wrapper around rag_query.py's own abac_filtered_search
-  deployed inside rag-phase1 itself, not called directly from in here:
+  deployed inside spear-data itself, not called directly from in here:
   this cluster's openshell build does not advertise transparent tcp
   support, confirmed live, so the raw postgres connection
   abac_filtered_search needs cannot be made from inside this sandbox at
@@ -45,6 +45,8 @@ import json
 import os
 import socket
 import sys
+import time
+import urllib.error
 from typing import Any
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "_shared"))
@@ -87,7 +89,7 @@ MCP_TOOL_PREFIX_MAP = {
 # call to this relay is the one transport the rest protocol policy
 # already proves works from inside this sandbox
 RAG_QUERY_RELAY_URL = os.environ.get(
-    "RAG_QUERY_RELAY_URL", "http://spear-shield-rag-query-relay.rag-phase1.svc.cluster.local:8080/search"
+    "RAG_QUERY_RELAY_URL", "http://spear-shield-rag-query-relay.spear-data.svc.cluster.local:8080/search"
 )
 
 _mcp_initialized = False
@@ -129,10 +131,40 @@ def decode_claims(jwt: str) -> dict[str, Any]:
         return {}
 
 
-def run_rag_search(arguments: dict[str, Any], claims: dict[str, Any]) -> str:
+def _trace_step(
+    trace: list[dict[str, Any]],
+    step: str,
+    detail: str,
+    started_at: float,
+    frm: str,
+    to: str,
+    protocol: str,
+    ok: bool = True,
+) -> None:
+    # same shape as spear-coordinator-agent's own helper, real wall clock
+    # timing per hop, spliced into the coordinator's own trace one level
+    # up so owner-console's flow diagram shows the whole chain. ok is
+    # false only for a hop that was genuinely refused or failed, so the
+    # flow diagram can render exactly that box red instead of leaving the
+    # viewer to guess which step actually blocked the request
+    trace.append(
+        {
+            "step": step,
+            "detail": detail,
+            "duration_ms": round((time.monotonic() - started_at) * 1000),
+            "from": frm,
+            "to": to,
+            "protocol": protocol,
+            "ok": ok,
+        }
+    )
+
+
+def run_rag_search(arguments: dict[str, Any], claims: dict[str, Any], trace: list[dict[str, Any]]) -> str:
     query = str(arguments.get("query", "")).strip()
     if not query:
         return json.dumps({"error": "rag_search needs a query"})
+    started_at = time.monotonic()
     response = http_json(
         RAG_QUERY_RELAY_URL,
         {
@@ -142,6 +174,16 @@ def run_rag_search(arguments: dict[str, Any], claims: dict[str, Any]) -> str:
             "caller_team": claims.get("team"),
             "top_k": 5,
         },
+    )
+    _trace_step(
+        trace,
+        "rag_search",
+        f"abac filtered search, clearance={claims.get('clearance_level') or 'none'}, dept={claims.get('dept') or 'none'}",
+        started_at,
+        frm="retrieval-agent (kata sandbox)",
+        to="rag-query-relay",
+        protocol="http post /search",
+        ok="error" not in response,
     )
     if "error" in response:
         return json.dumps({"error": response["error"]})
@@ -180,26 +222,81 @@ def mcp_call(name: str, arguments: dict[str, Any], caller_token: str) -> dict[st
     )
 
 
-def run_work_tracker_tool(name: str, arguments: dict[str, Any], caller_token: str) -> str:
-    response = mcp_call(name, arguments, caller_token)
-    if "error" in response:
-        return json.dumps({"error": response["error"]})
+def run_work_tracker_tool(
+    name: str, arguments: dict[str, Any], caller_token: str, trace: list[dict[str, Any]]
+) -> str:
+    started_at = time.monotonic()
+    # the gateway's own per tool rbac authpolicy rejects a disallowed
+    # tool call with a real http error status before spear-openproject-mcp
+    # ever sees it, which urllib raises as an exception rather than
+    # handing back a normal response body, confirmed live for a caller
+    # lacking the update_work_package role. caught here, not left to
+    # escape past the trace step below, so this hop is never silently
+    # missing from the flow diagram, it is the one place a real block
+    # actually happened
+    try:
+        response = mcp_call(name, arguments, caller_token)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")[:300]
+        _trace_step(
+            trace,
+            f"mcp tool call: {name}",
+            f"blocked, mcp gateway's own tool rbac authpolicy returned http {exc.code}: {body}",
+            started_at,
+            frm="retrieval-agent (kata sandbox)",
+            to="mcp-gateway -> spear-openproject-mcp",
+            protocol="mcp json-rpc tools/call",
+            ok=False,
+        )
+        return json.dumps({"error": f"http {exc.code}: {body}"})
+    except Exception as exc:  # noqa: BLE001
+        _trace_step(
+            trace,
+            f"mcp tool call: {name}",
+            f"blocked, call to mcp-gateway failed: {exc}",
+            started_at,
+            frm="retrieval-agent (kata sandbox)",
+            to="mcp-gateway -> spear-openproject-mcp",
+            protocol="mcp json-rpc tools/call",
+            ok=False,
+        )
+        return json.dumps({"error": str(exc)})
+
     result = response.get("result") or {}
     content = result.get("content") or []
     text = content[0].get("text") if content else json.dumps(result)
+    # a refusal that reaches this point came back as a normal http 200,
+    # spear-openproject-mcp's own assignee=self check for example, see
+    # its server.py, "error" in the jsonrpc body or isError on the mcp
+    # result are both still a real block even with no exception at all
+    blocked = "error" in response or bool(result.get("isError"))
+    _trace_step(
+        trace,
+        f"mcp tool call: {name}",
+        "gateway tool rbac, then this project's own assignee=self check" if not blocked else f"blocked: {text}",
+        started_at,
+        frm="retrieval-agent (kata sandbox)",
+        to="mcp-gateway -> spear-openproject-mcp",
+        protocol="mcp json-rpc tools/call",
+        ok=not blocked,
+    )
+    if "error" in response:
+        return json.dumps({"error": response["error"]})
     if result.get("isError"):
         return json.dumps({"error": text})
     return text
 
 
-def run_tool_call(call: dict[str, Any], claims: dict[str, Any], caller_token: str) -> str:
+def run_tool_call(
+    call: dict[str, Any], claims: dict[str, Any], caller_token: str, trace: list[dict[str, Any]]
+) -> str:
     name = call.get("name")
     arguments = call.get("arguments") or {}
     try:
         if name == "rag_search":
-            return run_rag_search(arguments, claims)
+            return run_rag_search(arguments, claims, trace)
         if name in MCP_TOOL_PREFIX_MAP:
-            return run_work_tracker_tool(name, arguments, caller_token)
+            return run_work_tracker_tool(name, arguments, caller_token, trace)
         return json.dumps({"error": f"unknown tool: {name}"})
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": str(exc)})
@@ -207,6 +304,20 @@ def run_tool_call(call: dict[str, Any], claims: dict[str, Any], caller_token: st
 
 def on_rpc(body: dict[str, Any], auth_header: str) -> dict[str, Any] | None:
     method = body.get("method")
+    # demo only method, owner-console's security demo page uses this to
+    # prove the coordinator's workload identity hop live. confirmed this
+    # session that reading our own inbound authorization header here is
+    # not a useful proof: the openshell a2a router that forwards traffic
+    # into this sandbox strips any caller presented authorization header
+    # before it lands here, for every caller, not just this one, a sound
+    # anti spoofing property since a2a itself has no per hop auth of its
+    # own. this handler just confirms the call reached us at all, the
+    # actual proof is the contrast owner-console-backend builds: the
+    # identical naked call from outside any sandbox gets a clean 401 from
+    # the retrieval a2a gateway's own authpolicy, the real coordinator
+    # process making the same call with no token of its own succeeds
+    if method == "whoami":
+        return completed_task(body.get("id"), json.dumps({"reached": True}))
     if method not in ("message/send", "tasks/send", "tasks/sendSubscribe"):
         return {
             "jsonrpc": "2.0",
@@ -229,8 +340,9 @@ def on_rpc(body: dict[str, Any], auth_header: str) -> dict[str, Any] | None:
         calls = payload.get("tool_calls") or []
     except json.JSONDecodeError:
         calls = []
-    results = [{"id": call.get("id"), "result": run_tool_call(call, claims, caller_token)} for call in calls]
-    return completed_task(body.get("id"), json.dumps(results))
+    trace: list[dict[str, Any]] = []
+    results = [{"id": call.get("id"), "result": run_tool_call(call, claims, caller_token, trace)} for call in calls]
+    return completed_task(body.get("id"), json.dumps(results), trace)
 
 
 def main() -> None:

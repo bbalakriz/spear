@@ -1,0 +1,45 @@
+# PHASE2_PLAN.md section 8's second pass, architecture status + security
+# demo pages: the console backend's own service account (manifests/spear-console/00-backend-rbac.yaml)
+# needs read access to the two real sandbox pods plus pods/exec on them,
+# in spear-shield-agents, a different namespace, so this is a Role +
+# RoleBinding over there with a cross namespace subject, not an extension
+# of that file's own mlflow grant. resourceNames pins this to exactly the
+# two pods the demo pages ever touch, get/exec on anything else in this
+# namespace stays refused, same least privilege spirit.
+#
+# NAMESPACE_MIGRATION_PLAN.md: subject namespace changed from rag-phase1
+# to spear-console, since that is where phase1-ingestion-console-backend
+# itself now lives
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: owner-console-backend-sandbox-reader
+  namespace: spear-shield-agents
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    resourceNames: [default--spear-coordinator, default--spear-retrieval]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    resourceNames: [default--spear-coordinator, default--spear-retrieval]
+    # confirmed live: the kubernetes python client's own exec call
+    # (connect_get_namespaced_pod_exec) resolves to rbac verb "get", not
+    # the "create" every doc and kubectl auth can-i example describes,
+    # a real 403 surfaced exactly that verb name, both kept here rather
+    # than guessed from docs alone
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: owner-console-backend-sandbox-reader
+  namespace: spear-shield-agents
+subjects:
+  - kind: ServiceAccount
+    name: phase1-ingestion-console-backend
+    namespace: spear-console
+roleRef:
+  kind: Role
+  name: owner-console-backend-sandbox-reader
+  apiGroup: rbac.authorization.k8s.io

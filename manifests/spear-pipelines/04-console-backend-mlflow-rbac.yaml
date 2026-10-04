@@ -1,0 +1,34 @@
+# mlflow authorizes a request by running a kubernetes SubjectAccessReview
+# scoped to the namespace matching the request's own X-MLflow-Workspace
+# header value, spear-pipelines here, not whatever namespace the calling
+# service account happens to live in. confirmed live: the console backend's
+# own service account (spear-console) kept getting {"experiments": []}
+# back from mlflow despite the phase1-ingestion experiment existing, even
+# though manifests/spear-console/00-backend-rbac.yaml already granted it
+# get/list on mlflow.kubeflow.org experiments, that grant just lived in
+# the wrong namespace to ever be checked. this is the real fix, a
+# cross namespace rolebinding here in spear-pipelines itself, same shape
+# 02-mlflow-rbac.yaml already uses for the pipeline runner sa
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spear-pipelines-mlflow-console-reader
+  namespace: spear-pipelines
+rules:
+  - apiGroups: [mlflow.kubeflow.org]
+    resources: [experiments]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-pipelines-mlflow-console-reader
+  namespace: spear-pipelines
+subjects:
+  - kind: ServiceAccount
+    name: phase1-ingestion-console-backend
+    namespace: spear-console
+roleRef:
+  kind: Role
+  name: spear-pipelines-mlflow-console-reader
+  apiGroup: rbac.authorization.k8s.io

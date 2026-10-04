@@ -1,0 +1,38 @@
+# the reference's own 04-pipeline-rbac.yaml documents kube-rbac-proxy's
+# config.yaml as resourceName scoped ("get" on the one named service).
+# found live, empirically, during this build: the running proxy does not
+# actually enforce that resourceName, three independent
+# subjectaccessreview reproductions with the name included all returned
+# allowed true, yet the real call still 403'd, restarting the pod fresh
+# changed nothing, and the plain "get services" (no name) check is what
+# actually returns "no" for a caller lacking it, matching the real
+# failure. own role here, not the shared rag-phase1-guardrails-caller
+# one, so the pipeline's own binding is untouched
+#
+# NAMESPACE_MIGRATION_PLAN.md: subject is spear-shield-mcp-guard-proxy's
+# own default service account in spear-shield-agents, unchanged, only
+# this Role/RoleBinding's own namespace moved, since that is where the
+# real Service object it grants access to now lives
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rag-phase1-guardrails-caller-spear-openproject-mcp
+  namespace: spear-guardrails
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rag-phase1-guardrails-caller-spear-openproject-mcp
+  namespace: spear-guardrails
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: spear-shield-agents
+roleRef:
+  kind: Role
+  name: rag-phase1-guardrails-caller-spear-openproject-mcp
+  apiGroup: rbac.authorization.k8s.io

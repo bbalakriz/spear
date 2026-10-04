@@ -1,5 +1,5 @@
 """compiles phase1-ingestion-pipeline.yaml then uploads and triggers one
-run against the rag-phase1-dspa pipeline server, using the caller's own
+run against the rag-phase1-dspa pipeline server in spear-pipelines, using the caller's own
 `oc whoami -t` token exactly like every other in cluster auth check in
 this project, no separate pipeline server credential to manage.
 
@@ -36,11 +36,11 @@ def route_host(name: str, namespace: str) -> str:
 
 
 def dspa_route() -> str:
-    return f"https://{route_host('ds-pipeline-rag-phase1-dspa', 'rag-phase1')}"
+    return f"https://{route_host('ds-pipeline-rag-phase1-dspa', 'spear-pipelines')}"
 
 
 def guardrails_route() -> str:
-    return f"https://{route_host('rag-phase1-guardrails', 'rag-phase1')}"
+    return f"https://{route_host('rag-phase1-guardrails', 'spear-guardrails')}"
 
 
 def mlflow_url() -> str:

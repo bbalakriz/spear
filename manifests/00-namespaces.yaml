@@ -1,0 +1,66 @@
+# every namespace this project's own resources land in, one file,
+# applied first by scripts/01-install-namespaces.sh, before anything
+# that lives inside any of them. NAMESPACE_MIGRATION_PLAN.md section 1.
+#
+# rag-phase1 itself is retired here, not recreated: once every piece
+# that used to live in it (pgvector, ogx, guardrails, the pipeline
+# server, the owner console, openproject) has its own real namespace
+# below, nothing is left that actually needs it to exist. minio keeps
+# its own name, not renamed to spear-storage, section 8's own decision,
+# only its placement changed. spear-shield-agents keeps its own
+# namespace object, already well named for what stays in it (both
+# gateways, the guard proxy, the keycloak realm import, the cluster
+# spiffeid, both agent sandboxes), that object still lives in its own
+# directory (manifests/spear-shield-agents/00-namespace.yaml) since it
+# predates this migration and already carries real labels and a
+# service account/network policy alongside it, not duplicated here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-data
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-inference
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+    opendatahub.io/dashboard: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-guardrails
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-pipelines
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+    opendatahub.io/dashboard: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-console
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-worktracker
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents

@@ -1,0 +1,116 @@
+# standalone minio, own namespace. this is the one
+# s3 compatible store for phase 1: the document corpus (bucket
+# rag-documents, prefixes raw-intake/ and sanitized/) that the guardrails
+# sanitization step and autorag both read from and the data science
+# pipelines application's own artifact bucket (dsp-pipeline-artifacts),
+# see manifests/spear-pipelines/01-pipeline-server.yaml's externalStorage block.
+#
+# kept named minio, not renamed to spear-storage, per
+# NAMESPACE_MIGRATION_PLAN.md section 8: a single generic deployment with
+# no project specific logic in it, the churn of renaming every reference
+# was not worth it, only its placement changed, it still gets its own
+# dedicated namespace rather than staying bundled inside rag-phase1
+#
+# the minio-root-creds secret referenced below is generated once by
+# scripts/02-install-storage.sh (ensure_minio_root_secret).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: minio
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app: minio
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: quay.io/eformat/minio:RELEASE.2025-09-07T16-13-09Z
+          args: ["server", "/data", "--console-address", ":9001"]
+          envFrom:
+            - secretRef:
+                name: minio-root-creds
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app: minio
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: minio-console
+  namespace: minio
+spec:
+  to:
+    kind: Service
+    name: minio
+  port:
+    targetPort: console
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

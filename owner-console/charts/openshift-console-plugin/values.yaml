@@ -34,7 +34,8 @@ plugin:
     # backend's own service account regardless of this setting.
     authorization: UserToken
     serviceName: phase1-ingestion-console-backend
-    namespace: rag-phase1
+    # NAMESPACE_MIGRATION_PLAN.md: moved from rag-phase1 to spear-console
+    namespace: spear-console
     port: 8443
   certificateSecretName: ""
   serviceAccount:

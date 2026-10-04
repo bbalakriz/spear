@@ -14,24 +14,27 @@
 # own forwarded token instead, since the consoleplugin proxy alias is now
 # authorization: UserToken, not None. that means a user can only trigger or
 # inspect kfp runs if their own openshift identity already has rbac on
-# rag-phase1's pipeline resources, this backend's own service account never
-# gains that power just by existing.
+# spear-pipelines' own pipeline resources, this backend's own service
+# account never gains that power just by existing.
 import json
 import os
 import ssl
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import boto3
+from kubernetes import client as k8s_client, config as k8s_config
+from kubernetes.stream import stream as k8s_stream
 
 # mlflow's external url, the dspa pipeline server's route, minio's own
 # console route and the rhoai dashboard route are all unique per cluster,
 # never hardcode any of them: all four are resolved once at deploy time and
-# injected here as env vars, see manifests/40-owner-console/01-backend.yaml
-# and scripts/07-install-owner-console.sh
+# injected here as env vars, see manifests/spear-console/01-backend.yaml
+# and scripts/08-install-console.sh
 MLFLOW_URL = os.environ["MLFLOW_URL"]
 DSPA_ROUTE = os.environ["DSPA_ROUTE"]
 GUARDRAILS_ROUTE = os.environ["GUARDRAILS_ROUTE"]
@@ -47,13 +50,15 @@ def _env_list(name, default_csv):
     # operator can retune this deployment with `oc set env` alone, same
     # spirit as the route vars above. defaults below match this project's
     # own known good values, so an unpatched deployment behaves exactly as
-    # before, see scripts/07-install-owner-console.sh for where these are
+    # before, see scripts/08-install-console.sh for where these are
     # actually set explicitly rather than left to fall back on a default.
     raw = os.environ.get(name, default_csv)
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
-WORKSPACE = os.environ.get("RAG_WORKSPACE", "rag-phase1")
+# NAMESPACE_MIGRATION_PLAN.md: the mlflow workspace label moved from
+# rag-phase1 to spear-pipelines, see manifests/spear-pipelines/03-mlflow.yaml
+WORKSPACE = os.environ.get("RAG_WORKSPACE", "spear-pipelines")
 INGESTION_EXPERIMENT_NAME = os.environ.get("INGESTION_EXPERIMENT_NAME", "phase1-ingestion")
 
 INGESTION_PIPELINE_NAME = os.environ.get("INGESTION_PIPELINE_NAME", "phase1-ingestion-pipeline")
@@ -83,7 +88,7 @@ AUTORAG_EMBEDDING_MODELS = _env_list(
 )
 AUTORAG_GENERATION_MODELS = _env_list(
     "AUTORAG_GENERATION_MODELS",
-    "vllm-inference/Qwen3.6-35B-A3B,openai/publishers/prelude-maas/models/qwen38-27b",
+    "vllm-inference/Qwen3.6-35B-A3B,openai/publishers/prelude-maas/models/glm-53-flash",
 )
 AUTORAG_MAX_RAG_PATTERNS = int(os.environ.get("AUTORAG_MAX_RAG_PATTERNS", "8"))
 AUTORAG_PRESET = os.environ.get("AUTORAG_PRESET", "balanced")
@@ -97,7 +102,7 @@ MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "")
 # phase 2's spear shield chat tab, PHASE2_PLAN.md section 8. this is the
 # first endpoint on this backend that never touches mlflow or kfp at all,
 # it calls out to spear-coordinator-agent instead, through the a2a gateway
-# in the spear-shield-agents namespace. see manifests/40-owner-console/02-chat-creds.yaml
+# in the spear-shield-agents namespace. see manifests/spear-console/02-chat-creds.yaml
 # for why the per persona password lookup below is a demo-only shortcut,
 # not a real identity federation
 SPEAR_SHIELD_ISSUER_URL = os.environ.get("SPEAR_SHIELD_ISSUER_URL", "")
@@ -107,6 +112,33 @@ SPEAR_SHIELD_CREDS_DIR = os.environ.get("SPEAR_SHIELD_CREDS_DIR", "/secrets/spea
 SPEAR_COORDINATOR_CLIENT_SECRET_PATH = os.environ.get(
     "SPEAR_COORDINATOR_CLIENT_SECRET_PATH", "/secrets/spear-coordinator-client-secret/client-secret"
 )
+
+# architecture status page + security demo page, second pass on section 8.
+# these two read and exec directly against the real sandbox pods using this
+# pod's own service account, not the forwarded user token, see
+# manifests/spear-shield-agents/08-console-backend-rbac.yaml: this is "what does
+# the real deployment look like right now" information for an audience, not
+# anything scoped to whoever happens to be signed into the console
+SPEAR_SHIELD_NAMESPACE = os.environ.get("SPEAR_SHIELD_NAMESPACE", "spear-shield-agents")
+COORDINATOR_POD = os.environ.get("SPEAR_SHIELD_COORDINATOR_POD", "default--spear-coordinator")
+RETRIEVAL_POD = os.environ.get("SPEAR_SHIELD_RETRIEVAL_POD", "default--spear-retrieval")
+SPEAR_SHIELD_MCP_GATEWAY_URL = os.environ.get(
+    "SPEAR_SHIELD_MCP_GATEWAY_URL",
+    "http://spear-shield-gateway-istio.spear-shield-agents.svc.cluster.local:8080/mcp",
+)
+SPEAR_SHIELD_MCP_GATEWAY_HOST_HEADER = os.environ.get("SPEAR_SHIELD_MCP_GATEWAY_HOST_HEADER", "")
+# the exact same literal url spear-coordinator-agent's own main.py already
+# calls, reused here so the whoami demo exec below hits the one real
+# endpoint the openshell supervisor's token_grant provider actually
+# matches on, see coordinator-a2a-token-grant.yaml
+RETRIEVAL_A2A_INTERNAL_URL = os.environ.get(
+    "RETRIEVAL_A2A_INTERNAL_URL",
+    "http://spear-retrieval-a2a-gateway.spear-shield-agents.svc.cluster.local:80",
+)
+# same sidecar proxy address the sandboxed agents' own http_client.py falls
+# back to, confirmed live by reading env inside a real running sandbox pod,
+# neither HTTPS_PROXY nor HTTP_PROXY is actually set there
+SANDBOX_PROXY_CURL = "curl -s -x http://127.0.0.1:3128"
 
 
 def sa_token():
@@ -595,14 +627,446 @@ def ask_spear_shield(message_text, user_token):
     if "error" in rpc_response:
         raise RuntimeError(rpc_response["error"].get("message", "spear shield returned an error"))
 
-    artifacts = rpc_response.get("result", {}).get("artifacts", [])
+    result = rpc_response.get("result", {})
+    artifacts = result.get("artifacts", [])
     texts = [
         part["text"]
         for artifact in artifacts
         for part in artifact.get("parts", [])
         if part.get("kind") == "text"
     ]
-    return "\n\n".join(texts) if texts else "no answer came back from spear shield"
+    answer_text = "\n\n".join(texts) if texts else "no answer came back from spear shield"
+    # the coordinator's own trace list, a2a_server.py's completed_task, not
+    # fabricated here: every entry is a real wall clock duration measured
+    # inside the coordinator sandbox for this exact request
+    return answer_text, result.get("trace") or []
+
+
+# ---- architecture status + security demo, shared k8s helpers ----
+
+_k8s_core_v1 = None
+
+
+def k8s_core_v1():
+    global _k8s_core_v1
+    if _k8s_core_v1 is None:
+        k8s_config.load_incluster_config()
+        _k8s_core_v1 = k8s_client.CoreV1Api()
+    return _k8s_core_v1
+
+
+def k8s_exec(pod, command, timeout=25):
+    # runs a real shell command inside a real sandbox pod and returns its
+    # combined stdout/stderr. container is always "agent", confirmed live,
+    # openshell's own sidecar containers never run this
+    return k8s_stream(
+        k8s_core_v1().connect_get_namespaced_pod_exec,
+        pod,
+        SPEAR_SHIELD_NAMESPACE,
+        container="agent",
+        command=["sh", "-c", command],
+        stderr=True,
+        stdin=False,
+        stdout=True,
+        tty=False,
+        _preload_content=True,
+        _request_timeout=timeout,
+    ).strip()
+
+
+def k8s_pod_status(pod):
+    p = k8s_core_v1().read_namespaced_pod(pod, SPEAR_SHIELD_NAMESPACE)
+    statuses = p.status.container_statuses or []
+    return {
+        "name": pod,
+        "phase": p.status.phase,
+        "ready": bool(statuses) and all(c.ready for c in statuses),
+        "runtime_class": p.spec.runtime_class_name or "runc (default)",
+        "node": p.spec.node_name,
+    }
+
+
+def _probe(url, headers=None, method="GET", timeout=8):
+    # a real, short, read only reachability probe, used by the
+    # architecture status page's live badges below. any http response at
+    # all, even an error one, counts as "reachable", only a connection
+    # failure or timeout counts as down
+    try:
+        req = urllib.request.Request(url, headers=headers or {}, method=method)
+        with urllib.request.urlopen(req, timeout=timeout, context=_no_verify_ctx()) as resp:
+            return True, resp.status
+    except urllib.error.HTTPError as exc:
+        return True, exc.code
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
+def spear_shield_status():
+    coordinator = k8s_pod_status(COORDINATOR_POD)
+    retrieval = k8s_pod_status(RETRIEVAL_POD)
+    keycloak_ok, keycloak_detail = _probe(f"{SPEAR_SHIELD_ISSUER_URL}/.well-known/openid-configuration")
+    a2a_ok, a2a_detail = _probe(SPEAR_COORDINATOR_A2A_URL, method="POST")
+    mcp_ok, mcp_detail = _probe(
+        SPEAR_SHIELD_MCP_GATEWAY_URL,
+        headers={"host": SPEAR_SHIELD_MCP_GATEWAY_HOST_HEADER} if SPEAR_SHIELD_MCP_GATEWAY_HOST_HEADER else {},
+        method="POST",
+    )
+    guardrails_ok, guardrails_detail = _probe(f"{GUARDRAILS_ROUTE}/v1/chat/completions", method="POST")
+    return {
+        "components": [
+            {
+                "id": "keycloak",
+                "label": "keycloak, spear-shield-agents realm",
+                "ok": keycloak_ok,
+                "detail": str(keycloak_detail),
+            },
+            {
+                "id": "coordinator",
+                "label": "spear-coordinator sandbox, runc",
+                "ok": coordinator["phase"] == "Running" and coordinator["ready"],
+                "detail": f"phase={coordinator['phase']} ready={coordinator['ready']} runtimeClass={coordinator['runtime_class']} node={coordinator['node']}",
+            },
+            {
+                "id": "retrieval",
+                "label": "spear-retrieval sandbox, kata",
+                "ok": retrieval["phase"] == "Running" and retrieval["ready"],
+                "detail": f"phase={retrieval['phase']} ready={retrieval['ready']} runtimeClass={retrieval['runtime_class']} node={retrieval['node']}",
+            },
+            {
+                "id": "a2a-gateway",
+                "label": "a2a gateway, spire workload identity + kuadrant authpolicy",
+                "ok": a2a_ok,
+                "detail": str(a2a_detail),
+            },
+            {
+                "id": "mcp-gateway",
+                "label": "mcp gateway, per tool rbac",
+                "ok": mcp_ok,
+                "detail": str(mcp_detail),
+            },
+            {
+                "id": "guardrails",
+                "label": "ogx guardrails rails",
+                "ok": guardrails_ok,
+                "detail": str(guardrails_detail),
+            },
+        ],
+        "same_node": coordinator["node"] == retrieval["node"] and coordinator["node"] is not None,
+    }
+
+
+def _mcp_tool_text(response):
+    # a tool level rbac rejection at the gateway and an assignee=self
+    # rejection inside spear-openproject-mcp's own code land in two
+    # different shapes, confirmed live: the gateway's own crafted rejection
+    # is a top level json-rpc error, the mcp server's uncaught
+    # PermissionError also bubbles up as a top level error (its own
+    # do_POST never catches it either), a genuine success is the only path
+    # that reaches result.content
+    if "error" in response:
+        return response["error"].get("message", json.dumps(response["error"]))
+    content = (response.get("result") or {}).get("content") or []
+    return content[0].get("text") if content else json.dumps(response.get("result") or response)
+
+
+def mcp_tool_call(name, arguments, caller_token):
+    headers = {
+        "authorization": f"Bearer {caller_token}",
+        "host": SPEAR_SHIELD_MCP_GATEWAY_HOST_HEADER,
+        "content-type": "application/json",
+        "accept": "application/json, text/event-stream",
+    }
+    init_body = {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "owner-console-backend", "version": "1.0"},
+        },
+    }
+    req = urllib.request.Request(
+        SPEAR_SHIELD_MCP_GATEWAY_URL, data=json.dumps(init_body).encode(), headers=headers, method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=15, context=_no_verify_ctx()) as resp:
+        session_id = resp.headers.get("Mcp-Session-Id") or resp.headers.get("mcp-session-id")
+    if session_id:
+        headers["mcp-session-id"] = session_id
+
+    call_body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}}
+    req = urllib.request.Request(
+        SPEAR_SHIELD_MCP_GATEWAY_URL, data=json.dumps(call_body).encode(), headers=headers, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20, context=_no_verify_ctx()) as resp:
+            raw = resp.read().decode()
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode()
+    if raw.startswith("event:"):
+        for line in raw.splitlines():
+            if line.startswith("data: "):
+                raw = line[6:]
+                break
+    return json.loads(raw) if raw else {}
+
+
+# ---- the six security demo scenarios, PHASE2_PLAN.md section 8's second
+# pass: every one of these is the same live check already run by hand
+# against the real cluster earlier in that session, turned into a
+# repeatable console button rather than a one off curl. scenarios 7 (abac
+# content scoping) and 8 (prompt injection refusal) from that session's own
+# proposal need no new code at all, the existing /spear-shield/ask endpoint
+# already demonstrates both live with the right question. tool response
+# injection defense is deliberately left out, see that session's own
+# finding: it currently fails closed on every tool response, not only
+# malicious ones, the shared guardrails config was never tuned for
+# structured tool output shapes ----
+
+
+def demo_identity_rejected():
+    rpc_body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "message/send",
+        "params": {
+            "callerToken": "not-a-real-token",
+            "message": {"role": "user", "parts": [{"kind": "text", "text": "what are my open work packages"}]},
+        },
+    }
+    req = urllib.request.Request(
+        SPEAR_COORDINATOR_A2A_URL,
+        data=json.dumps(rpc_body).encode(),
+        headers={"Content-Type": "application/json", "Authorization": "Bearer not-a-real-token"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15, context=_no_verify_ctx()) as resp:
+            status, detail = resp.status, resp.read().decode()[:300]
+    except urllib.error.HTTPError as exc:
+        status, detail = exc.code, exc.read().decode()[:300]
+    return {
+        "title": "wrong identity rejected at the a2a gateway",
+        "steps": [
+            {
+                "label": "send a garbage bearer token straight at the coordinator's own a2a route",
+                "command": f"POST {SPEAR_COORDINATOR_A2A_URL}\nAuthorization: Bearer not-a-real-token",
+                "output": f"HTTP {status}\n{detail}",
+                "ok": status in (401, 403),
+            }
+        ],
+    }
+
+
+def demo_kata_vs_runc():
+    coordinator = k8s_pod_status(COORDINATOR_POD)
+    retrieval = k8s_pod_status(RETRIEVAL_POD)
+    coordinator_res = k8s_exec(COORDINATOR_POD, "echo cpus=$(nproc); free -h")
+    retrieval_res = k8s_exec(RETRIEVAL_POD, "echo cpus=$(nproc); free -h")
+    return {
+        "title": "kata micro vm vs plain runc, same physical node",
+        "steps": [
+            {
+                "label": "where does each sandbox actually run",
+                "command": f"oc get pod {COORDINATOR_POD} {RETRIEVAL_POD} -o jsonpath=runtimeClassName,nodeName",
+                "output": (
+                    f"{COORDINATOR_POD}: runtimeClassName={coordinator['runtime_class']}, node={coordinator['node']}\n"
+                    f"{RETRIEVAL_POD}: runtimeClassName={retrieval['runtime_class']}, node={retrieval['node']}"
+                ),
+                "ok": retrieval["runtime_class"] == "kata" and coordinator["node"] == retrieval["node"],
+            },
+            {
+                "label": "nproc / free -h inside the coordinator sandbox, runc shares the node's own real view",
+                "command": f"oc exec {COORDINATOR_POD} -- sh -c \"nproc; free -h\"",
+                "output": coordinator_res,
+                "ok": True,
+            },
+            {
+                "label": "nproc / free -h inside the retrieval sandbox, kata's own separate micro vm",
+                "command": f"oc exec {RETRIEVAL_POD} -- sh -c \"nproc; free -h\"",
+                "output": retrieval_res,
+                "ok": True,
+            },
+        ],
+    }
+
+
+def demo_network_containment():
+    blocked = k8s_exec(COORDINATOR_POD, f"{SANDBOX_PROXY_CURL} -v https://1.1.1.1 2>&1 | tail -6")
+    dns_fail = k8s_exec(COORDINATOR_POD, "getent hosts example.com; echo exit=$?")
+    allowlisted = k8s_exec(
+        COORDINATOR_POD,
+        SANDBOX_PROXY_CURL
+        # the supervisor's own ca, confirmed live at this exact path, not
+        # -k: this route's cert really does chain to it, no reason to skip
+        # verification just because it is not a public ca
+        + " --cacert /etc/openshell-tls/proxy/ca-bundle.pem"
+        + ' -o /dev/null -w "http_code=%{http_code}\\n" "$OGX_BASE_URL/v1/chat/completions"',
+    )
+    return {
+        "title": "network containment, the allowlist lives outside the sandbox's own kernel",
+        "steps": [
+            {
+                "label": "curl an arbitrary internet host from inside the sandbox",
+                "command": "curl -x 127.0.0.1:3128 https://1.1.1.1",
+                "output": blocked,
+                "ok": "403" in blocked or "CONNECT" in blocked,
+            },
+            {
+                "label": "resolve a disallowed hostname from inside the sandbox",
+                "command": "getent hosts example.com",
+                "output": dns_fail,
+                "ok": "exit=0" not in dns_fail,
+            },
+            {
+                "label": "reach the real, allowlisted guardrails route",
+                "command": "curl -x 127.0.0.1:3128 $OGX_BASE_URL/v1/chat/completions",
+                "output": allowlisted,
+                "ok": "http_code=" in allowlisted and "http_code=000" not in allowlisted,
+            },
+        ],
+    }
+
+
+def demo_filesystem_containment():
+    denied = k8s_exec(COORDINATOR_POD, "rm -f /usr/bin/ls /usr/bin/cat 2>&1; echo exit=$?")
+    sandbox_write = k8s_exec(
+        COORDINATOR_POD, "touch /sandbox/demo-write-test && rm /sandbox/demo-write-test && echo sandbox write ok"
+    )
+    return {
+        "title": "filesystem containment, only /sandbox is genuinely writable",
+        "steps": [
+            {
+                "label": "try to delete real system binaries",
+                "command": "rm -f /usr/bin/ls /usr/bin/cat",
+                "output": denied,
+                "ok": "Permission denied" in denied,
+            },
+            {
+                "label": "write and remove a file under /sandbox, its own separate ext4 volume",
+                "command": "touch /sandbox/demo-write-test && rm /sandbox/demo-write-test",
+                "output": sandbox_write,
+                "ok": "sandbox write ok" in sandbox_write,
+            },
+        ],
+    }
+
+
+def demo_workload_identity():
+    # a pass/fail contrast, not a literal claims readout. confirmed live
+    # this session that reading the retrieval agent's own inbound
+    # authorization header is not a usable proof here: openshell's own
+    # a2a router strips any caller presented authorization header before
+    # it reaches the sandboxed app, for every caller, a sound anti
+    # spoofing property since a2a itself has no per hop auth of its own.
+    # so instead this shows the same naked call made two ways: from
+    # outside any sandbox with no token at all, which the retrieval a2a
+    # gateway's own authpolicy cleanly rejects, versus the real
+    # coordinator process making the identical call with no token of its
+    # own, which succeeds, proving something transparently attached a
+    # valid credential before that request ever left the coordinator pod
+    naked_body = {"jsonrpc": "2.0", "id": 1, "method": "whoami", "params": {}}
+    naked_req = urllib.request.Request(
+        RETRIEVAL_A2A_INTERNAL_URL,
+        data=json.dumps(naked_body).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(naked_req, timeout=15, context=_no_verify_ctx()) as resp:
+            naked_status, naked_detail = resp.status, resp.read().decode()[:300]
+    except urllib.error.HTTPError as exc:
+        naked_status, naked_detail = exc.code, exc.read().decode()[:300]
+
+    # the a2a gateway's own authpolicy (scenario 1's own point) still
+    # gates this outer hop before it ever reaches the coordinator's
+    # dispatch, a real token is needed here too, whose persona does not
+    # matter since whoami-downstream itself checks no caller identity
+    gateway_token = mint_spear_shield_token("balakrishnan.b", persona_password("balakrishnan.b"))
+    downstream_body = {"jsonrpc": "2.0", "id": 1, "method": "whoami-downstream", "params": {}}
+    downstream_req = urllib.request.Request(
+        SPEAR_COORDINATOR_A2A_URL,
+        data=json.dumps(downstream_body).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {gateway_token}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(downstream_req, timeout=20, context=_no_verify_ctx()) as resp:
+            outer = json.loads(resp.read())
+        inner_text = outer["result"]["artifacts"][0]["parts"][0]["text"]
+        downstream_succeeded = json.loads(inner_text).get("result", {}).get("artifacts", [{}])[0].get(
+            "parts", [{}]
+        )[0].get("text") == json.dumps({"reached": True})
+        downstream_detail = inner_text
+    except Exception as exc:  # noqa: BLE001
+        downstream_succeeded, downstream_detail = False, str(exc)
+
+    return {
+        "title": "workload identity, this hop authenticates as this exact sandbox, not a shared secret",
+        "steps": [
+            {
+                "label": "the same call, made from outside any sandbox, with no token at all",
+                "command": f"POST {RETRIEVAL_A2A_INTERNAL_URL} (no Authorization header)",
+                "output": f"HTTP {naked_status}\n{naked_detail}",
+                "ok": naked_status in (401, 403),
+            },
+            {
+                "label": "the real coordinator process makes the identical call, also with no token of its own",
+                "command": f"http_json({RETRIEVAL_A2A_INTERNAL_URL}, whoami), the exact channel every real tool delegation already uses",
+                "output": (
+                    "this call succeeded where the naked call above was rejected, the openshell supervisor "
+                    "transparently attached a valid credential minted for this exact sandbox before the "
+                    f"request ever left the pod:\n{downstream_detail}"
+                ),
+                "ok": downstream_succeeded,
+            },
+        ],
+    }
+
+
+def demo_tool_scope_and_assignee():
+    bala_token = mint_spear_shield_token("balakrishnan.b", persona_password("balakrishnan.b"))
+    sid_token = mint_spear_shield_token("siddhartha.de", persona_password("siddhartha.de"))
+
+    # #38 is really assigned to balakrishnan.b, #39 to siddhartha.de,
+    # PHASE2_PLAN.md section 4's own real openproject data, not invented ids
+    step1 = _mcp_tool_text(mcp_tool_call("openproject_update_work_package", {"id": 38, "status": "in progress"}, bala_token))
+    step2 = _mcp_tool_text(mcp_tool_call("openproject_update_work_package", {"id": 38, "status": "in progress"}, sid_token))
+    step3 = _mcp_tool_text(mcp_tool_call("openproject_update_work_package", {"id": 39, "status": "in progress"}, sid_token))
+
+    return {
+        "title": "two layers, three real callers: gateway tool rbac, then the project's own assignee=self check",
+        "steps": [
+            {
+                "label": "balakrishnan.b (search only role) tries update_work_package on #38, his own item",
+                "command": "tools/call openproject_update_work_package {id: 38} as balakrishnan.b",
+                "output": step1,
+                "ok": "forbidden" in step1.lower() or "insufficient" in step1.lower(),
+            },
+            {
+                "label": "siddhartha.de (holds the update role) tries update_work_package on #38, balakrishnan's own item",
+                "command": "tools/call openproject_update_work_package {id: 38} as siddhartha.de",
+                "output": step2,
+                "ok": "not assigned to siddhartha.de" in step2,
+            },
+            {
+                "label": "siddhartha.de updates #39, her own item, genuinely succeeds",
+                "command": "tools/call openproject_update_work_package {id: 39} as siddhartha.de",
+                "output": step3,
+                "ok": "not assigned" not in step3 and "forbidden" not in step3.lower(),
+            },
+        ],
+    }
+
+
+DEMO_SCENARIOS = {
+    "identity-rejected": demo_identity_rejected,
+    "kata-vs-runc": demo_kata_vs_runc,
+    "network-containment": demo_network_containment,
+    "filesystem-containment": demo_filesystem_containment,
+    "workload-identity": demo_workload_identity,
+    "tool-scope-and-assignee": demo_tool_scope_and_assignee,
+}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -647,6 +1111,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(400, {"error": "run_id query param is required"})
                 else:
                     self._json(200, autorag_leaderboard(run_id, self._user_token()))
+            elif path == "/spear-shield/status":
+                self._json(200, spear_shield_status())
             else:
                 self._json(404, {"error": "Not found"})
         except PermissionError as exc:
@@ -767,8 +1233,15 @@ class Handler(BaseHTTPRequestHandler):
                 if not message_text:
                     self._json(400, {"error": "message is required"})
                     return
-                answer = ask_spear_shield(message_text, self._user_token())
-                self._json(200, {"answer": answer})
+                answer, trace = ask_spear_shield(message_text, self._user_token())
+                self._json(200, {"answer": answer, "trace": trace})
+            elif path.startswith("/spear-shield/demo/"):
+                scenario_id = path[len("/spear-shield/demo/"):]
+                scenario_fn = DEMO_SCENARIOS.get(scenario_id)
+                if scenario_fn is None:
+                    self._json(404, {"error": f"unknown demo scenario: {scenario_id!r}"})
+                    return
+                self._json(200, scenario_fn())
             else:
                 self._json(404, {"error": "Not found"})
         except PermissionError as exc:

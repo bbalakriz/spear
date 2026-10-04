@@ -35,7 +35,7 @@ import os
 import psycopg2
 import requests
 
-OGX_BASE_URL_DEFAULT = "http://rag-phase1-ogx-service.rag-phase1.svc.cluster.local:8321"
+OGX_BASE_URL_DEFAULT = "http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321"
 # same embedding model and dimension (768) every real row in rag_chunks
 # was already written with, phase1_apply_pattern's own default, a query
 # embedded with a different model would not even be comparable
@@ -120,7 +120,7 @@ def connect():
     # "tcp://<ip>:5432") for any pod in a namespace with a service
     # literally named pgvector, colliding with a plain port number here
     return psycopg2.connect(
-        host=os.environ.get("PGVECTOR_HOST", "pgvector.rag-phase1.svc.cluster.local"),
+        host=os.environ.get("PGVECTOR_HOST", "pgvector.spear-data.svc.cluster.local"),
         port=int(os.environ.get("PGVECTOR_DB_PORT", "5432")),
         dbname=os.environ.get("PGVECTOR_DB", "ragdb"),
         user=os.environ["PGVECTOR_USER"],

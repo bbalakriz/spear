@@ -1,0 +1,32 @@
+# spear-coordinator-agent's own credential for calling spear-guardrails
+# directly. the Role/RoleBinding half of this credential now lives
+# alongside the real Service it grants access to, see
+# manifests/spear-guardrails/08-coordinator-caller-rbac.yaml, this file
+# only keeps the ServiceAccount/Secret half, co located with the
+# coordinator sandbox that actually reads this token.
+#
+# a long lived token secret, not a projected volume, on purpose: the
+# coordinator sandbox pod sets automountServiceAccountToken: false,
+# confirmed live, openshell sandboxes never get one, so there is no
+# per-pod sa token this sandbox could read the way
+# spear-shield-mcp-guard-proxy does. this static token gets handed to
+# the sandbox instead, as OGX_API_KEY, the same env var main.py already
+# supports for an openai-style Authorization bearer header, no new code
+# needed on the coordinator's own side for this
+#
+# NAMESPACE_MIGRATION_PLAN.md: this half stays in spear-shield-agents,
+# unchanged, only the Role/RoleBinding half moved out
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-coordinator-guardrails-caller
+  namespace: spear-shield-agents
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spear-coordinator-guardrails-caller-token
+  namespace: spear-shield-agents
+  annotations:
+    kubernetes.io/service-account.name: spear-coordinator-guardrails-caller
+type: kubernetes.io/service-account-token

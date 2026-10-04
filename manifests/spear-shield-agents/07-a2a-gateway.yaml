@@ -1,0 +1,196 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: spear-shield-a2a-gateway
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  # same gatewayClassName as 02-gateway.yaml's own mcp gateway
+  gatewayClassName: istio
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-retrieval-a2a-gateway
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  selector:
+    gateway.networking.k8s.io/gateway-name: spear-shield-a2a-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+# the coordinator's own inbound a2a route, PHASE2_PLAN.md section 8, never
+# built until the console backend needed to reach it from outside its own
+# sandbox exec. every earlier test this session went straight into the
+# sandbox, this is the first real external caller. same gateway, same
+# shape as spear-retrieval-a2a above, a distinct hostname so the gateway
+# can route to it, and the openshell service name differs, confirmed live
+# via "openshell service list": the coordinator's own exposed service is
+# named coordinator-http, not a2a, the retrieval agent's own naming choice
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-coordinator-a2a-gateway
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  selector:
+    gateway.networking.k8s.io/gateway-name: spear-shield-a2a-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: spear-coordinator-a2a
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: spear-shield-a2a-gateway
+      namespace: spear-shield-agents
+      sectionName: http
+  hostnames:
+    - spear-coordinator-a2a-gateway.spear-shield-agents.svc.cluster.local
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        # host must match the exact string openshell service expose
+        # prints, confirmed live: default--spear-coordinator--coordinator-http.
+        # openshell.localhost, not default--spear-coordinator--a2a, the
+        # service's own real name wins here, not a copy paste guess
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: Host
+                value: default--spear-coordinator--coordinator-http.openshell.localhost
+      backendRefs:
+        - name: spear-shield-openshell-a2a-backend
+          port: 8080
+---
+# openshell service expose publishes the retrieval agent's a2a listener
+# through the openshell gateway relay (confirmed live this session: a
+# plain ClusterIP hit at the sandbox's own pod ip dies on the supervisor
+# sidecar's nftables skuid gate, same finding the reference project
+# already documented for its own specialist sandbox, manifests/20-security/
+# 06-a2a-gateway.yaml's own comment). this ExternalName lets the a2a
+# HTTPRoute live in spear-shield-agents while its real backend is the
+# single shared openshell release this project reuses, same as the
+# reference's own openshell-a2a-backend.
+#
+# NAMESPACE_MIGRATION_PLAN.md: an earlier draft of this file pointed at
+# a second, independent release in its own spear-shield-openshell
+# namespace, that namespace never actually got created on this cluster,
+# confirmed live via `oc get ns spear-shield-openshell` (not found).
+# what is actually live, confirmed via `helm list -n openshell`, is the
+# single shared release, release name openshell, namespace openshell,
+# reconfigured to this project's own server.sandboxNamespace:
+# spear-shield-agents. fixed to point at the real thing.
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-shield-openshell-a2a-backend
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  type: ExternalName
+  externalName: openshell.openshell.svc.cluster.local
+  ports:
+    - name: http
+      port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: spear-retrieval-a2a
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: spear-shield-a2a-gateway
+      namespace: spear-shield-agents
+      sectionName: http
+  hostnames:
+    - spear-retrieval-a2a-gateway.spear-shield-agents.svc.cluster.local
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        # host must match the exact string openshell service expose
+        # prints (workspace--sandbox--service.openshell.localhost), the
+        # retrieval agent sandbox is named spear-retrieval (19 char
+        # sandbox name limit, confirmed live), exposed as service name
+        # "a2a" under workspace "default"
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: Host
+                value: default--spear-retrieval--a2a.openshell.localhost
+      backendRefs:
+        - name: spear-shield-openshell-a2a-backend
+          port: 8080
+---
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: spear-retrieval-a2a-auth
+  namespace: spear-shield-agents
+  labels:
+    app.kubernetes.io/part-of: spear-shield-agents
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: spear-shield-a2a-gateway
+    sectionName: http
+  # authorino accepts the request if either issuer validates, same
+  # dual path shape as the reference's own specialist-a2a-auth: a
+  # keycloak jwt for spear-coordinator-workload's own client credentials
+  # grant, or a spire issued jwt-svid asserted straight from the
+  # coordinator sandbox's own token_grant provider, confirmed live end
+  # to end this session, gateway policy engine logs show ALLOWED on the
+  # coordinator's real a2a call using a token minted through this exact
+  # path, not just the realm's own federated-jwt authenticator in isolation
+  rules:
+    authentication:
+      spear-shield-keycloak:
+        jwt:
+          issuerUrl: ISSUER_URL_PLACEHOLDER
+      spear-shield-spire:
+        jwt:
+          issuerUrl: SPIRE_OIDC_ROUTE_PLACEHOLDER
+    response:
+      unauthenticated:
+        code: 401
+        headers:
+          WWW-Authenticate:
+            value: Bearer
+        body:
+          value: '{"error":"unauthorized","message":"retrieval agent a2a route requires a bearer token"}'

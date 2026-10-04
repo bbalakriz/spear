@@ -1,0 +1,49 @@
+# nemo guardrails config for spear-openproject-mcp's own tool response
+# check, PHASE2_PLAN.md section 5's nightmare 3 defense, enforced today
+# by spear-shield-mcp-guard-proxy (manifests/spear-shield-agents/08-mcp-guard-proxy.yaml),
+# not by spear-openproject-mcp itself anymore. selected per request with
+# guardrails.config_id: work-tracker-config, same mechanism as
+# vendor-submission-config in 02-vendor-submission-config.yaml.
+#
+# same detector types as internal-docs-config, minus PERSON. found live,
+# not guessed, in this same investigation: a real work package response
+# always carries a real assignee display name, a legitimate expected
+# field for a work tracker, not a leak, and internal-docs-config's PERSON
+# rule was blocking every single tool response regardless of content,
+# confirmed directly against rag-phase1-guardrails with the exact body
+# shape spear-openproject-mcp sends. the actual nightmare 3 need here is
+# catching injected instructions in tool output, the regex rail below,
+# not flagging a coworker's own name
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: work-tracker-config
+  namespace: spear-guardrails
+data:
+  config.yaml: |
+    rails:
+      config:
+        sensitive_data_detection:
+          input:
+            entities:
+              - EMAIL_ADDRESS
+              - CREDIT_CARD
+              - US_SSN
+        regex_detection:
+          input:
+            patterns:
+              - "ignore\\s+(all\\s+)?previous\\s+instructions?"
+              - "system\\s+override"
+              - "you\\s+(now\\s+)?have\\s+elevated\\s+access"
+              - "disregard\\s+(all\\s+)?(prior|previous)\\s+(rules|restrictions|instructions)"
+              - "classify\\s+all\\s+data\\s+as\\s+public"
+              - "share\\s+(the\\s+)?full\\s+(customer\\s+)?database"
+              - "\\[\\s*system\\s*[:\\]]"
+            case_insensitive: true
+      input:
+        flows:
+          - detect sensitive data on input
+          - regex check input
+  rails.co: |
+    # built in rails only, same shape as internal-docs-config minus the
+    # PERSON entity

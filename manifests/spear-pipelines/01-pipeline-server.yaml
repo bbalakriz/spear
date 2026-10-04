@@ -1,0 +1,27 @@
+# the project pipeline server, with autoML/autorag pipelines enabled
+# (apiServer.managedPipelines)
+#
+# objectStorage points at the standalone minio namespace, unchanged by
+# this migration, minio-dsp-creds is synced into this namespace from
+# minio's root secret by scripts/04-install-pipelines.sh
+# (sync_minio_creds_for_dsp).
+apiVersion: datasciencepipelinesapplications.opendatahub.io/v1
+kind: DataSciencePipelinesApplication
+metadata:
+  name: rag-phase1-dspa
+  namespace: spear-pipelines
+spec:
+  apiServer:
+    managedPipelines: {}
+    enableSamplePipeline: false
+  objectStorage:
+    externalStorage:
+      host: minio.minio.svc.cluster.local
+      port: "9000"
+      scheme: http
+      secure: false
+      bucket: dsp-pipeline-artifacts
+      s3CredentialsSecret:
+        secretName: minio-dsp-creds
+        accessKey: accesskey
+        secretKey: secretkey

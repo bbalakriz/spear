@@ -35,6 +35,8 @@ import json
 import os
 import socket
 import sys
+import time
+import urllib.error
 from typing import Any
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "_shared"))
@@ -59,19 +61,17 @@ RETRIEVAL_A2A_URL = os.environ.get(
 
 # points straight at rag-phase1-guardrails's own route, not at ogx
 # directly: this agent's own reasoning call now runs through
-# coordinator-agent-config's input/output rails, manifests/20-guardrails,
+# coordinator-agent-config's input/output rails, manifests/spear-guardrails,
 # which itself forwards to the real model (its own models: block). ogx's
-# NetworkPolicy, confirmed live, only allows ingress from rag-phase1
-# itself plus redhat-ods-applications, resolved the right way, through
-# the OGXServer cr's own spec.network.policy.ingress field rather than
-# hand patching the derived NetworkPolicy (which the operator silently
-# reverts), see scripts/08-install-spear-shield-agents.sh's own
-# patch_ogx_network_policy
+# NetworkPolicy, confirmed live, is declared straight on the OGXServer
+# cr's own spec.network.policy.ingress field rather than hand patching
+# the derived NetworkPolicy (which the operator silently reverts), see
+# manifests/spear-inference/01-ogxserver.yaml
 OGX_BASE_URL = os.environ.get("OGX_BASE_URL", "https://GUARDRAILS_HOST_PLACEHOLDER")
 # a dedicated service account's own long lived token, not a dynamic grant:
 # openshell sandboxes set automountServiceAccountToken: false, confirmed
 # live, so there is no per-pod token to read the way an ordinary
-# deployment would, see coordinator-guardrails-rbac.yaml's own comment
+# deployment would, see coordinator-guardrails-sa.yaml's own comment
 OGX_API_KEY = os.environ.get("OGX_API_KEY", "")
 GUARDRAILS_CONFIG_ID = os.environ.get("GUARDRAILS_CONFIG_ID", "coordinator-agent-config")
 # glm-53-flash's own /v1/chat/completions tool calling confirmed live
@@ -158,6 +158,36 @@ def agent_card() -> dict[str, Any]:
     }
 
 
+def _trace_step(
+    trace: list[dict[str, Any]],
+    step: str,
+    detail: str,
+    started_at: float,
+    frm: str,
+    to: str,
+    protocol: str,
+    ok: bool = True,
+) -> None:
+    # real wall clock timing for one hop of this request, not a fabricated
+    # or estimated number. from/to/protocol name the two real components
+    # on each side of this hop, owner-console's chat page renders the
+    # whole list as a live box and arrow request flow, not just text. ok
+    # is false only for a hop that was genuinely refused or failed, so a
+    # blocked request renders as a red box at the real point of failure
+    # instead of a generic looking green chain all the way through
+    trace.append(
+        {
+            "step": step,
+            "detail": detail,
+            "duration_ms": round((time.monotonic() - started_at) * 1000),
+            "from": frm,
+            "to": to,
+            "protocol": protocol,
+            "ok": ok,
+        }
+    )
+
+
 def chat_completion(messages: list[dict[str, Any]]) -> dict[str, Any]:
     # passthrough: true in coordinator-agent-config is what makes tools/
     # tool_choice actually work here, confirmed live: without it nemo
@@ -183,13 +213,25 @@ def chat_completion(messages: list[dict[str, Any]]) -> dict[str, Any]:
     )
 
 
-def delegate_tool_calls(tool_calls: list[dict[str, Any]], caller_token: str) -> dict[str, str]:
+def _looks_like_tool_error(raw: str) -> bool:
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(parsed, dict) and "error" in parsed
+
+
+def delegate_tool_calls(
+    tool_calls: list[dict[str, Any]], caller_token: str, trace: list[dict[str, Any]]
+) -> dict[str, str]:
     """hands the model's own chosen tool calls to spear-retrieval-agent in
     one batch, over a2a, and returns {tool_call_id: result_text}. the
     retrieval agent is the one that actually touches rag_chunks and the
     work tracker mcp tool, section 2's own isolation rationale, not this
     sandbox.
     """
+    started_at = time.monotonic()
+    names = ", ".join(tc["function"]["name"] for tc in tool_calls)
     calls_payload = [
         {"id": tc["id"], "name": tc["function"]["name"], "arguments": json.loads(tc["function"]["arguments"] or "{}")}
         for tc in tool_calls
@@ -208,43 +250,94 @@ def delegate_tool_calls(tool_calls: list[dict[str, Any]], caller_token: str) -> 
             "callerToken": caller_token,
         },
     }
-    body = http_json(RETRIEVAL_A2A_URL, payload)
-    artifacts = (body.get("result") or {}).get("artifacts") or []
+    try:
+        body = http_json(RETRIEVAL_A2A_URL, payload)
+    except Exception as exc:  # noqa: BLE001
+        # the a2a hop itself failed outright, not a tool level refusal,
+        # recorded as its own real block rather than left to crash this
+        # whole request with no trace at all
+        _trace_step(
+            trace,
+            "tool delegation",
+            f"blocked, call to spear-retrieval-agent failed: {exc}",
+            started_at,
+            frm="coordinator-agent (runc sandbox)",
+            to="retrieval-agent (kata sandbox)",
+            protocol="a2a message/send",
+            ok=False,
+        )
+        return {tc["id"]: json.dumps({"error": str(exc)}) for tc in tool_calls}
+
+    result = body.get("result") or {}
+    artifacts = result.get("artifacts") or []
     text = artifacts[0]["parts"][0]["text"] if artifacts else json.dumps({"error": body})
     try:
         results = json.loads(text)
+        by_id = {r["id"]: r["result"] for r in results if "id" in r}
     except json.JSONDecodeError:
-        return {tc["id"]: text for tc in tool_calls}
-    by_id = {r["id"]: r["result"] for r in results if "id" in r}
+        by_id = {tc["id"]: text for tc in tool_calls}
+    # a per tool call refusal (spear-openproject-mcp's own assignee=self
+    # check, or the gateway's own tool rbac authpolicy, see
+    # run_work_tracker_tool in spear-retrieval-agent) already renders its
+    # own red hop below once retrieval's sub trace is spliced in, marking
+    # this outer hop red too so the whole failing sub chain stands out,
+    # not just the one deepest box
+    any_tool_error = any(_looks_like_tool_error(v) for v in by_id.values())
+    _trace_step(
+        trace,
+        "tool delegation",
+        f"spear-retrieval-agent (kata sandboxed) ran: {names}",
+        started_at,
+        frm="coordinator-agent (runc sandbox)",
+        to="retrieval-agent (kata sandbox)",
+        protocol="a2a message/send",
+        ok=not any_tool_error,
+    )
+    # retrieval's own completed_task already carries its own real sub
+    # hops (rag-query-relay, mcp-gateway), spliced in right after this
+    # hop so the flow diagram shows the whole chain, not just this edge
+    trace.extend(result.get("trace") or [])
     return {tc["id"]: by_id.get(tc["id"], json.dumps({"error": "no result returned for this tool call"})) for tc in tool_calls}
 
 
-# a real tool refusal (e.g. openproject's own rbac returning a 403 on
-# someone else's work package, confirmed live) often makes the model try
-# a second, different tool before it gives up and writes an actual
+# a real tool refusal (e.g. spear-openproject-mcp's own assignee=self
+# check refusing a write to someone else's work package, confirmed live,
+# this never reaches openproject's own rbac at all) often makes the model
+# try a second, different tool before it gives up and writes an actual
 # answer, a genuine multi round agent loop, not a single question/single
 # tool/single answer shape. found live when a real cross user update
-# attempt's first tool call came back 403 and the model's very next move
-# was another tool_calls response, which the old single round version
-# here had no way to handle and just returned an empty "no synthesized
-# answer" placeholder
+# attempt's first tool call came back refused and the model's very next
+# move was another tool_calls response, which the old single round
+# version here had no way to handle and just returned an empty "no
+# synthesized answer" placeholder
 MAX_TOOL_ROUNDS = 4
 
 
-def answer(user_text: str, caller_token: str) -> str:
+def answer(user_text: str, caller_token: str) -> tuple[str, list[dict[str, Any]]]:
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_text},
     ]
+    trace: list[dict[str, Any]] = []
 
-    for _ in range(MAX_TOOL_ROUNDS):
+    for round_num in range(MAX_TOOL_ROUNDS):
+        started_at = time.monotonic()
         response = chat_completion(messages)
         choice = (response.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         tool_calls = message.get("tool_calls") or []
+        _trace_step(
+            trace,
+            f"model reasoning, round {round_num + 1}",
+            "guardrails + glm-53-flash decided to call tools" if tool_calls else "guardrails + glm-53-flash wrote a final answer",
+            started_at,
+            frm="coordinator-agent (runc sandbox)",
+            to="guardrails + glm-53-flash",
+            protocol="openai chat/completions",
+        )
 
         if not tool_calls:
-            return message.get("content") or "no answer came back from the model"
+            return message.get("content") or "no answer came back from the model", trace
 
         # nemo guardrails own get_history_cache_key indexes every message
         # by msg["content"] unconditionally, confirmed live via a real
@@ -254,7 +347,7 @@ def answer(user_text: str, caller_token: str) -> str:
         # guardrails quirk not an openai requirement
         message.setdefault("content", "")
         messages.append(message)
-        results_by_id = delegate_tool_calls(tool_calls, caller_token)
+        results_by_id = delegate_tool_calls(tool_calls, caller_token, trace)
         for tc in tool_calls:
             messages.append(
                 {
@@ -264,11 +357,22 @@ def answer(user_text: str, caller_token: str) -> str:
                 }
             )
 
-    return "the model kept calling tools without giving a final answer, stopping after too many rounds"
+    return "the model kept calling tools without giving a final answer, stopping after too many rounds", trace
 
 
 def on_rpc(body: dict[str, Any], auth_header: str) -> dict[str, Any] | None:
     method = body.get("method")
+    # demo only method, owner-console's security demo page uses this to
+    # prove the workload identity hop live: makes this sandbox's own real
+    # outbound call to the retrieval agent's own whoami method, over the
+    # exact same http_json(RETRIEVAL_A2A_URL, ...) channel every real tool
+    # delegation already uses, confirmed live this is the only way to
+    # observe the openshell supervisor's real injected token, it only
+    # credentials this sandbox's own declared main process, never an
+    # oc exec'd side process making the identical call by hand
+    if method == "whoami-downstream":
+        downstream = http_json(RETRIEVAL_A2A_URL, {"jsonrpc": "2.0", "id": 1, "method": "whoami", "params": {}})
+        return completed_task(body.get("id"), json.dumps(downstream))
     if method not in ("message/send", "tasks/send", "tasks/sendSubscribe"):
         return {
             "jsonrpc": "2.0",
@@ -294,8 +398,19 @@ def on_rpc(body: dict[str, Any], auth_header: str) -> dict[str, Any] | None:
         }
     prompt = text_from_message(body)
     print(f"coordinator request (sandbox={socket.gethostname()}): {prompt}")
-    text = answer(prompt, caller_token)
-    return completed_task(body.get("id"), text)
+    text, trace = answer(prompt, caller_token)
+    trace.insert(
+        0,
+        {
+            "step": "request received",
+            "detail": f"coordinator sandbox {socket.gethostname()} (runc), caller identity already verified by the a2a gateway's own authpolicy",
+            "duration_ms": 0,
+            "from": "owner-console-backend",
+            "to": "coordinator-agent (runc sandbox)",
+            "protocol": "a2a message/send",
+        },
+    )
+    return completed_task(body.get("id"), text, trace)
 
 
 def main() -> None:

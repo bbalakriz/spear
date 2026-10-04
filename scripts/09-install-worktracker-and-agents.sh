@@ -694,6 +694,11 @@ main() {
     --dry-run=client -o yaml | oc apply -f -
   apply_templated "${AGENTS_MANIFESTS}/04-mcp-guard-proxy.yaml"
   oc apply -f "${AGENTS_MANIFESTS}/05-mcp-guard-proxy-referencegrant.yaml"
+  # a configmap update alone never reaches an already running pod, only a
+  # fresh pod mounts the new content, so force one on every run rather
+  # than silently serving stale server.py against a cluster that is not
+  # a brand new install
+  oc rollout restart deployment/spear-shield-mcp-guard-proxy -n "${AGENTS_NS}"
 
   log "spear-coordinator-agent's own credential for calling spear-guardrails directly, a dedicated sa plus a long lived token (sandboxes never automount one, confirmed live)"
   oc apply -f "${AGENTS_MANIFESTS}/openshell/coordinator-guardrails-sa.yaml"

@@ -30,13 +30,17 @@
 # authentication flow (a copy of the realm's builtin "clients" flow with
 # federated-jwt wired in, bound as the realm's clientAuthenticationFlow).
 # neither an identity provider nor an authentication flow is representable
-# in a KeycloakRealmImport spec at all, both were created live against the
-# admin api, mirroring the reference's own sync_spiffe_federated_auth and
-# enable_federated_jwt_client_auth functions exactly, section 2. without
-# both, spear-coordinator-workload's federated-jwt token_grant calls 400
-# with client_not_found no matter how correct its own attributes are,
-# confirmed by the reference's own hard won comment on that exact failure
-# mode, not rediscovered here from scratch
+# in a KeycloakRealmImport spec at all, mirroring the reference's own
+# sync_spiffe_federated_auth and enable_federated_jwt_client_auth functions
+# exactly, section 2. without both, spear-coordinator-workload's
+# federated-jwt token_grant calls 400 with client_not_found with no idp at
+# all, or 401 invalid_client with the idp but no auth flow bound, confirmed
+# by the reference's own hard won comment on the first failure mode and by
+# this project's own live rebuild on the second, not rediscovered from
+# scratch either time. no longer a one off live admin api action with
+# nothing to show for it on a rebuild: scripts/09-install-worktracker-and-agents.sh's
+# own ensure_spiffe_federated_auth runs this exact admin api sequence every
+# install, idempotent, called right after this file is applied
 #
 # a fourth thing this file does not reproduce, same live-admin-api-only
 # shape as the two above: balakrishnan.b and siddhartha.de also need real

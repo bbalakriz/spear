@@ -1,0 +1,100 @@
+# externalized, gateway side request/response guardrail enforcement,
+# shared by every mcp server fronted by spear-shield-gateway, without
+# touching any of their own code, see
+# mcp-servers/spear-shield-mcp-guard-proxy/server.py for why this exists
+# instead of wiring nemo-request-guard/nemo-response-guard as a second
+# envoy ext_proc filter (a real, open upstream bug, confirmed live this
+# same investigation).
+#
+# one deployment for all mcp servers, not one per server: the proxy
+# derives each request's real backend from mcp-gateway's own
+# x-mcp-servername header, confirmed live, no per server env var needed.
+# onboarding a new mcp server is a one line httproute backendref change
+# to this same service, nothing else, no redeploy of this proxy.
+#
+# plain Deployment + Service on purpose, not an MCPServer CR: this is a
+# transparent proxy, not an mcp tool server in its own right, it never
+# needs a userSpecificList or its own MCPServerRegistration, each real
+# server's existing HTTPRoute/MCPServerRegistration/MCPVirtualServer
+# (e.g. manifests/spear-worktracker/04-openproject-mcp.yaml) is reused
+# unchanged, only that httproute's backendref moves from the real
+# backend to this proxy.
+#
+# NAMESPACE_MIGRATION_PLAN.md: spear-openproject-mcp's own HTTPRoute now
+# lives in a different namespace (spear-worktracker), so its backendref
+# to this Service is cross namespace, see
+# manifests/spear-shield-agents/05-mcp-guard-proxy-referencegrant.yaml
+# for the ReferenceGrant that permits it
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spear-shield-mcp-guard-proxy
+  namespace: spear-shield-agents
+  labels:
+    app: spear-shield-mcp-guard-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spear-shield-mcp-guard-proxy
+  template:
+    metadata:
+      labels:
+        app: spear-shield-mcp-guard-proxy
+    spec:
+      containers:
+        - name: guard-proxy
+          image: image-registry.openshift-image-registry.svc:5000/openshift/python:3.12-ubi9
+          command: ["python3", "/mcp/server.py"]
+          ports:
+            - containerPort: 8000
+          env:
+            # UPSTREAM_URL is not only a direct testing fallback, the
+            # comment here used to say that and it was wrong: confirmed
+            # live that mcp-gateway's own internal mcp-manager component
+            # also needs this, its periodic tool discovery connection to
+            # this proxy bypasses the envoy/ext_proc filter chain that
+            # stamps x-mcp-servername on real client traffic, so without
+            # this fallback mcp-gateway itself never goes ready, stuck
+            # logging "no x-mcp-servername header and no UPSTREAM_URL
+            # fallback configured" every check interval forever
+            - name: UPSTREAM_URL
+              value: http://spear-openproject-mcp.spear-worktracker.svc.cluster.local:8000/mcp
+            - name: GUARDRAILS_ROUTE
+              value: GUARDRAILS_ROUTE_PLACEHOLDER
+            - name: GUARDRAILS_CONFIG_ID
+              value: work-tracker-config
+          volumeMounts:
+            - name: code
+              mountPath: /mcp
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: code
+          configMap:
+            name: spear-shield-mcp-guard-proxy-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-shield-mcp-guard-proxy
+  namespace: spear-shield-agents
+  labels:
+    app: spear-shield-mcp-guard-proxy
+spec:
+  selector:
+    app: spear-shield-mcp-guard-proxy
+  ports:
+    - port: 8000
+      targetPort: 8000

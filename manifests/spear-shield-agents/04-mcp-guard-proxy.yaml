@@ -49,17 +49,21 @@ spec:
           ports:
             - containerPort: 8000
           env:
-            # UPSTREAM_URL is not only a direct testing fallback, the
-            # comment here used to say that and it was wrong: confirmed
-            # live that mcp-gateway's own internal mcp-manager component
-            # also needs this, its periodic tool discovery connection to
-            # this proxy bypasses the envoy/ext_proc filter chain that
-            # stamps x-mcp-servername on real client traffic, so without
-            # this fallback mcp-gateway itself never goes ready, stuck
-            # logging "no x-mcp-servername header and no UPSTREAM_URL
-            # fallback configured" every check interval forever
-            - name: UPSTREAM_URL
-              value: http://spear-openproject-mcp.spear-worktracker.svc.cluster.local:8000/mcp
+            # no UPSTREAM_URL here on purpose, an earlier pass through
+            # this exact bug set it to a single hardcoded backend to get
+            # mcp-gateway's own internal discovery connection to
+            # resolve, believing that connection carried no server
+            # identity at all. wrong, and would have silently broken
+            # the moment a second mcp server shared this one proxy
+            # deployment, a single fixed value cannot tell two servers'
+            # own discovery connections apart. the real fix lives in
+            # server.py's own resolve_upstream: that connection does
+            # carry real server identity, a gateway-server-id header,
+            # confirmed live by temporarily logging every header on a
+            # request missing x-mcp-servername. UPSTREAM_URL stays
+            # supported in server.py only as a genuinely last resort,
+            # for a direct test that bypasses mcp-gateway entirely and
+            # so carries neither header, not needed for real operation
             - name: GUARDRAILS_ROUTE
               value: GUARDRAILS_ROUTE_PLACEHOLDER
             - name: GUARDRAILS_CONFIG_ID

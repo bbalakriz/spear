@@ -3,7 +3,7 @@
 checks in front of any mcp backend, no backend code changes needed.
 
 sits between the httproute and the real mcp server, see
-manifests/50-spear-shield-agents/08-mcp-guard-proxy.yaml, replacing the
+manifests/spear-shield-agents/04-mcp-guard-proxy.yaml, replacing the
 backend service as the httproute's own backendref, then reissuing every
 request to the real backend itself over the cluster network. tools/call
 requests are inspected on the way in (request guard) and the real
@@ -15,12 +15,23 @@ one shared deployment fronts every mcp server, not one per server. found
 live, not guessed: mcp-gateway's own ext_proc filter already stamps
 x-mcp-servername on every request, "<namespace>/<server-name>", the same
 value kuadrant's own tool-access-check AuthPolicy already keys its rbac
-off, see manifests/50-spear-shield-agents/06-auth-policies.yaml. every
+off, see manifests/spear-shield-agents/03-auth-policies.yaml. every
 mcp server built here follows the same shape, a Service named after the
 server on port 8000 serving /mcp, so the real upstream is derivable from
 that one header, no per server env var, no mapping file to maintain.
 onboarding a new server is a one line httproute backendref change to
 this same shared proxy service, nothing else.
+
+a second source for that same namespace/name pair, found live, not
+documented anywhere: mcp-gateway's own internal mcp-manager component
+dials this proxy directly to discover each registered server's own
+tools, bypassing the envoy listener and its ext_proc filter entirely for
+that one connection, so x-mcp-servername is never present on it. it does
+carry a gateway-server-id header instead, same namespace/name pair as
+its own prefix, see resolve_upstream's own comment for the full story.
+this is what makes the shared deployment actually scale past one mcp
+server, a single UPSTREAM_URL fallback cannot tell two servers' own
+discovery connections apart.
 
 why this exists instead of wiring nemo-request-guard/nemo-response-guard
 as envoy ext_proc filters: a real, open upstream bug hangs a second
@@ -59,8 +70,9 @@ PORT = int(os.environ.get("MCP_PORT", "8000"))
 UPSTREAM_PORT = os.environ.get("UPSTREAM_PORT", "8000")
 UPSTREAM_PATH = os.environ.get("UPSTREAM_PATH", "/mcp")
 
-# only used as a fallback when x-mcp-servername is missing, e.g. a direct
-# test that bypasses mcp-gateway entirely, not expected on real traffic
+# only used as a last resort when neither header below is present, e.g.
+# a direct test that bypasses mcp-gateway entirely. not needed for
+# mcp-gateway's own internal connections any more, see resolve_upstream
 UPSTREAM_URL_FALLBACK = os.environ.get("UPSTREAM_URL", "")
 
 GUARDRAILS_ROUTE = os.environ.get("GUARDRAILS_ROUTE", "")
@@ -72,17 +84,52 @@ GUARDRAILS_SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 HOP_BY_HOP = {"host", "content-length", "connection", "transfer-encoding"}
 
 
-def resolve_upstream(servername_header: str) -> str | None:
-    """turns mcp-gateway's own x-mcp-servername header, "<namespace>/<name>",
-    into this request's real backend url, every mcp server here is a
-    Service named after itself on UPSTREAM_PORT serving UPSTREAM_PATH, so
-    no per server config is needed to add a new one. falls back to
-    UPSTREAM_URL_FALLBACK for direct testing where that header is absent.
-    """
-    if servername_header and "/" in servername_header:
-        namespace, name = servername_header.split("/", 1)
+def _namespace_name_to_url(namespace_name: str) -> str | None:
+    if namespace_name and "/" in namespace_name:
+        namespace, name = namespace_name.split("/", 1)
         if namespace and name:
             return f"http://{name}.{namespace}.svc.cluster.local:{UPSTREAM_PORT}{UPSTREAM_PATH}"
+    return None
+
+
+def resolve_upstream(headers: Any) -> str | None:
+    """every mcp server here is a Service named after itself on
+    UPSTREAM_PORT serving UPSTREAM_PATH, so the real backend is always
+    derivable from a "<namespace>/<name>" pair, no per server config
+    needed to add one. two different places carry that pair, checked in
+    order:
+
+    x-mcp-servername, stamped by mcp-gateway's own envoy ext_proc filter
+    on real client traffic through the gateway's public listener, exact
+    "<namespace>/<name>" value, nothing else in it.
+
+    gateway-server-id, found live, not documented anywhere we could find:
+    mcp-gateway's own internal mcp-manager component, which periodically
+    dials this proxy directly to discover each registered server's own
+    tools, bypasses the envoy listener entirely for that connection, so
+    it never carries x-mcp-servername. it does carry this header though,
+    "<namespace>/<name>:<tool-prefix>:<httproute-hostname>", confirmed
+    live by temporarily logging every header on a request missing
+    x-mcp-servername. the "<namespace>/<name>" part before the first
+    colon is the exact same pair x-mcp-servername carries.
+
+    this matters the moment a second mcp server shares this one proxy
+    deployment: UPSTREAM_URL is a single, fixed value, it cannot tell
+    two servers' own discovery connections apart, every one of them
+    would get silently routed to whatever one backend it happens to be
+    set to. gateway-server-id can, since mcp-gateway sends the real
+    server's own identity on every discovery connection it makes, not
+    just one. UPSTREAM_URL stays only as a genuinely last resort, for a
+    direct test that bypasses mcp-gateway entirely and so carries
+    neither header.
+    """
+    upstream = _namespace_name_to_url(headers.get("x-mcp-servername", ""))
+    if upstream:
+        return upstream
+    gateway_server_id = headers.get("gateway-server-id", "")
+    upstream = _namespace_name_to_url(gateway_server_id.split(":", 1)[0])
+    if upstream:
+        return upstream
     return UPSTREAM_URL_FALLBACK or None
 
 
@@ -200,11 +247,11 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length) if length else b"{}"
         accept_header = self.headers.get("accept", "")
 
-        upstream_url = resolve_upstream(self.headers.get("x-mcp-servername", ""))
+        upstream_url = resolve_upstream(self.headers)
         if not upstream_url:
             self._send(
                 502,
-                b'{"error":"no x-mcp-servername header and no UPSTREAM_URL fallback configured, cannot resolve a backend"}',
+                b'{"error":"no x-mcp-servername or gateway-server-id header and no UPSTREAM_URL fallback configured, cannot resolve a backend"}',
                 "application/json",
             )
             return

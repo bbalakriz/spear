@@ -46,24 +46,6 @@
     "type": "console.page/route",
     "properties": {
       "exact": true,
-      "path": "/spear-shield-status",
-      "component": { "$codeRef": "ArchitectureStatusPage" }
-    }
-  },
-  {
-    "type": "console.navigation/href",
-    "properties": {
-      "id": "spear-shield-status",
-      "name": "%plugin__phase1-ingestion-console~Architecture Status%",
-      "href": "/spear-shield-status",
-      "perspective": "admin",
-      "section": "rag-phase1"
-    }
-  },
-  {
-    "type": "console.page/route",
-    "properties": {
-      "exact": true,
       "path": "/spear-shield-demo",
       "component": { "$codeRef": "UnderTheHoodPage" }
     }
@@ -74,6 +56,24 @@
       "id": "spear-shield-demo",
       "name": "%plugin__phase1-ingestion-console~Under the Hood%",
       "href": "/spear-shield-demo",
+      "perspective": "admin",
+      "section": "rag-phase1"
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/spear-shield-status",
+      "component": { "$codeRef": "ArchitectureStatusPage" }
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "spear-shield-status",
+      "name": "%plugin__phase1-ingestion-console~Architecture Status%",
+      "href": "/spear-shield-status",
       "perspective": "admin",
       "section": "rag-phase1"
     }

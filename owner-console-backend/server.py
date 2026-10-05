@@ -98,6 +98,27 @@ MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://minio.minio.svc.cluste
 ARTIFACT_BUCKET = os.environ.get("ARTIFACT_BUCKET", "dsp-pipeline-artifacts")
 MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "")
+# the knowledge base page's read-only source strip, the pipeline's own view
+# of where sanitization reads from: the bare host:port form the kfp pipeline
+# itself defaults to (pipelines/phase1_ingestion/pipeline.py's
+# MINIO_ENDPOINT_DEFAULT, distinct from the http:// prefixed MINIO_ENDPOINT
+# above which boto3 needs), the raw intake bucket/prefix every ingestion run
+# lists, and the minio console browser link for the manifest. secret names
+# and credential values are deliberately excluded, the secret is mounted
+# into the task pods by the pipeline itself and never travels through this
+# backend.
+#
+# these three are the fallback only now, see ingestion_source_config below:
+# the real values come from the registered pipeline's own compiled spec so
+# this never silently drifts from pipeline.py's own dsl.pipeline defaults
+# the way AUTORAG_RAW_BUCKET already quietly does above. only used if that
+# live lookup fails, e.g. right after a fresh install before anyone has
+# run pipelines/phase1_ingestion/compile_and_run.py yet
+INGESTION_SOURCE_ENDPOINT = os.environ.get(
+    "INGESTION_SOURCE_ENDPOINT", "minio.minio.svc.cluster.local:9000"
+)
+INGESTION_SOURCE_BUCKET = os.environ.get("INGESTION_SOURCE_BUCKET", AUTORAG_RAW_BUCKET)
+INGESTION_SOURCE_PREFIX = os.environ.get("INGESTION_SOURCE_PREFIX", "raw-intake/")
 
 # phase 2's spear shield chat tab, PHASE2_PLAN.md section 8. this is the
 # first endpoint on this backend that never touches mlflow or kfp at all,
@@ -319,6 +340,70 @@ def find_latest_pipeline_version_id(pipeline_id, user_token):
     if not versions:
         raise LookupError(f"Pipeline {pipeline_id!r} has no versions registered")
     return versions[0]["pipeline_version_id"]
+
+
+# the registered pipeline's own compiled spec is the one real source of
+# truth for minio_endpoint/raw_bucket/raw_prefix, not a second hand copy of
+# pipeline.py's own dsl.pipeline defaults kept here. trigger_kfp_run never
+# overrides these three per run (only batch_id/guardrails_route/mlflow_url
+# are passed in runtime_config.parameters), so whatever the latest
+# registered version's own default says really is what every real run
+# reads from today.
+#
+# there is no separate "get template" rest call on this kfp server, that
+# was a wrong guess, confirmed live: a GET to .../templates 404s, and the
+# installed kfp_server_api==2.17.0 client has no method for it at all.
+# the real pipeline_service_get_pipeline_version response already embeds
+# the full compiled spec under a doubly nested "pipeline_spec" key
+# (the outer one is the PipelineVersion wrapper, platform_spec alongside
+# it, the inner one is the actual ir), root.inputDefinitions.parameters.
+# <name>.defaultValue below confirmed against that real live response,
+# not against the templates endpoint this comment used to assume existed
+_INGESTION_SOURCE_CACHE_TTL_SECONDS = 300
+_ingestion_source_cache = {"values": None, "expires_at": 0.0}
+
+
+def fetch_ingestion_pipeline_source_defaults(user_token):
+    pipeline_id = find_pipeline_id(INGESTION_PIPELINE_NAME, user_token)
+    version_id = find_latest_pipeline_version_id(pipeline_id, user_token)
+    resp = kfp_get(f"/apis/v2beta1/pipelines/{pipeline_id}/versions/{version_id}", user_token)
+    spec = resp.get("pipeline_spec", {}).get("pipeline_spec", {})
+    params = spec.get("root", {}).get("inputDefinitions", {}).get("parameters", {})
+    missing = [name for name in ("minio_endpoint", "raw_bucket", "raw_prefix") if name not in params]
+    if missing:
+        raise LookupError(f"registered pipeline spec is missing expected parameters: {missing}")
+    return {
+        "minio_endpoint": params["minio_endpoint"].get("defaultValue"),
+        "bucket": params["raw_bucket"].get("defaultValue"),
+        "prefix": params["raw_prefix"].get("defaultValue"),
+    }
+
+
+def ingestion_source_config(user_token):
+    now = time.time()
+    if _ingestion_source_cache["values"] and _ingestion_source_cache["expires_at"] > now:
+        values = _ingestion_source_cache["values"]
+    else:
+        try:
+            values = fetch_ingestion_pipeline_source_defaults(user_token)
+            _ingestion_source_cache["values"] = values
+            _ingestion_source_cache["expires_at"] = now + _INGESTION_SOURCE_CACHE_TTL_SECONDS
+        except Exception:
+            # pipeline not registered yet, dspa briefly unreachable, ir
+            # shape changed, whatever it is, this strip still has to
+            # render something rather than break the whole page over it.
+            # not cached, so the very next request tries the live lookup
+            # again instead of being stuck on stale fallback values
+            values = {
+                "minio_endpoint": INGESTION_SOURCE_ENDPOINT,
+                "bucket": INGESTION_SOURCE_BUCKET,
+                "prefix": INGESTION_SOURCE_PREFIX,
+            }
+    return {
+        **values,
+        "manifest_url": minio_object_link(values["bucket"], f"{values['prefix']}manifest.json"),
+        "console_url": MINIO_CONSOLE_URL,
+    }
 
 
 def find_or_create_experiment_id(experiment_name, user_token):
@@ -1119,6 +1204,12 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(400, {"error": "run_id query param is required"})
                 else:
                     self._json(200, autorag_leaderboard(run_id, self._user_token()))
+            elif path == "/ingestion/source-config":
+                # read-only view of where sanitization reads its sources
+                # from, the knowledge base page's source strip. no secret
+                # name, no credential material, see ingestion_source_config
+                # and the comment on the INGESTION_SOURCE_* constants above
+                self._json(200, ingestion_source_config(self._user_token()))
             elif path == "/spear-shield/status":
                 self._json(200, spear_shield_status())
             else:

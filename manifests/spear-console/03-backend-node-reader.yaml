@@ -1,0 +1,30 @@
+# the kata-vs-runc demo's node level capacity step: the backend reads the
+# real worker each sandbox actually landed on (its cpu/memory capacity,
+# the node level equivalent of the sandbox's own nproc / free -h).
+# cluster scoped ClusterRole + Binding on the existing backend service
+# account, read only get on nodes, see
+# owner-console-backend/server.py's _node_status. no resourceNames pin
+# possible here: node placement is dynamic, the scheduler decides, the
+# worker a sandbox lands on is never a fixed pod name like the sandbox
+# reader Role over in spear-shield-agents pins
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: owner-console-backend-node-reader
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: owner-console-backend-node-reader
+subjects:
+  - kind: ServiceAccount
+    name: phase1-ingestion-console-backend
+    namespace: spear-console
+roleRef:
+  kind: ClusterRole
+  name: owner-console-backend-node-reader
+  apiGroup: rbac.authorization.k8s.io

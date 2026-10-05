@@ -190,6 +190,7 @@ main() {
   log "applying backend rbac, chat creds and deployment"
   oc apply -f "${ROOT_DIR}/manifests/spear-console/00-backend-rbac.yaml"
   oc apply -f "${ROOT_DIR}/manifests/spear-console/02-chat-creds.yaml"
+  oc apply -f "${ROOT_DIR}/manifests/spear-console/03-backend-node-reader.yaml"
   ensure_sso_realm_demo_users
   oc apply -f "${ROOT_DIR}/manifests/spear-shield-agents/08-console-backend-rbac.yaml"
   oc apply -f "${ROOT_DIR}/manifests/spear-console/01-backend.yaml"

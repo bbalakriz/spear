@@ -87,12 +87,12 @@ const SCENARIOS: Scenario[] = [
 // id pre-run and instead of the backend's lowercase prose title once run,
 // a block heading should read as a heading, not as a sentence fragment
 const SCENARIO_TITLES: Record<string, string> = {
-  'kata-vs-runc': 'Kata Micro VM vs Plain runc Isolation',
-  'network-containment': 'Network Containment',
-  'filesystem-containment': 'Filesystem Containment',
-  'workload-identity': 'Workload Identity',
-  'tool-scope-and-assignee': 'Tool Scope and Assignee Enforcement',
-  'identity-rejected': 'Identity Rejected at the Gateway',
+  'kata-vs-runc': 'SPEAR Shield Agent Sandboxes: Kata Micro VM vs Plain runc Isolation',
+  'network-containment': 'SPEAR Shield Agent Sandbox Network Containment',
+  'filesystem-containment': 'SPEAR Shield Agent Sandbox Filesystem Containment',
+  'workload-identity': 'SPEAR Shield Workload Identity Enforcement',
+  'tool-scope-and-assignee': 'SPEAR Shield Tool Scope and Assignee Enforcement',
+  'identity-rejected': 'SPEAR Shield Identity Rejected at the Gateway',
 };
 
 // proper case intro lines under each heading, same reason as the titles,

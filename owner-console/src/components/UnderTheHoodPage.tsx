@@ -47,14 +47,9 @@ interface Scenario {
 // malicious ones, see PHASE2_PLAN.md section 5's own honest note
 const SCENARIOS: Scenario[] = [
   {
-    id: 'identity-rejected',
-    intro: 'a caller with no real identity is rejected before any agent logic ever runs.',
-    enforcedBy: 'Authorino AuthPolicy spear-retrieval-a2a-auth -> a2a gateway',
-  },
-  {
     id: 'kata-vs-runc',
     intro:
-      'the coordinator runs on plain runc, the retrieval agent runs under Kata, on the same physical node. nproc and free -h make the difference visible, not just a config flag.',
+      'the coordinator runs on plain runc, the retrieval agent runs under Kata. which worker each one lands on is the scheduler\'s call, the same worker or different workers are both correct. nproc and free -h inside each sandbox, plus the landed worker\'s own capacity, make the difference visible, not just a config flag.',
     enforcedBy: 'kata RuntimeClass -> retrieval sandbox (coordinator stays runc)',
   },
   {
@@ -81,7 +76,41 @@ const SCENARIOS: Scenario[] = [
       'three real callers against the real work tracker: a caller lacking the role is blocked at the gateway, a caller holding the role is blocked by this project\u2019s own assignee check on someone else\u2019s item, and a caller acting on their own item succeeds.',
     enforcedBy: 'Authorino AuthPolicy spear-shield-gateway-tools-auth -> mcp gateway',
   },
+  {
+    id: 'identity-rejected',
+    intro: 'a caller with no real identity is rejected before any agent logic ever runs.',
+    enforcedBy: 'Authorino AuthPolicy spear-retrieval-a2a-auth -> a2a gateway',
+  },
 ];
+
+// proper case headings for each block, shown instead of the raw scenario
+// id pre-run and instead of the backend's lowercase prose title once run,
+// a block heading should read as a heading, not as a sentence fragment
+const SCENARIO_TITLES: Record<string, string> = {
+  'kata-vs-runc': 'Kata Micro VM vs Plain runc Isolation',
+  'network-containment': 'Network Containment',
+  'filesystem-containment': 'Filesystem Containment',
+  'workload-identity': 'Workload Identity',
+  'tool-scope-and-assignee': 'Tool Scope and Assignee Enforcement',
+  'identity-rejected': 'Identity Rejected at the Gateway',
+};
+
+// proper case intro lines under each heading, same reason as the titles,
+// a paragraph under a heading reads as a sentence, not a fragment
+const SCENARIO_INTROS: Record<string, string> = {
+  'kata-vs-runc':
+    'The coordinator runs on plain runc, the retrieval agent runs under Kata. Which worker each one lands on is the scheduler\u2019s call, the same worker or different workers are both correct. nproc and free -h inside each sandbox, plus the landed worker\u2019s own capacity, make the difference visible, not just a config flag.',
+  'network-containment':
+    'From inside the sandbox: an arbitrary internet host is blocked, a disallowed hostname fails to resolve, and the one real allowlisted route is reached.',
+  'filesystem-containment':
+    'From inside the sandbox: deleting real system binaries is refused, only the sandbox\u2019s own separate volume is writable.',
+  'workload-identity':
+    'The identical call, made with no bearer token at all, is rejected from outside any sandbox but succeeds from the real coordinator process, proving a credential was transparently attached before the request ever left the pod.',
+  'tool-scope-and-assignee':
+    'Three real callers against the real work tracker: a caller lacking the role is blocked at the gateway, a caller holding the role is blocked by this project\u2019s own assignee check on someone else\u2019s item, and a caller acting on their own item succeeds.',
+  'identity-rejected':
+    'A caller with no real identity is rejected before any agent logic ever runs.',
+};
 
 // terminal chrome, three dots in the usual red/yellow/green, a fixed
 // monospace body with its own dark background regardless of the console's
@@ -265,19 +294,7 @@ export default function UnderTheHoodPage() {
       <DocumentTitle>{t('Under the Hood')}</DocumentTitle>
       <ListPageHeader title={t('Under the Hood')} />
       <PageSection>
-        <Content component="p">
-          Six scenarios, each one a real check run live against this cluster when you press run,
-          not a recording or a scripted log. Every line in the terminal below is the actual
-          command this page sends and the actual response that comes back. Each terminal also
-          takes typed input after it runs, type anything and it executes for real inside the
-          same sandbox pod, the sandbox is the thing being proven safe here, so there is nothing
-          to hide behind a fixed list of commands. Together with the Ask SPEAR Shield chat page,
-          which already demonstrates permission scoped retrieval and prompt injection refusal
-          with no separate button needed, this covers every layer of isolation and access
-          control this environment actually enforces.
-        </Content>
-
-        <Flex direction={{ default: 'column' }} gap={{ default: 'gapLg' }} style={{ marginTop: '1rem' }}>
+        <Flex direction={{ default: 'column' }} gap={{ default: 'gapLg' }}>
           {SCENARIOS.map((scenario) => {
             const result = results[scenario.id];
             const error = errors[scenario.id];
@@ -289,9 +306,9 @@ export default function UnderTheHoodPage() {
                 <Flex justifyContent={{ default: 'justifyContentSpaceBetween' }} alignItems={{ default: 'alignItemsFlexStart' }}>
                   <FlexItem grow={{ default: 'grow' }}>
                     <Content component="h3" style={{ margin: 0 }}>
-                      {result?.title ?? scenario.id}
+                      {SCENARIO_TITLES[scenario.id] ?? result?.title ?? scenario.id}
                     </Content>
-                    <Content component="small">{scenario.intro}</Content>
+                    <Content component="small">{SCENARIO_INTROS[scenario.id] ?? scenario.intro}</Content>
                   </FlexItem>
                   <FlexItem>
                     <Button
@@ -363,7 +380,7 @@ export default function UnderTheHoodPage() {
                   >
                     {result.steps.every((s) => s.ok)
                       ? scenario.enforcedBy
-                      : 'unexpected result, check the output above'}
+                      : 'check the output above, a step reported a real failure'}
                   </Label>
                 )}
               </FlexItem>

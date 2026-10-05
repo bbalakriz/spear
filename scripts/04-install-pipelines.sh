@@ -194,6 +194,13 @@ main() {
   log "granting spear-console's own backend sa the same mlflow rbac, cross namespace"
   oc apply -f "${ROOT_DIR}/manifests/spear-pipelines/04-console-backend-mlflow-rbac.yaml"
 
+  # the console's own trigger/sanitization-run buttons forward the real
+  # signed in user's own token straight to the dspa route, kube-rbac-
+  # proxy does its own subjectaccessreview on that token, see this
+  # manifest's own header comment for the exact resource it checks
+  log "granting real console users edit in ${PIPELINES_NS}, the rbac the dspa route's own kube-rbac-proxy checks"
+  oc apply -f "${ROOT_DIR}/manifests/spear-pipelines/05-human-user-access.yaml"
+
   ensure_experiment
   register_apply_pattern_pipeline
 

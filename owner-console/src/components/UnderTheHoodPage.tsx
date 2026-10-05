@@ -311,13 +311,6 @@ export default function UnderTheHoodPage() {
                 </Flex>
 
                 <TerminalWindow title={`bash — ${scenario.id}`}>
-                  {result && (
-                    // the real commands about to run, in the order they
-                    // actually run in, not the proxy url used to trigger
-                    // them, joined with && since step two only makes
-                    // sense once step one has already happened
-                    <PromptLine command={result.steps.map((step) => step.command).join(' && ')} />
-                  )}
                   {!result && !error && (
                     <Content component="small" style={{ color: '#6b6f76' }}>
                       press run to execute this against the real cluster

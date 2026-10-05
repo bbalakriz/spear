@@ -539,6 +539,24 @@ deploy_sandboxed_agents() {
   wait_deploy_ready spear-shield-rag-query-relay "${DATA_NS}"
 
   ensure_openshell_portforward
+
+  # sandboxes first, a provider attached to a sandbox refuses to delete,
+  # same ordering the reference's own job enforces. this has to run
+  # before setup_coordinator_a2a_provider below, not after, a dead
+  # sandbox still counts as "attached" to openshell's own gateway even
+  # once its pod is long gone, confirmed live recovering from a cluster
+  # restart that killed both sandbox pods outright: setup_coordinator_a2a_provider
+  # ran first on that attempt and refused to delete the existing
+  # provider with "attached to sandbox(es): spear-coordinator", even
+  # though that sandbox's own pod had sat Failed for a full day
+  local name
+  for name in spear-retrieval spear-coordinator; do
+    if openshell_cli sandbox list 2>/dev/null | awk '{print $1}' | grep -qx "${name}"; then
+      log "deleting existing sandbox ${name} before recreating it"
+      openshell_cli sandbox delete "${name}" || true
+    fi
+  done
+
   setup_coordinator_a2a_provider
 
   local tmp
@@ -556,16 +574,6 @@ deploy_sandboxed_agents() {
   else
     log "no usable kata node found, spear-retrieval falls back to runc"
   fi
-
-  # sandboxes first, a provider attached to a live sandbox refuses to
-  # delete, same ordering the reference's own job enforces
-  local name
-  for name in spear-retrieval spear-coordinator; do
-    if openshell_cli sandbox list 2>/dev/null | awk '{print $1}' | grep -qx "${name}"; then
-      log "deleting existing sandbox ${name} before recreating it"
-      openshell_cli sandbox delete "${name}" || true
-    fi
-  done
 
   log "creating the spear-retrieval sandbox"
   openshell_cli sandbox create \

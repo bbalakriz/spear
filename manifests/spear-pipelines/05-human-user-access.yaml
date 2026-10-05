@@ -1,0 +1,36 @@
+# the owner console's trigger/sanitization-run buttons forward the signed
+# in console user's own token straight to the dspa route (see
+# owner-console-backend/server.py's own kfp_get/kfp_post, authorization:
+# UserToken on the consoleplugin proxy), never this backend pod's own
+# identity. that route sits behind kube-rbac-proxy, which does its own
+# subjectaccessreview per request, confirmed live against its real config
+# (kube-rbac-proxy-config-ds-pipeline-rag-phase1-dspa):
+#
+#   resourceAttributes:
+#     namespace: spear-pipelines
+#     apiGroup: datasciencepipelinesapplications.opendatahub.io
+#     resource: datasciencepipelinesapplications
+#     subresource: api
+#     name: rag-phase1-dspa
+#
+# the built in edit clusterrole already carries every verb this needs on
+# that exact resource, the dspa operator contributes those rules to it by
+# aggregation, nothing custom to invent here. without this binding a real
+# console user gets a 403 from kube-rbac-proxy on every trigger, logging
+# out and back in never helps, since the problem is a missing grant, not
+# a stale token, confirmed live 2026-10-05: admin works purely because it
+# is bound cluster-admin separately and bypasses this check entirely,
+# balakrishnan.b had no rolebinding anywhere on the cluster until this one
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-pipelines-console-user-access
+  namespace: spear-pipelines
+subjects:
+  - kind: User
+    name: balakrishnan.b
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: edit
+  apiGroup: rbac.authorization.k8s.io

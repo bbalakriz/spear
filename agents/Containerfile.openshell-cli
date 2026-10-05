@@ -1,0 +1,24 @@
+# openshell cli, built in cluster so deploy_sandboxed_agents can run as a
+# real Job against the shared gateway service directly, no port forward
+# to the installer's own laptop and no local openshell binary required
+# there. same shape as the reference project's own
+# Containerfile.openshell-cli (dbs-sow-assessment/rhoai-agentic-demo),
+# same version too: 0.0.116, confirmed to match what this cluster's own
+# gateway already speaks, since this exact binary is what every openshell
+# command in this project has been run against all along, just locally
+# until now.
+FROM registry.access.redhat.com/ubi9/ubi:9.6
+
+USER 0
+
+ARG OPENSHELL_VERSION=0.0.116
+RUN curl -fsSL -o /tmp/openshell.tgz \
+      "https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_VERSION}/openshell-x86_64-unknown-linux-musl.tar.gz" \
+    && tar -xzf /tmp/openshell.tgz -C /usr/local/bin \
+    && chmod +x /usr/local/bin/openshell \
+    && rm -rf /tmp/openshell.tgz
+
+USER 1001
+ENV HOME=/tmp \
+    PATH=/usr/local/bin:/usr/bin:/bin
+WORKDIR /tmp

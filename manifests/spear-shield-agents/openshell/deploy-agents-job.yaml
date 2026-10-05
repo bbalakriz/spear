@@ -1,0 +1,133 @@
+# runs the actual openshell sandbox create / provider import / policy
+# set sequence as a real in cluster Job, not from the installer's own
+# laptop through a port forward. adapted from the reference project's
+# own manifests/30-openshell/deploy-agents-job.yaml.tmpl
+# (dbs-sow-assessment/rhoai-agentic-demo), which already proved these
+# exact cli flags and the ordering live: runtime_class_name is
+# snake_case not the kubernetes field's own camelCase, providers_v2_enabled
+# has to be turned on globally before provider profile import works,
+# sandboxes have to be deleted before a provider attached to one can be
+# deleted (and that delete has to happen before the provider is touched
+# at all, not after, see scripts/09-install-worktracker-and-agents.sh's
+# own fix for getting this backwards the first time), and the
+# coordinator always stays on runc, never kata, because its supervisor
+# opens a csi spiffe workload api socket that a virtiofs mount inside a
+# kata guest cannot proxy (kata-containers/kata-containers#13162,
+# unmerged).
+#
+# one real difference from the reference: this still connects with a
+# plain --gateway-endpoint flag on every command rather than
+# "openshell gateway add ... --name incluster" plus a registered
+# OPENSHELL_GATEWAY env, the exact same connection style this project's
+# own local port forward already used successfully all along, no reason
+# to adopt a second, untested connection style just for this migration.
+#
+# jobs are immutable once created, so this gets deleted and recreated
+# on every run rather than applied in place, see the install script's
+# own deploy_sandboxed_agents
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: deploy-spear-sandboxed-agents
+  namespace: spear-shield-agents
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: openshell-configs
+          configMap:
+            name: spear-shield-openshell-agent-configs
+      containers:
+        - name: deploy
+          image: image-registry.openshift-image-registry.svc:5000/spear-shield-agents/openshell-cli:latest
+          env:
+            - name: GATEWAY_ENDPOINT
+              value: http://openshell.openshell.svc.cluster.local:8080
+            - name: AGENT_RUNTIME_CLASS
+              value: "AGENT_RUNTIME_CLASS_PLACEHOLDER"
+            - name: MCP_PUBLIC_HOST
+              value: "MCP_PUBLIC_HOST_PLACEHOLDER"
+            - name: GUARDRAILS_ROUTE
+              value: "GUARDRAILS_ROUTE_PLACEHOLDER"
+            - name: OGX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: spear-coordinator-guardrails-caller-token
+                  key: token
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              set -eu
+              die() { echo "$1" > /dev/termination-log; exit 1; }
+              osh() { openshell --gateway-endpoint "${GATEWAY_ENDPOINT}" "$@"; }
+              osh status || die "could not reach the shared openshell gateway"
+
+              RUNTIME_FLAG=""
+              if [ -n "${AGENT_RUNTIME_CLASS}" ]; then
+                RUNTIME_FLAG="--driver-config-json {\"kubernetes\":{\"pod\":{\"runtime_class_name\":\"${AGENT_RUNTIME_CLASS}\"}}}"
+              fi
+
+              # sandboxes first: a provider attached to a sandbox refuses
+              # to delete, a dead sandbox still counts as attached even
+              # once its own pod is long gone, confirmed live recovering
+              # from a cluster restart that killed both sandbox pods
+              # outright
+              for name in spear-retrieval spear-coordinator; do
+                if osh sandbox list | awk '{print $1}' | grep -qx "${name}"; then
+                  osh sandbox delete "${name}" || true
+                fi
+              done
+
+              osh settings set --global --key providers_v2_enabled --value true --yes \
+                || die "failed to enable providers_v2_enabled"
+              if osh provider list 2>/dev/null | awk '{print $1}' | grep -qx coordinator-a2a-token-grant; then
+                osh provider delete coordinator-a2a-token-grant || true
+              fi
+              osh provider profile delete coordinator-a2a-token-grant 2>/dev/null || true
+              osh provider profile import -f /openshell-configs/coordinator-a2a-token-grant.yaml \
+                || die "provider profile import failed"
+              osh provider create \
+                --name coordinator-a2a-token-grant \
+                --type coordinator-a2a-token-grant \
+                --runtime-credentials \
+                || die "provider create failed"
+
+              osh sandbox create \
+                --name spear-retrieval \
+                --label app=spear-retrieval-agent \
+                --policy /openshell-configs/retrieval-policy.yaml \
+                --from image-registry.openshift-image-registry.svc:5000/spear-shield-agents/spear-retrieval-agent:latest \
+                ${RUNTIME_FLAG} \
+                --detach \
+                --no-auto-providers \
+                --env AGENT_NAME=spear-retrieval-agent \
+                --env MCP_GATEWAY_HOST_HEADER="${MCP_PUBLIC_HOST}" \
+                -- python3 /sandbox/main.py \
+                || die "spear-retrieval sandbox create failed"
+              sleep 20
+              osh service expose spear-retrieval 8080 a2a || die "spear-retrieval service expose failed"
+
+              osh sandbox create \
+                --name spear-coordinator \
+                --label app=spear-coordinator-agent \
+                --policy /openshell-configs/coordinator-policy.yaml \
+                --provider coordinator-a2a-token-grant \
+                --from image-registry.openshift-image-registry.svc:5000/spear-shield-agents/spear-coordinator-agent:latest \
+                --detach \
+                --no-auto-providers \
+                --no-credential-warnings \
+                --env AGENT_NAME=spear-coordinator-agent \
+                --env OGX_BASE_URL="${GUARDRAILS_ROUTE}" \
+                --env OGX_API_KEY="${OGX_API_KEY}" \
+                -- python3 /sandbox/main.py \
+                || die "spear-coordinator sandbox create failed"
+              sleep 20
+              osh service expose spear-coordinator 8080 coordinator-http || die "spear-coordinator service expose failed"
+
+              osh sandbox list
+          volumeMounts:
+            - name: openshell-configs
+              mountPath: /openshell-configs
+              readOnly: true

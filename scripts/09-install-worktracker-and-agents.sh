@@ -20,12 +20,15 @@ set -euo pipefail
 # before a provider attached to one can be deleted, and the coordinator
 # always stays on runc, never kata, because its supervisor opens a csi
 # spiffe workload api socket that a virtiofs mount inside a kata guest
-# cannot proxy (kata-containers/kata-containers#13162, unmerged). the
-# one real difference from that reference: this project runs these
-# commands from the installer's own machine through a local port-forward
-# to the shared openshell service, not as an in cluster job with its own
-# built cli image, same convention every other oc exec/oc cp step in this
-# script already uses
+# cannot proxy (kata-containers/kata-containers#13162, unmerged). this
+# used to run those commands from the installer's own machine through a
+# local port-forward instead of an in cluster job, on the claim that it
+# matched every other oc exec/oc cp step in this script. that claim did
+# not actually hold up, openshell cli orchestration is a heavier,
+# stateful, multi step operation, not a one off exec, so this now
+# matches the reference properly: a real Job, built cli image, see
+# manifests/spear-shield-agents/openshell/deploy-agents-job.yaml and
+# run_agents_deploy_job below
 #
 # nothing in here is cluster specific. every hostname (this cluster's own
 # apps domain, the sso route, the guardrails route) is either constructed
@@ -454,68 +457,109 @@ detect_agent_runtime_class() {
   fi
 }
 
-# thin wrapper so every openshell cli call in this script goes through
-# the same local port-forward rather than the installer's own machine
-# needing a gateway already registered under ~/.config/openshell.
-# --gateway-endpoint connects directly, no stored gateway metadata
-# touched, nothing left behind on the installer's own machine once this
-# script exits
-openshell_cli() {
-  openshell --gateway-endpoint "http://127.0.0.1:${OPENSHELL_LOCAL_PORT}" "$@"
-}
-
-# port 28080 is this script's own, picked to not collide with a human
-# operator's own interactively registered openshell gateways (commonly
-# 17670/17671 in ~/.config/openshell), killed via the trap below the
-# moment this script's own process exits, for any reason
-OPENSHELL_LOCAL_PORT=28080
-
-ensure_openshell_portforward() {
-  log "port forwarding to the shared openshell gateway (service openshell, namespace openshell)"
-  oc port-forward svc/openshell -n openshell "${OPENSHELL_LOCAL_PORT}:8080" \
-    >/tmp/spear-openshell-portforward.log 2>&1 &
-  OPENSHELL_PF_PID=$!
-  # shellcheck disable=SC2064
-  trap "kill ${OPENSHELL_PF_PID} >/dev/null 2>&1 || true" EXIT
-
-  local tries=20
-  while (( tries > 0 )); do
-    openshell_cli status >/dev/null 2>&1 && return 0
-    sleep 1
-    tries=$((tries - 1))
-  done
-  echo "could not reach the shared openshell gateway through the port-forward, see /tmp/spear-openshell-portforward.log" >&2
-  exit 1
-}
-
-# providers_v2_enabled is a global cli setting, not per sandbox, has to
-# be on before provider profile import/create works at all, confirmed
-# live by the reference. profile then instance, delete-then-create both
-# ways so reruns against an already configured gateway stay create-only,
-# same spirit as every other ensure_* helper in this script
-setup_coordinator_a2a_provider() {
-  log "openshell provider: coordinator a2a egress via spiffe token_grant"
-  openshell_cli settings set --global --key providers_v2_enabled --value true --yes || true
-
-  # a bare mktemp path has no extension, and the cli picks its parser off
-  # the file's own extension, not its content, confirmed live during the
-  # 2026-10-04 rebuild ("unsupported provider profile file format" on an
-  # extensionless path), same reason the reference's own job template
-  # writes this to a plain /tmp/coordinator-a2a-token-grant.yaml path
-  local rendered
-  rendered="$(mktemp -d)/coordinator-a2a-token-grant.yaml"
-  render_openshell_file "${AGENTS_MANIFESTS}/openshell/providers/coordinator-a2a-token-grant.yaml" "${rendered}"
-
-  if openshell_cli provider list 2>/dev/null | awk '{print $1}' | grep -qx coordinator-a2a-token-grant; then
-    openshell_cli provider delete coordinator-a2a-token-grant || true
+# the Sandbox controller's own pod template defaults restartPolicy: Never,
+# confirmed live on the v1beta1 CRD: a Never pod on a drained or rebooted
+# node is never restarted by the kubelet, the pod object just sits
+# ContainerStatusUnknown / Failed while the sandbox's operatingMode still
+# says Running, exactly the "sat Failed for a full day" state the
+# delete-before-provider comment above already recorded after the last
+# cluster restart. patching Always lets the kubelet restart the container
+# itself on an in-place node reboot, no manual re-run of this script.
+# best_effort on purpose: if the v1beta1 schema ever rejects the field,
+# a warning here beats a failed install over a non critical patch.
+patch_sandbox_restart_policy() {
+  local sandbox="$1"
+  if oc patch sandbox "${sandbox}" -n "${AGENTS_NS}" \
+    --type=merge \
+    -p '{"spec":{"podTemplate":{"spec":{"restartPolicy":"Always"}}}}' 2>&1; then
+    log "restartPolicy=Always patched onto sandbox ${sandbox}, kubelet now self-heals node reboots"
+  else
+    echo "warning: could not patch restartPolicy on sandbox ${sandbox}, node reboots will still need a manual re-run" >&2
   fi
-  openshell_cli provider profile delete coordinator-a2a-token-grant 2>/dev/null || true
-  openshell_cli provider profile import -f "${rendered}"
-  openshell_cli provider create \
-    --name coordinator-a2a-token-grant \
-    --type coordinator-a2a-token-grant \
-    --runtime-credentials
-  rm -f "${rendered}"
+}
+
+# jobs are immutable once created, oc apply on an existing one just
+# errors on the first changed field, so a rerun always deletes first.
+# --wait blocks until the old pod is actually gone, otherwise the new
+# job's own pod could start before the old one finished terminating
+delete_job_if_exists() {
+  local name="$1" ns="$2"
+  if oc get "job/${name}" -n "${ns}" >/dev/null 2>&1; then
+    log "deleting existing job ${name} in ${ns} before recreating it"
+    oc delete "job/${name}" -n "${ns}" --wait=true --timeout=60s
+  fi
+}
+
+# oc wait --for=condition=complete alone just times out on a job that
+# already permanently failed, condition=Failed never becomes true for
+# that flag. polls both terminal conditions instead
+wait_agents_job() {
+  local name="$1" ns="$2" timeout="${3:-600}"
+  local elapsed=0 status
+  while (( elapsed < timeout )); do
+    status="$(oc get "job/${name}" -n "${ns}" -o jsonpath='{.status.conditions[?(@.status=="True")].type}' 2>/dev/null || true)"
+    case "${status}" in
+      *Complete*) return 0 ;;
+      *Failed*) return 1 ;;
+    esac
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+  echo "job ${name} in ${ns} did not reach a terminal state within ${timeout}s" >&2
+  return 1
+}
+
+# builds the openshell cli image, renders this project's own three
+# openshell config files (same render_openshell_file as before, pure
+# sed, no openshell binary needed on the installer's own machine for
+# this part), hands them to the job as a configmap, and runs the real
+# sandbox create / provider import / policy set sequence as a Job
+# against the shared gateway service's own in cluster dns name. nothing
+# here touches the installer's own machine's network beyond oc itself
+run_agents_deploy_job() {
+  log "building the openshell cli image in cluster"
+  oc apply -f "${AGENTS_MANIFESTS}/openshell/cli-build.yaml"
+  oc start-build openshell-cli --from-dir="${ROOT_DIR}/agents" --wait -n "${AGENTS_NS}"
+
+  local tmp
+  tmp="$(mktemp -d)"
+  render_openshell_file "${AGENTS_MANIFESTS}/openshell/providers/coordinator-a2a-token-grant.yaml" "${tmp}/coordinator-a2a-token-grant.yaml"
+  render_openshell_file "${AGENTS_MANIFESTS}/openshell/policies/retrieval-policy.yaml" "${tmp}/retrieval-policy.yaml"
+  render_openshell_file "${AGENTS_MANIFESTS}/openshell/policies/coordinator-policy.yaml" "${tmp}/coordinator-policy.yaml"
+  oc create configmap spear-shield-openshell-agent-configs -n "${AGENTS_NS}" \
+    --from-file="${tmp}" \
+    --dry-run=client -o yaml | oc apply -f -
+  rm -rf "${tmp}"
+
+  log "checking kata-oc nodes for /dev/kvm before deciding the retrieval agent's runtime class"
+  local runtime_class
+  runtime_class="$(detect_agent_runtime_class)"
+  if [[ -n "${runtime_class}" ]]; then
+    log "kata nodes have /dev/kvm, deploying spear-retrieval under kata"
+  else
+    log "no usable kata node found, spear-retrieval falls back to runc"
+  fi
+
+  # not apply_templated, that helper pipes straight to oc apply with no
+  # way to add this job's own extra placeholder on top, so this does
+  # its own sed pass with the same two tokens plus AGENT_RUNTIME_CLASS
+  delete_job_if_exists deploy-spear-sandboxed-agents "${AGENTS_NS}"
+  sed \
+    -e "s|MCP_PUBLIC_HOST_PLACEHOLDER|${MCP_PUBLIC_HOST}|g" \
+    -e "s|GUARDRAILS_ROUTE_PLACEHOLDER|${GUARDRAILS_ROUTE}|g" \
+    -e "s|AGENT_RUNTIME_CLASS_PLACEHOLDER|${runtime_class}|g" \
+    "${AGENTS_MANIFESTS}/openshell/deploy-agents-job.yaml" | oc apply -f -
+
+  log "waiting on job/deploy-spear-sandboxed-agents"
+  if ! wait_agents_job deploy-spear-sandboxed-agents "${AGENTS_NS}" 600; then
+    echo "deploy-spear-sandboxed-agents job failed, its own log:" >&2
+    oc logs "job/deploy-spear-sandboxed-agents" -n "${AGENTS_NS}" --all-containers || true
+    exit 1
+  fi
+  oc logs "job/deploy-spear-sandboxed-agents" -n "${AGENTS_NS}" --all-containers || true
+
+  patch_sandbox_restart_policy default--spear-retrieval
+  patch_sandbox_restart_policy default--spear-coordinator
 }
 
 # builds both agent images in cluster, creates the two real openshell
@@ -527,8 +571,6 @@ setup_coordinator_a2a_provider() {
 # own HTTPRoute Host header rewrites already hardcode the exact strings
 # openshell service expose has to print for those routes to ever match
 deploy_sandboxed_agents() {
-  command -v openshell >/dev/null 2>&1 || { echo "openshell cli is required on this machine" >&2; exit 1; }
-
   log "building spear-coordinator-agent and spear-retrieval-agent images in cluster"
   oc apply -f "${AGENTS_MANIFESTS}/openshell/agent-builds.yaml"
   oc start-build spear-coordinator-agent --from-dir="${ROOT_DIR}/agents" --wait -n "${AGENTS_NS}"
@@ -538,92 +580,11 @@ deploy_sandboxed_agents() {
   oc apply -f "${ROOT_DIR}/manifests/spear-data/02-rag-query-relay.yaml"
   wait_deploy_ready spear-shield-rag-query-relay "${DATA_NS}"
 
-  ensure_openshell_portforward
-
-  # sandboxes first, a provider attached to a sandbox refuses to delete,
-  # same ordering the reference's own job enforces. this has to run
-  # before setup_coordinator_a2a_provider below, not after, a dead
-  # sandbox still counts as "attached" to openshell's own gateway even
-  # once its pod is long gone, confirmed live recovering from a cluster
-  # restart that killed both sandbox pods outright: setup_coordinator_a2a_provider
-  # ran first on that attempt and refused to delete the existing
-  # provider with "attached to sandbox(es): spear-coordinator", even
-  # though that sandbox's own pod had sat Failed for a full day
-  local name
-  for name in spear-retrieval spear-coordinator; do
-    if openshell_cli sandbox list 2>/dev/null | awk '{print $1}' | grep -qx "${name}"; then
-      log "deleting existing sandbox ${name} before recreating it"
-      openshell_cli sandbox delete "${name}" || true
-    fi
-  done
-
-  setup_coordinator_a2a_provider
-
-  local tmp
-  tmp="$(mktemp -d)"
-  render_openshell_file "${AGENTS_MANIFESTS}/openshell/policies/retrieval-policy.yaml" "${tmp}/retrieval-policy.yaml"
-  render_openshell_file "${AGENTS_MANIFESTS}/openshell/policies/coordinator-policy.yaml" "${tmp}/coordinator-policy.yaml"
-
-  log "checking kata-oc nodes for /dev/kvm before deciding the retrieval agent's runtime class"
-  local runtime_class
-  runtime_class="$(detect_agent_runtime_class)"
-  local runtime_flag=()
-  if [[ -n "${runtime_class}" ]]; then
-    log "kata nodes have /dev/kvm, deploying spear-retrieval under kata"
-    runtime_flag=(--driver-config-json "{\"kubernetes\":{\"pod\":{\"runtime_class_name\":\"${runtime_class}\"}}}")
-  else
-    log "no usable kata node found, spear-retrieval falls back to runc"
-  fi
-
-  log "creating the spear-retrieval sandbox"
-  openshell_cli sandbox create \
-    --name spear-retrieval \
-    --label app=spear-retrieval-agent \
-    --policy "${tmp}/retrieval-policy.yaml" \
-    --from "image-registry.openshift-image-registry.svc:5000/${AGENTS_NS}/spear-retrieval-agent:latest" \
-    ${runtime_flag[@]+"${runtime_flag[@]}"} \
-    --detach \
-    --no-auto-providers \
-    --env AGENT_NAME=spear-retrieval-agent \
-    --env MCP_GATEWAY_HOST_HEADER="${MCP_PUBLIC_HOST}" \
-    -- python3 /sandbox/main.py
-  sleep 20
-  openshell_cli service expose spear-retrieval 8080 a2a
-
-  log "fetching spear-coordinator-guardrails-caller-token, the coordinator's static OGX_API_KEY"
-  local ogx_api_key tries=10
-  while (( tries > 0 )); do
-    ogx_api_key="$(oc get secret spear-coordinator-guardrails-caller-token -n "${AGENTS_NS}" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)"
-    [[ -n "${ogx_api_key}" ]] && break
-    sleep 2
-    tries=$((tries - 1))
-  done
-  if [[ -z "${ogx_api_key}" ]]; then
-    echo "spear-coordinator-guardrails-caller-token never populated its own token key" >&2
-    exit 1
-  fi
-
-  log "creating the spear-coordinator sandbox"
-  openshell_cli sandbox create \
-    --name spear-coordinator \
-    --label app=spear-coordinator-agent \
-    --policy "${tmp}/coordinator-policy.yaml" \
-    --provider coordinator-a2a-token-grant \
-    --from "image-registry.openshift-image-registry.svc:5000/${AGENTS_NS}/spear-coordinator-agent:latest" \
-    --detach \
-    --no-auto-providers \
-    --no-credential-warnings \
-    --env AGENT_NAME=spear-coordinator-agent \
-    --env OGX_BASE_URL="${GUARDRAILS_ROUTE}" \
-    --env OGX_API_KEY="${ogx_api_key}" \
-    -- python3 /sandbox/main.py
-  sleep 20
-  openshell_cli service expose spear-coordinator 8080 coordinator-http
-
-  rm -rf "${tmp}"
+  log "deploying the two sandboxed agents, as a real in cluster job, see run_agents_deploy_job"
+  run_agents_deploy_job
 
   log "sandboxed agents deployed"
-  openshell_cli sandbox list
+  oc get sandbox -n "${AGENTS_NS}"
 }
 
 main() {

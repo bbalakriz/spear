@@ -1,0 +1,35 @@
+# ImageStream + BuildConfig for the openshell cli image, same binary
+# docker strategy shape as agent-builds.yaml one level up, built with
+# `oc start-build openshell-cli --from-dir=agents --wait -n spear-shield-agents`.
+# this is what deploy-agents-job.yaml actually runs, replacing the local
+# openshell binary + port forward this project used before, see that
+# job's own header comment for the full why
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: openshell-cli
+  namespace: spear-shield-agents
+  labels:
+    app: openshell-cli
+spec: {}
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: openshell-cli
+  namespace: spear-shield-agents
+  labels:
+    app: openshell-cli
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile.openshell-cli
+  output:
+    to:
+      kind: ImageStreamTag
+      name: openshell-cli:latest
+  triggers: []

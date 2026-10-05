@@ -1069,6 +1069,14 @@ DEMO_SCENARIOS = {
 }
 
 
+def demo_exec_command(command):
+    # a free typed companion to the six scripted scenarios above, same
+    # pod, same k8s_exec, same bounded timeout. the whole point of this
+    # page is that this sandbox is safe to poke at, so whatever someone
+    # types here runs for real rather than against some fixed allowlist
+    return {"command": command, "output": k8s_exec(COORDINATOR_POD, command)}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _json(self, status, payload):
         body = json.dumps(payload).encode()
@@ -1235,6 +1243,12 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 answer, trace = ask_spear_shield(message_text, self._user_token())
                 self._json(200, {"answer": answer, "trace": trace})
+            elif path == "/spear-shield/demo-exec":
+                command = (body.get("command") or "").strip()
+                if not command:
+                    self._json(400, {"error": "command is required"})
+                    return
+                self._json(200, demo_exec_command(command))
             elif path.startswith("/spear-shield/demo/"):
                 scenario_id = path[len("/spear-shield/demo/"):]
                 scenario_fn = DEMO_SCENARIOS.get(scenario_id)

@@ -1,15 +1,10 @@
 import { DocumentTitle, ListPageHeader, consoleFetchJSON } from '@openshift-console/dynamic-plugin-sdk';
 import { useTranslation } from 'react-i18next';
-import { Button, Content, Flex, FlexItem, Icon, Label, PageSection } from '@patternfly/react-core';
-import { PlayIcon, TerminalIcon } from '@patternfly/react-icons';
+import { Button, Content, Flex, FlexItem, Icon, Label, PageSection, TextInput } from '@patternfly/react-core';
+import { PaperPlaneIcon, PlayIcon, TerminalIcon } from '@patternfly/react-icons';
 import { useEffect, useRef, useState } from 'react';
 
 const PROXY_PATH = '/api/proxy/plugin/phase1-ingestion-console/backend';
-// the browser's own relative path above resolves against the console's own
-// origin, this is the literal full address that resolves to when read from
-// a real terminal outside the console, shown in the prompt so the command
-// on screen is something you could actually run, not a stand in
-const BACKEND_PATH_FOR_DISPLAY = '/spear-shield/demo';
 
 // how long each revealed step stays on screen before the next one appears,
 // just enough to read as it goes rather than a single instant text dump
@@ -25,6 +20,13 @@ interface DemoStep {
 interface DemoResult {
   title: string;
   steps: DemoStep[];
+}
+
+// one line a visitor typed and ran themselves, same pod the six scripted
+// steps above already run against, just not one of the canned ones
+interface TypedExec {
+  command: string;
+  output: string;
 }
 
 interface Scenario {
@@ -135,6 +137,63 @@ const PromptLine = ({ command }: { command: string }) => (
   </div>
 );
 
+// an editable prompt, the live companion to PromptLine above. enter runs
+// whatever is typed against the same sandbox pod the six scripted
+// scenarios already use, nothing canned about it
+const PromptInput = ({
+  value,
+  busy,
+  onChange,
+  onSubmit,
+}: {
+  value: string;
+  busy: boolean;
+  onChange: (next: string) => void;
+  onSubmit: () => void;
+}) => (
+  <Flex alignItems={{ default: 'alignItemsCenter' }} gap={{ default: 'gapSm' }} style={{ marginTop: '0.4rem' }}>
+    <FlexItem>
+      <span style={{ color: '#6ec1ff' }}>$</span>
+    </FlexItem>
+    <FlexItem grow={{ default: 'grow' }}>
+      <TextInput
+        value={value}
+        isDisabled={busy}
+        placeholder="type any command, it runs for real inside this same sandbox pod"
+        onChange={(_e, next) => onChange(next)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onSubmit();
+          }
+        }}
+        style={{
+          background: 'transparent',
+          border: 'none',
+          boxShadow: 'none',
+          color: '#e0e0e0',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          fontSize: '0.82rem',
+          padding: 0,
+        }}
+      />
+    </FlexItem>
+    <FlexItem>
+      <Button
+        variant="plain"
+        isDisabled={busy || !value.trim()}
+        onClick={onSubmit}
+        icon={
+          <Icon>
+            <PaperPlaneIcon />
+          </Icon>
+        }
+        aria-label="run command"
+      />
+    </FlexItem>
+  </Flex>
+);
+
 const OutputLine = ({ output, ok }: { output: string; ok: boolean }) => (
   <div
     style={{
@@ -157,9 +216,31 @@ export default function UnderTheHoodPage() {
   // how many of this scenario's steps have been revealed so far, drives
   // the step by step terminal reveal rather than dumping everything at once
   const [revealed, setRevealed] = useState<Record<string, number>>({});
+  // commands a visitor typed themselves, kept per scenario so each
+  // terminal grows its own session instead of sharing one global history
+  const [typed, setTyped] = useState<Record<string, TypedExec[]>>({});
+  const [typedInput, setTypedInput] = useState<Record<string, string>>({});
+  const [typedBusyId, setTypedBusyId] = useState<string | null>(null);
   const timers = useRef<number[]>([]);
 
   useEffect(() => () => timers.current.forEach((id) => window.clearTimeout(id)), []);
+
+  const runTyped = (id: string) => {
+    const command = (typedInput[id] ?? '').trim();
+    if (!command) {
+      return;
+    }
+    setTypedBusyId(id);
+    setTypedInput((prev) => ({ ...prev, [id]: '' }));
+    consoleFetchJSON(`${PROXY_PATH}/spear-shield/demo-exec`, 'POST', { body: JSON.stringify({ command }) })
+      .then((data: TypedExec) => {
+        setTyped((prev) => ({ ...prev, [id]: [...(prev[id] ?? []), data] }));
+      })
+      .catch((err: Error) => {
+        setTyped((prev) => ({ ...prev, [id]: [...(prev[id] ?? []), { command, output: `error: ${err.message}` }] }));
+      })
+      .finally(() => setTypedBusyId(null));
+  };
 
   const run = (id: string) => {
     setBusyId(id);
@@ -187,10 +268,13 @@ export default function UnderTheHoodPage() {
         <Content component="p">
           Six scenarios, each one a real check run live against this cluster when you press run,
           not a recording or a scripted log. Every line in the terminal below is the actual
-          command this page sends and the actual response that comes back. Together with the Ask
-          SPEAR Shield chat page, which already demonstrates permission scoped retrieval and
-          prompt injection refusal with no separate button needed, this covers every layer of
-          isolation and access control this environment actually enforces.
+          command this page sends and the actual response that comes back. Each terminal also
+          takes typed input after it runs, type anything and it executes for real inside the
+          same sandbox pod, the sandbox is the thing being proven safe here, so there is nothing
+          to hide behind a fixed list of commands. Together with the Ask SPEAR Shield chat page,
+          which already demonstrates permission scoped retrieval and prompt injection refusal
+          with no separate button needed, this covers every layer of isolation and access
+          control this environment actually enforces.
         </Content>
 
         <Flex direction={{ default: 'column' }} gap={{ default: 'gapLg' }} style={{ marginTop: '1rem' }}>
@@ -227,7 +311,13 @@ export default function UnderTheHoodPage() {
                 </Flex>
 
                 <TerminalWindow title={`bash — ${scenario.id}`}>
-                  <PromptLine command={`curl -sk -X POST https://<console-host>/api/proxy${BACKEND_PATH_FOR_DISPLAY}/${scenario.id}`} />
+                  {result && (
+                    // the real commands about to run, in the order they
+                    // actually run in, not the proxy url used to trigger
+                    // them, joined with && since step two only makes
+                    // sense once step one has already happened
+                    <PromptLine command={result.steps.map((step) => step.command).join(' && ')} />
+                  )}
                   {!result && !error && (
                     <Content component="small" style={{ color: '#6b6f76' }}>
                       press run to execute this against the real cluster
@@ -253,6 +343,18 @@ export default function UnderTheHoodPage() {
                       />
                     </>
                   )}
+                  {(typed[scenario.id] ?? []).map((exec, i) => (
+                    <div key={`typed-${i}`}>
+                      <PromptLine command={exec.command} />
+                      <OutputLine output={exec.output} ok />
+                    </div>
+                  ))}
+                  <PromptInput
+                    value={typedInput[scenario.id] ?? ''}
+                    busy={typedBusyId === scenario.id}
+                    onChange={(next) => setTypedInput((prev) => ({ ...prev, [scenario.id]: next }))}
+                    onSubmit={() => runTyped(scenario.id)}
+                  />
                 </TerminalWindow>
 
                 {result && allRevealed && (

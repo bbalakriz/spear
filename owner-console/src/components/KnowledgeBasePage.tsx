@@ -140,6 +140,18 @@ interface AutoragLeaderboard {
   } | null;
 }
 
+// read-only view of where sanitization reads its sources from, served by
+// the backend's /ingestion/source-config. no secret name, no credential
+// material, the values are the pipeline's own view of its intake path,
+// not anything this component guesses
+interface SourceConfig {
+  minio_endpoint: string;
+  bucket: string;
+  prefix: string;
+  manifest_url: string;
+  console_url: string;
+}
+
 // simple red/amber/green style status for the kpi gallery below, each
 // caller decides its own thresholds (a quarantined count of zero is good,
 // an eval qa pair count of zero is not, the color can never be a single
@@ -272,6 +284,16 @@ export default function KnowledgeBasePage() {
   const [selectedBatchId, setSelectedBatchId] = useState<string>('');
   const [report, setReport] = useState<IngestionReport | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
+  // the read-only source strip in the sanitization run card, where
+  // sanitization reads from. informational only, a failure here never
+  // blocks the page, the strip just does not render
+  const [sourceConfig, setSourceConfig] = useState<SourceConfig | null>(null);
+
+  useEffect(() => {
+    consoleFetchJSON(`${PROXY_PATH}/ingestion/source-config`)
+      .then((data: SourceConfig) => setSourceConfig(data))
+      .catch(() => setSourceConfig(null));
+  }, []);
 
   const [leaderboard, setLeaderboard] = useState<AutoragLeaderboard | null>(null);
   const [autoragRunId, setAutoragRunId] = useState<string | null>(null);
@@ -497,6 +519,36 @@ export default function KnowledgeBasePage() {
         <Card style={{ marginTop: '1rem' }}>
           <CardTitle>Sanitization run</CardTitle>
           <CardBody>
+            {/* read-only source strip: where sanitization reads from, shown
+                before the run inputs so the user can see what "sources"
+                means. every value is the backend's own config read, the
+                manifest link opens minio's console browser. no secret name,
+                no credential material on purpose. */}
+            {sourceConfig && (
+              <DescriptionList isCompact isHorizontal style={{ marginBottom: '1rem' }}>
+                <DescriptionListGroup>
+                  <DescriptionListTerm>S3 endpoint</DescriptionListTerm>
+                  <DescriptionListDescription>
+                    <code>{sourceConfig.minio_endpoint}</code>
+                  </DescriptionListDescription>
+                </DescriptionListGroup>
+                <DescriptionListGroup>
+                  <DescriptionListTerm>Raw feed</DescriptionListTerm>
+                  <DescriptionListDescription>
+                    <code>
+                      {sourceConfig.bucket}/{sourceConfig.prefix}
+                    </code>{' '}
+                    <a href={sourceConfig.manifest_url} target="_blank" rel="noreferrer">
+                      manifest
+                    </a>{' '}
+                    ·{' '}
+                    <a href={sourceConfig.console_url} target="_blank" rel="noreferrer">
+                      open in MinIO console
+                    </a>
+                  </DescriptionListDescription>
+                </DescriptionListGroup>
+              </DescriptionList>
+            )}
             {/* first row: starting a brand new run, the primary action on this
                 card. second row: jumping back to look at an already started
                 one. new before existing reads better top to bottom, and

@@ -133,7 +133,15 @@ SYSTEM_PROMPT = (
     "governance work tracker (search_work_packages, update_work_package). Every tool "
     "call is scoped to the caller's own real permissions, a refusal from a tool is a "
     "real access control decision, not an error to retry or route around, report it to "
-    "the user plainly rather than hiding it or trying another way to get the same data."
+    "the user plainly rather than hiding it or trying another way to get the same data. "
+    # the chat page renders this answer as markdown, so always write markdown
+    # regardless of which model is behind this prompt: headings, bullet lists and
+    # tables for the rag citations and work package results, never a plain prose
+    # blob, and never raw markdown syntax left unrendered on the page
+    "Always format your entire final answer in markdown: use headings (##), bullet "
+    "lists, and tables where they make the answer clearer, and keep code or file "
+    "names in backticks. The user interface renders markdown, so plain text answers "
+    "and unformatted walls of text are never acceptable."
 )
 
 

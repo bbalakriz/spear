@@ -1,0 +1,113 @@
+/* the coordinator's chat answer renders through react-markdown, see
+   SpearShieldChatPage.tsx: the system prompt pins the model's output to
+   markdown, this makes the rendered elements read as part of the chat
+   turn rather than as an unstyled html dump. theme agnostic on purpose,
+   currentColor and patternfly's own global text vars only, so it reads
+   correctly in both the light and the dark console theme */
+.coordinator-answer-md {
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.coordinator-answer-md > :first-child {
+  margin-top: 0;
+}
+
+.coordinator-answer-md > :last-child {
+  margin-bottom: 0;
+}
+
+.coordinator-answer-md h1,
+.coordinator-answer-md h2,
+.coordinator-answer-md h3,
+.coordinator-answer-md h4,
+.coordinator-answer-md h5,
+.coordinator-answer-md h6 {
+  margin: 1rem 0 0.5rem 0;
+  font-weight: bold;
+  line-height: 1.3;
+}
+
+.coordinator-answer-md h1 {
+  font-size: 1.35rem;
+}
+
+.coordinator-answer-md h2 {
+  font-size: 1.2rem;
+}
+
+.coordinator-answer-md h3 {
+  font-size: 1.05rem;
+}
+
+.coordinator-answer-md p {
+  margin: 0.5rem 0;
+}
+
+.coordinator-answer-md ul,
+.coordinator-answer-md ol {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+
+.coordinator-answer-md li {
+  margin: 0.25rem 0;
+}
+
+/* rag citations and work package results come back as gfm tables, the
+   one markdown shape the old pre-wrap blob rendered worst */
+.coordinator-answer-md table {
+  margin: 0.75rem 0;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.coordinator-answer-md th,
+.coordinator-answer-md td {
+  border: 1px solid var(--pf-t--global--border--color--default, #d2d2d2);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.coordinator-answer-md th {
+  font-weight: bold;
+}
+
+.coordinator-answer-md code {
+  font-family: var(--pf-t--global--font--family--mono, monospace);
+  background: var(--pf-t--global--background--color--secondary--default, rgba(0, 0, 0, 0.06));
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.coordinator-answer-md pre {
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  background: var(--pf-t--global--background--color--secondary--default, rgba(0, 0, 0, 0.06));
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.coordinator-answer-md pre code {
+  background: none;
+  padding: 0;
+}
+
+.coordinator-answer-md blockquote {
+  margin: 0.75rem 0;
+  padding: 0.25rem 0 0.25rem 0.75rem;
+  border-left: 3px solid var(--pf-t--global--border--color--default, #d2d2d2);
+  color: var(--pf-t--global--text--color--subtle, #6a6e73);
+}
+
+.coordinator-answer-md hr {
+  margin: 1rem 0;
+  border: none;
+  border-top: 1px solid var(--pf-t--global--border--color--default, #d2d2d2);
+}
+
+.coordinator-answer-md a {
+  color: var(--pf-t--global--text--color--link--default, #0066cc);
+}

@@ -24,6 +24,9 @@ import {
   TopologyIcon,
 } from '@patternfly/react-icons';
 import { ComponentType, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import './spear-shield-chat.css';
 
 // PHASE2_PLAN.md section 8: no persona picker here, this page always asks
 // as whoever is actually signed into the console right now. the backend
@@ -266,7 +269,7 @@ export default function SpearShieldChatPage() {
         <Card style={{ marginTop: '1rem' }}>
           <CardBody>
             {turns.length === 0 && (
-              <Content component="small">no questions asked yet in this session</Content>
+              <Content component="small">No questions asked yet in this session</Content>
             )}
             <Flex direction={{ default: 'column' }} gap={{ default: 'gapLg' }}>
               {turns.map((turn, i) => (
@@ -299,9 +302,15 @@ export default function SpearShieldChatPage() {
                       {!turn.error && turn.answer === undefined && <TypingIndicator />}
                       {!turn.error && turn.answer !== undefined && (
                         <>
-                          <Content component="p" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
-                            {turn.answer}
-                          </Content>
+                          {/* the coordinator's own system prompt pins the answer to
+                              markdown, so it renders here through a real markdown
+                              renderer, not a pre-wrap text blob that shows raw ##,
+                              *, | syntax, this holds regardless of which model sits
+                              behind the prompt since react-markdown handles the full
+                              commonmark plus gfm surface, tables included */}
+                          <div className="coordinator-answer-md">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.answer}</ReactMarkdown>
+                          </div>
                           {turn.trace && turn.trace.length > 0 && <RequestTrace trace={turn.trace} />}
                         </>
                       )}
@@ -331,7 +340,7 @@ export default function SpearShieldChatPage() {
                 }
               }}
               rows={2}
-              placeholder="ask about work packages, policy documents, anything this project's knowledge base covers"
+              placeholder="Ask about work packages, policy documents, anything this project's knowledge base covers"
             />
           </FlexItem>
           <FlexItem>

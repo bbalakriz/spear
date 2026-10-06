@@ -1,0 +1,40 @@
+# zero trust workload identity manager: spire server/agent, the spiffe csi
+# driver, and an oidc discovery provider, all managed through one operator.
+# this is what gives the coordinator and specialist sandboxes a real
+# cryptographic identity (a spiffe id backed by an x.509 svid or jwt-svid),
+# instead of relying only on the keycloak client-credentials JWTs they use
+# today. the a2a AuthPolicies in manifests/20-security/07-spire-oidc.yaml
+# accept a spire issued jwt-svid as an additional, alternative issuer next
+# to keycloak, so a2a calls can be authenticated by workload identity, not
+# only by a shared client secret baked into a sandbox's env vars.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zero-trust-workload-identity-manager
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: zero-trust-workload-identity-manager
+  namespace: zero-trust-workload-identity-manager
+spec: {}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-zero-trust-workload-identity-manager
+  namespace: zero-trust-workload-identity-manager
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  channel: stable-v1
+  name: openshift-zero-trust-workload-identity-manager
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  # manual: every operator in this project pins its currently succeeded csv
+  # and only moves forward when scripts/00-install-platform.sh explicitly
+  # approves the next install plan, no operator upgrades itself unattended.
+  installPlanApproval: Manual
+  startingCSV: zero-trust-workload-identity-manager.v1.1.1

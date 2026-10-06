@@ -1,0 +1,155 @@
+# cluster level operator installs this project depends on, everything below is
+# additive to whatever base rhoai/openshift install already exists. none of
+# this touches redhat-ods-operator, DataScienceCluster, or OdhDashboardConfig,
+# those belong to the underlying rhoai platform, not to this project.
+#
+# authorino-operator and rhcl-operator (Red Hat Connectivity Link, the
+# productized Kuadrant) are independent subscriptions but work together:
+# rhcl-operator brings the AuthPolicy/Kuadrant CRDs and pulls in dns-operator
+# and limitador-operator automatically as olm dependencies, authorino-operator
+# brings the actual Authorino CRD/controller that AuthPolicy delegates to.
+# both are applied here, the Authorino and Kuadrant CR instances that
+# activate them live in 03-authorino-kuadrant.yaml, applied after these
+# operators report Succeeded.
+#
+# every subscription below pins installPlanApproval: Manual plus the
+# currently succeeded startingCSV, so olm never upgrades any of these
+# unattended. scripts/00-install-platform.sh approves the one install plan
+# each subscription needs to reach that pinned csv and stops there, a
+# future version bump only happens when someone edits the startingCSV here
+# and reruns the script.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keycloak
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: keycloak-operatorgroup
+  namespace: keycloak
+spec:
+  targetNamespaces:
+    - keycloak
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-sandbox-system
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: agent-sandbox-operator-group
+  namespace: agent-sandbox-system
+spec:
+  upgradeStrategy: Default
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: agent-sandbox-operator
+  namespace: agent-sandbox-system
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  # scripts/install-agent-sandbox-operator.sh removes any upstream
+  # kubernetes-sigs controller/crds first, this channel is the red hat build.
+  channel: preview-0.9
+  name: agent-sandbox-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Manual
+  startingCSV: agent-sandbox-operator.v0.9.0
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  # named to match what olm auto generates for a console driven "stable"
+  # channel install (<pkg>-<channel>-<catalogsource>-<catalogsourcens>).
+  # a plain "authorino-operator" name here would create a second
+  # subscription for the same package and olm refuses to resolve either
+  # one, ConstraintsNotSatisfiable, once both exist.
+  name: authorino-operator-stable-redhat-operators-openshift-marketplace
+  namespace: openshift-operators
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  channel: stable
+  name: authorino-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Manual
+  startingCSV: authorino-operator.v1.4.3
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  # same olm auto generated naming reason as authorino-operator above.
+  name: rhcl-operator-stable-redhat-operators-openshift-marketplace
+  namespace: openshift-operators
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  channel: stable
+  name: rhcl-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Manual
+  startingCSV: rhcl-operator.v1.4.3
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: servicemeshoperator3
+  namespace: openshift-operators
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  channel: stable
+  name: servicemeshoperator3
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Manual
+  startingCSV: servicemeshoperator3.v3.4.2
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: mcp-gateway
+  namespace: openshift-operators
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  # preview is the only channel this operator ships today, the
+  # mcp-gateway-guide reference this project follows uses the same channel.
+  channel: preview
+  name: mcp-gateway
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Manual
+  startingCSV: mcp-gateway.v0.7.1
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhbk-operator
+  namespace: keycloak
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  # 26.4 registers the spiffe identity provider factory but its trust
+  # domain validation is incomplete (always 400s "Invalid trust domain
+  # name", confirmed live and matches upstream's own 26.4 e2e gating);
+  # federated client auth for openshell token_grant needs 26.5+, so this
+  # is a deliberate bump to the 26.6 line, which ships that feature.
+  channel: stable-v26.6
+  name: rhbk-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Manual
+  startingCSV: rhbk-operator.v26.6.7-opr.1

@@ -1,0 +1,35 @@
+# helm values for the openshell gateway chart (oci://ghcr.io/nvidia/openshell/helm-chart),
+# applied by scripts/00-b-install-openshell.sh. sandboxes land in spear-shield-agents,
+# supervisor runs as a sidecar, spiffe workload identity on via the spire agent socket.
+# this project's own a2a gateway HTTPRoutes point their backendRef at this release
+# through the spear-shield-openshell-a2a-backend ExternalName, see
+# manifests/spear-shield-agents/07-a2a-gateway.yaml.
+server:
+  sandboxNamespace: spear-shield-agents
+  disableTls: true
+  telemetryEnabled: false
+  auth:
+    allowUnauthenticatedUsers: true
+  providerTokenGrants:
+    spiffe:
+      enabled: true
+      workloadApiSocketPath: /spiffe-workload-api/spire-agent.sock
+
+supervisor:
+  topology: sidecar
+  sideloadMethod: init-container
+  sidecar:
+    processBinaryAwareNetworkPolicy: false
+
+podSecurityContext:
+  fsGroup: null
+
+securityContext:
+  runAsUser: null
+
+openshiftRoute:
+  enabled: false
+
+agentSandbox:
+  preflight:
+    enabled: true

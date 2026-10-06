@@ -1,0 +1,160 @@
+# the actual keycloak server this project's realm import
+# (20-security/04-keycloak-realm.yaml) targets. postgres credentials are
+# generated at install time by scripts/install-platform.sh, never hardcoded
+# here, and the secret is create-if-missing so re-running the script never
+# regenerates a password out from under an already running database.
+#
+# keycloak-tls is not created here, it comes from openshift's built in
+# service-ca operator, activated by an annotation on the "keycloak" Service
+# the rhbk operator generates from the Keycloak CR below. that Service does
+# not exist until the operator reconciles the CR, so the annotation cannot
+# be set in this file, scripts/install-platform.sh patches it on afterward.
+# no cert-manager Certificate resource is needed.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: keycloak-pgsql-data
+  namespace: keycloak
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak-pgsql
+  namespace: keycloak
+  labels:
+    app: keycloak-pgsql
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak-pgsql
+  template:
+    metadata:
+      labels:
+        app: keycloak-pgsql
+    spec:
+      containers:
+        - name: pgsql
+          image: registry.redhat.io/rhel9/postgresql-16:1-1754433677
+          ports:
+            - containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-pgsql-user
+                  key: user
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-pgsql-user
+                  key: password
+            - name: POSTGRESQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-pgsql-user
+                  key: dbname
+          readinessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: pgsql-storage
+              mountPath: /var/lib/pgsql/data
+      volumes:
+        - name: pgsql-storage
+          persistentVolumeClaim:
+            claimName: keycloak-pgsql-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-pgsql
+  namespace: keycloak
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  selector:
+    app: keycloak-pgsql
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: Keycloak
+metadata:
+  name: keycloak
+  namespace: keycloak
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  instances: 1
+  db:
+    vendor: postgres
+    host: keycloak-pgsql
+    database: keycloak
+    usernameSecret:
+      name: keycloak-pgsql-user
+      key: user
+    passwordSecret:
+      name: keycloak-pgsql-user
+      key: password
+  http:
+    httpEnabled: false
+    tlsSecret: keycloak-tls
+  hostname:
+    hostname: KEYCLOAK_HOSTNAME_PLACEHOLDER
+    strict: false
+    strictBackchannel: false
+  ingress:
+    enabled: false
+  transaction:
+    xaEnabled: true
+  additionalOptions:
+    - name: enable-recovery
+      value: "true"
+    # preview: spiffe idp + federated jwt client auth for openshell
+    # token_grant (spiffe jwt-svid asserts to keycloak, keycloak access
+    # token rides on a2a). see scripts/20-install-security.sh sync_spiffe_*.
+    - name: features
+      value: spiffe,client-auth-federated
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: keycloak
+  namespace: keycloak
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  host: KEYCLOAK_HOSTNAME_PLACEHOLDER
+  to:
+    kind: Service
+    # service-ca issues keycloak-tls for this service name (CN=keycloak.keycloak.svc).
+    # the rhbk operator also creates keycloak-service; pointing the reencrypt
+    # route there makes the router fail tls to the backend (503) because the
+    # cert cn does not match.
+    name: keycloak
+  port:
+    targetPort: 8443
+  tls:
+    termination: reencrypt
+    insecureEdgeTerminationPolicy: Redirect

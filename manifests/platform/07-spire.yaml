@@ -1,0 +1,125 @@
+# spire server, agent, spiffe csi driver, and oidc discovery provider, all
+# managed by the ztwim operator installed in
+# manifests/00-platform/05-ztwim.yaml. sandboxes get jwt-svids through the
+# openshell supervisor (providerTokenGrants.spiffe), which asserts to
+# keycloak via token_grant; keycloak access tokens stay on the wire for a2a.
+#
+# sqlite3 keeps this to one project, one pvc, no second postgres instance to
+# run alongside keycloak's. a production spire server would point
+# datastore at postgres/mysql with its own credentials, same as keycloak
+# does today.
+apiVersion: operator.openshift.io/v1alpha1
+kind: ZeroTrustWorkloadIdentityManager
+metadata:
+  name: cluster
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  trustDomain: agent-pack.internal
+  # immutable once set, matches the value already applied on the live
+  # cluster, do not rename this without deleting and recreating the cr
+  clusterName: agent-pack-demo
+---
+apiVersion: operator.openshift.io/v1alpha1
+kind: SpireServer
+metadata:
+  name: cluster
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  caSubject:
+    commonName: agent-pack.internal
+    organization: rhoai-agent-pack
+  jwtIssuer: https://SPIRE_OIDC_HOSTNAME_PLACEHOLDER
+  datastore:
+    databaseType: sqlite3
+    connectionString: /run/spire/data/datastore.sqlite3
+  keyManager:
+    diskEnabled: "true"
+  persistence:
+    accessMode: ReadWriteOnce
+    size: 1Gi
+---
+apiVersion: operator.openshift.io/v1alpha1
+kind: SpireAgent
+metadata:
+  name: cluster
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  # k8s workload attestation is the whole point: it is what lets spire tie
+  # an svid to "this exact pod, in this namespace, with this service
+  # account" instead of to a bearer token the pod happened to be handed.
+  nodeAttestor:
+    k8sPSATEnabled: "true"
+  workloadAttestors:
+    k8sEnabled: "true"
+---
+apiVersion: operator.openshift.io/v1alpha1
+kind: SpiffeCSIDriver
+metadata:
+  name: cluster
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec: {}
+---
+apiVersion: operator.openshift.io/v1alpha1
+kind: SpireOIDCDiscoveryProvider
+metadata:
+  name: cluster
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  jwtIssuer: https://SPIRE_OIDC_HOSTNAME_PLACEHOLDER
+  managedRoute: "true"
+---
+# deploy job stamps app=<name> on the pod at create (--label app=...).
+# openshell.ai/sandbox-name lands on the Sandbox CR only, not the pod, so
+# ClusterSPIFFEID must key off app (confirmed live).
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: agent-pack-sandboxes
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  # controller-manager-config configmap pins className to this value; a
+  # ClusterSPIFFEID without it is watched but silently never rendered into
+  # a registration entry (confirmed live: zero "created entry" log lines).
+  className: zero-trust-workload-identity-manager-spire
+  spiffeIDTemplate: "spiffe://agent-pack.internal/ns/{{ .PodMeta.Namespace }}/sandbox/{{ index .PodMeta.Labels \"app\" }}"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: agent-pack
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - coordinator-agent
+          - specialist-agent
+  workloadSelectorTemplates:
+    - "k8s:ns:{{ .PodMeta.Namespace }}"
+    - "k8s:sa:{{ .PodSpec.ServiceAccountName }}"
+    - "k8s:pod-label:app:{{ index .PodMeta.Labels \"app\" }}"
+---
+# openshell gateway needs a workload api socket when provider token grants
+# are enabled (helm mounts csi); identity is namespaced to its sa.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: openshell-gateway
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  className: zero-trust-workload-identity-manager-spire
+  spiffeIDTemplate: "spiffe://agent-pack.internal/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshell
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openshell
+  workloadSelectorTemplates:
+    - "k8s:ns:{{ .PodMeta.Namespace }}"
+    - "k8s:sa:{{ .PodSpec.ServiceAccountName }}"

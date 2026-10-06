@@ -1,0 +1,160 @@
+# one shot daemonset that patches the kata guest initramfs to add the
+# nf_tables kernel modules openshell's sidecar topology network-init
+# container needs. without this, the exact same nftables setup that works
+# fine under runc (see ARCHITECTURE.md "OpenShell network enforcement")
+# fails inside kata with "Protocol not supported", confirmed live against
+# this cluster's own kata guest kernel before writing this file.
+#
+# adapted from the upstream fix documented in
+# https://github.com/opendatahub-io/agent-ops/blob/main/guides/openshell-with-osc.md
+# (step 2) and
+# https://raw.githubusercontent.com/opendatahub-io/agent-ops/main/manifests/kata-nftables-patch-job.yaml.
+# nodeSelector matches node-role.kubernetes.io/kata-oc so only nodes in the
+# kata pool get patched (workers on multi node; the one control plane node
+# on sno when that is the kata pool). scripts/00-install-platform.sh
+# label_kata_pool_nodes is what stamps that label, and skips master/control-plane
+# when the pool is worker so control planes are not enrolled.
+#
+# the fix works because this cluster's kata guest kernel is built from the
+# exact same rhel kernel package as the host (confirmed: both report
+# 5.14.0-687.41.1.el9_8.x86_64), the modules below already sit on the host
+# disk under /lib/modules/<version>/kernel/..., kata's initramfs build just
+# never selected them for inclusion. this copies them in and regenerates
+# the module dependency file, it does not compile or download anything.
+#
+# not a permanent fix: kata-osbuilder-generate rebuilds this initramfs from
+# its own unpatched dracut config on the next node reboot or kataconfig
+# change, wiping the patch out. scripts/01-patch-kata-nftables.sh is written
+# to be safely re-run any time that happens, and is also called from
+# scripts/00-install-platform.sh on every fresh install.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kata-nftables-patch
+  namespace: openshift-sandboxed-containers-operator
+  labels:
+    app: kata-nftables-patch
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  selector:
+    matchLabels:
+      app: kata-nftables-patch
+  template:
+    metadata:
+      labels:
+        app: kata-nftables-patch
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/kata-oc: ""
+      serviceAccountName: kata-install
+      hostPID: true
+      restartPolicy: Always
+      volumes:
+        - name: host
+          hostPath:
+            path: /
+      containers:
+        - name: patch
+          image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+          volumeMounts:
+            - name: host
+              mountPath: /host
+          command:
+            - /host/bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              chroot /host /bin/bash -c 'exec 9>/var/tmp/kata-initrd-patch.lock && flock 9 || exit 1
+              set -euo pipefail
+              KERNEL_VER=$(uname -r)
+              INITRD_DIR="/var/cache/kata-containers/osbuilder-images/${KERNEL_VER}"
+              INITRD="${INITRD_DIR}/kata.initrd"
+              MODBASE="/lib/modules/${KERNEL_VER}/kernel"
+              WORKDIR="/var/tmp/kata-nftables-patch"
+
+              if [ ! -f "${INITRD}" ]; then
+                echo "[!] Kata initrd not found at ${INITRD}, this node has no kata guest image, skipping."
+                exit 0
+              fi
+
+              if lsinitrd "${INITRD}" 2>/dev/null | grep -q nf_tables; then
+                echo "[*] nf_tables already present in initramfs, skipping."
+                exit 0
+              fi
+
+              MODULES=(
+                "net/ipv4/netfilter/nf_defrag_ipv4.ko.xz"
+                "net/ipv6/netfilter/nf_defrag_ipv6.ko.xz"
+                "net/netfilter/nfnetlink.ko.xz"
+                "net/netfilter/nf_conntrack.ko.xz"
+                "net/netfilter/nf_nat.ko.xz"
+                "net/netfilter/nf_tables.ko.xz"
+                "net/netfilter/nft_chain_nat.ko.xz"
+                "net/netfilter/nft_compat.ko.xz"
+                "net/netfilter/nft_nat.ko.xz"
+                "net/netfilter/nft_masq.ko.xz"
+                "net/netfilter/nft_counter.ko.xz"
+                "net/netfilter/nft_ct.ko.xz"
+                "net/ipv4/netfilter/nf_reject_ipv4.ko.xz"
+                "net/ipv6/netfilter/nf_reject_ipv6.ko.xz"
+                "net/netfilter/nft_reject.ko.xz"
+                "net/netfilter/nft_reject_inet.ko.xz"
+              )
+
+              for mod in "${MODULES[@]}"; do
+                if [ ! -f "${MODBASE}/${mod}" ]; then
+                  echo "[!] Module not found: ${MODBASE}/${mod}"
+                  exit 1
+                fi
+              done
+
+              echo "[*] Patching initramfs to add nf_tables modules..."
+              rm -rf "${WORKDIR}"
+              mkdir -p "${WORKDIR}"
+              cd "${WORKDIR}"
+
+              zcat "${INITRD}" | cpio -idm 2>/dev/null
+
+              for mod in "${MODULES[@]}"; do
+                DEST="lib/modules/${KERNEL_VER}/kernel/$(dirname ${mod})"
+                mkdir -p "${DEST}"
+                cp "${MODBASE}/${mod}" "${DEST}/"
+                echo "[+] Added $(basename ${mod})"
+              done
+
+              depmod -b . "${KERNEL_VER}" 2>/dev/null || {
+                DEPFILE="lib/modules/${KERNEL_VER}/modules.dep"
+                if [ -f "${DEPFILE}" ]; then
+                  echo "kernel/net/ipv4/netfilter/nf_defrag_ipv4.ko.xz:" >> "${DEPFILE}"
+                  echo "kernel/net/ipv6/netfilter/nf_defrag_ipv6.ko.xz:" >> "${DEPFILE}"
+                  echo "kernel/net/netfilter/nfnetlink.ko.xz:" >> "${DEPFILE}"
+                  echo "kernel/net/netfilter/nf_conntrack.ko.xz: kernel/net/ipv4/netfilter/nf_defrag_ipv4.ko.xz kernel/net/ipv6/netfilter/nf_defrag_ipv6.ko.xz" >> "${DEPFILE}"
+                  echo "kernel/net/netfilter/nf_nat.ko.xz: kernel/net/netfilter/nf_conntrack.ko.xz" >> "${DEPFILE}"
+                  echo "kernel/net/netfilter/nf_tables.ko.xz: kernel/net/netfilter/nfnetlink.ko.xz" >> "${DEPFILE}"
+                  echo "kernel/net/netfilter/nft_chain_nat.ko.xz: kernel/net/netfilter/nf_nat.ko.xz kernel/net/netfilter/nf_tables.ko.xz" >> "${DEPFILE}"
+                  echo "kernel/net/netfilter/nft_compat.ko.xz: kernel/net/netfilter/nf_tables.ko.xz kernel/net/netfilter/nfnetlink.ko.xz" >> "${DEPFILE}"
+                  echo "kernel/net/netfilter/nft_nat.ko.xz: kernel/net/netfilter/nf_tables.ko.xz kernel/net/netfilter/nf_nat.ko.xz" >> "${DEPFILE}"
+                  echo "kernel/net/netfilter/nft_masq.ko.xz: kernel/net/netfilter/nf_tables.ko.xz kernel/net/netfilter/nf_nat.ko.xz" >> "${DEPFILE}"
+                  echo "kernel/net/netfilter/nft_counter.ko.xz: kernel/net/netfilter/nf_tables.ko.xz" >> "${DEPFILE}"
+                  echo "kernel/net/netfilter/nft_ct.ko.xz: kernel/net/netfilter/nf_tables.ko.xz kernel/net/netfilter/nf_conntrack.ko.xz" >> "${DEPFILE}"
+                  echo "kernel/net/ipv4/netfilter/nf_reject_ipv4.ko.xz:" >> "${DEPFILE}"
+                  echo "kernel/net/ipv6/netfilter/nf_reject_ipv6.ko.xz:" >> "${DEPFILE}"
+                  echo "kernel/net/netfilter/nft_reject.ko.xz: kernel/net/netfilter/nf_tables.ko.xz" >> "${DEPFILE}"
+                  echo "kernel/net/netfilter/nft_reject_inet.ko.xz: kernel/net/netfilter/nf_tables.ko.xz kernel/net/ipv4/netfilter/nf_reject_ipv4.ko.xz kernel/net/ipv6/netfilter/nf_reject_ipv6.ko.xz kernel/net/netfilter/nft_reject.ko.xz" >> "${DEPFILE}"
+                fi
+              }
+
+              if [ ! -e "${INITRD}.bak" ]; then
+                cp "${INITRD}" "${INITRD}.bak"
+              fi
+              find . | cpio -o -H newc 2>/dev/null | gzip > "${INITRD}.new"
+              mv "${INITRD}.new" "${INITRD}"
+
+              rm -rf "${WORKDIR}"
+              echo "[+] Initramfs patched with nf_tables modules. Backup at ${INITRD}.bak"
+              '
+              echo "[+] Patch complete. Sleeping."
+              exec /host/bin/sleep infinity
+          securityContext:
+            privileged: true
+            runAsUser: 0

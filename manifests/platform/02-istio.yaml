@@ -1,0 +1,34 @@
+# ossm3 control plane, required for gatewayClassName: istio used by
+# manifests/10-agent-pack/02-mcp-gateway.yaml and
+# manifests/20-security/06-a2a-gateway.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-system
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-cni
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+---
+apiVersion: sailoperator.io/v1
+kind: Istio
+metadata:
+  name: default
+spec:
+  namespace: istio-system
+  version: v1.30-latest
+  updateStrategy:
+    type: InPlace
+---
+apiVersion: sailoperator.io/v1
+kind: IstioCNI
+metadata:
+  name: default
+spec:
+  namespace: istio-cni
+  version: v1.30-latest

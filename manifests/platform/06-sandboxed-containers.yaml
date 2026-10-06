@@ -1,0 +1,39 @@
+# openshift sandboxed containers (kata): optional vm isolation for openshell
+# sandboxes via RuntimeClass kata. the guest kernel needs nf_tables modules
+# for openshell network-init; 07-kata-nftables-patch.yaml adds them.
+#
+# KataConfig is applied by scripts/00-install-platform.sh after this
+# Subscription is ready. that script picks worker vs master (sno), pre
+# labels only the target nodes with node-role.kubernetes.io/kata-oc
+# (skipping control planes that also stamp the worker role), and sets
+# kataConfigPoolSelector to that kata-oc label so masters are not enrolled.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-sandboxed-containers-operator
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-sandboxed-containers-operator
+  namespace: openshift-sandboxed-containers-operator
+spec:
+  targetNamespaces:
+    - openshift-sandboxed-containers-operator
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: sandboxed-containers-operator
+  namespace: openshift-sandboxed-containers-operator
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  channel: stable
+  name: sandboxed-containers-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Manual
+  startingCSV: sandboxed-containers-operator.v1.13.1

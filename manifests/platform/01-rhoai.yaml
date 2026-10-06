@@ -1,0 +1,126 @@
+# the base rhoai 3.5 platform itself: the operator, its two cluster wide
+# singletons (DSCInitialization, DataScienceCluster), and the dashboard
+# feature flags that gate whether the agent catalog and mcp catalog even
+# render in the ui. this is what actually lets you *view* the agent and its
+# mcp server in the openshift ai dashboard, agent-sandbox/authorino/istio/
+# keycloak only make the project work, they don't make it visible anywhere.
+#
+# unlike every other file in 00-platform, scripts/00-install-platform.sh
+# does not blindly apply this one. DataScienceCluster, DSCInitialization,
+# and OdhDashboardConfig are shared, cluster wide, and already carry
+# settings for components this project has nothing to do with, kserve, mlflow,
+# modelregistry, workbenches, trustyai, feastoperator, aipipelines. blindly
+# reapplying this file on a cluster where those already exist would pin
+# them back to exactly what's captured below, silently reverting anything
+# changed since. the install script only applies this on a genuinely fresh
+# cluster where none of these four resources exist yet, otherwise it just
+# verifies the two dashboard flags this project actually needs are already on
+# and tells you if they're not.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: redhat-ods-operator
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: rhods-operator
+  namespace: redhat-ods-operator
+spec:
+  upgradeStrategy: Default
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhods-operator
+  namespace: redhat-ods-operator
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  channel: stable-3.x
+  name: rhods-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Manual
+  startingCSV: rhods-operator.3.5.1
+---
+apiVersion: dscinitialization.opendatahub.io/v2
+kind: DSCInitialization
+metadata:
+  name: default-dsci
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  applicationsNamespace: redhat-ods-applications
+  monitoring:
+    managementState: Managed
+    namespace: redhat-ods-monitoring
+  trustedCABundle:
+    managementState: Managed
+    customCABundle: ""
+---
+apiVersion: datasciencecluster.opendatahub.io/v2
+kind: DataScienceCluster
+metadata:
+  name: default-dsc
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  components:
+    dashboard:
+      managementState: Managed
+    # this project's own reason for touching the dsc at all: mcp servers
+    # (manifests/10-agent-pack/01-mcp-calculator.yaml) need the mcp
+    # lifecycle operator, and gen ai studio (ogx) is what makes a deployed
+    # mcp server consumable in a playground once registered there.
+    mcplifecycleoperator:
+      managementState: Managed
+    ogx:
+      managementState: Managed
+    workbenches:
+      managementState: Managed
+      workbenchNamespace: rhods-notebooks
+    modelregistry:
+      managementState: Managed
+      registriesNamespace: rhoai-model-registries
+    mlflowoperator:
+      managementState: Managed
+    feastoperator:
+      managementState: Managed
+    trustyai:
+      managementState: Managed
+    aipipelines:
+      managementState: Managed
+      argoWorkflowsControllers:
+        managementState: Managed
+    kserve:
+      managementState: Managed
+      rawDeploymentServiceConfig: Headless
+---
+apiVersion: opendatahub.io/v1alpha
+kind: OdhDashboardConfig
+metadata:
+  name: odh-dashboard-config
+  namespace: redhat-ods-applications
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  dashboardConfig:
+    # the two flags this project actually depends on: without agentsCatalog the
+    # dashboard has nowhere to list the coordinator/specialist agents at
+    # all, without mcpCatalog and mcpRegistry it has nowhere to show
+    # calculator-mcp's deployment status or let you register it into gen ai
+    # studio. genAiStudio is the playground these get registered into.
+    agentsCatalog: true
+    agentConfigManagement: true
+    agentOps: true
+    mcpCatalog: true
+    mcpRegistry: true
+    genAiStudio: true
+    genAiTracing: true
+  notebookController:
+    enabled: true
+    notebookNamespace: rhods-notebooks
+    pvcSize: 20Gi

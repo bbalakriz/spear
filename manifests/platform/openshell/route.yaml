@@ -1,0 +1,15 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: openshell
+  namespace: openshell
+spec:
+  host: openshell-gw.CLUSTER_DOMAIN_PLACEHOLDER
+  to:
+    kind: Service
+    name: openshell
+  port:
+    targetPort: grpc
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Allow

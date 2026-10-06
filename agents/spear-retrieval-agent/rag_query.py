@@ -24,6 +24,14 @@ signal distinguishing the one doc both personas do see outside their own
 dept (POLICY-DG-042) from the one neither sees despite also being general
 (doc-001) is project_scope = 'enterprise-wide', confirmed against the
 live rows, not clearance_level alone.
+
+the filter lives once, on rag_chunks itself
+(pipelines/phase1_apply_pattern/pipeline.py, the schema owner). this
+module does not reimplement that WHERE clause. it only maps the caller's
+claims into the three session variables the policy reads. rag_reader has
+no bypassrls, so postgres only ever hands back a row the policy allows,
+no matter what sql runs against it. a mistake here now fails closed
+(postgres returns nothing) not open (postgres returns everything).
 """
 
 from __future__ import annotations
@@ -76,12 +84,17 @@ def abac_filtered_search(
     caller_team: str | None,
     top_k: int = 5,
 ) -> list[dict]:
-    """a chunk is visible only if its own clearance_level ranks at or
-    below the caller's, and either the caller's dept or team matches the
-    chunk's, or the chunk is explicitly tagged project_scope
-    'enterprise-wide'. evaluated in sql before the vector distance
-    operator runs, the pre retrieval gate section 3 asks for, not a post
-    filter on top of an already run similarity search.
+    """a chunk is visible only if rag_chunks' own row level security
+    policy says so, a row only ever comes back if its clearance_level
+    ranks at or below the caller's, and either the caller's dept or team
+    matches the chunk's, or the chunk is tagged project_scope
+    'enterprise-wide', the exact same rule this function used to run as
+    a WHERE clause, now postgres' own job, not this query's.
+
+    this function's own job is resolving the caller's claims into the
+    three session variables that policy reads, set_local scoped (the
+    third set_config argument), so a value here never outlives this one
+    request's own transaction on a connection some later caller reuses.
     """
     # same vector literal format pipeline.py's own apply pattern writer
     # already uses when inserting, repr() keeps full float precision
@@ -89,27 +102,31 @@ def abac_filtered_search(
     allowed_levels = allowed_clearance_levels(caller_clearance)
 
     cur = conn.cursor()
+    # set_config, not a hand formatted SET LOCAL string: dept/team come
+    # straight from the caller's own jwt claims, this keeps them real
+    # bind parameters instead of text spliced into sql even here
+    cur.execute("SELECT set_config('app.allowed_levels', %s, true)", (",".join(allowed_levels),))
+    cur.execute("SELECT set_config('app.dept', %s, true)", (caller_dept or "",))
+    cur.execute("SELECT set_config('app.team', %s, true)", (caller_team or "",))
     cur.execute(
         """
         SELECT doc_id, chunk_index, content, source, clearance_level, dept,
                team, project_scope, data_owner,
                embedding <-> %(qv)s::vector AS distance
         FROM rag_chunks
-        WHERE clearance_level = ANY(%(allowed_levels)s)
-          AND (dept = %(dept)s OR team = %(team)s OR project_scope = 'enterprise-wide')
         ORDER BY embedding <-> %(qv)s::vector
         LIMIT %(top_k)s
         """,
-        {
-            "qv": vector_literal,
-            "allowed_levels": allowed_levels,
-            "dept": caller_dept,
-            "team": caller_team,
-            "top_k": top_k,
-        },
+        {"qv": vector_literal, "top_k": top_k},
     )
     columns = [c.name for c in cur.description]
-    return [dict(zip(columns, row)) for row in cur.fetchall()]
+    rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+    # the set_config calls above and this select have to share one
+    # transaction for the "local" scoping to mean anything, commit here
+    # rather than leaving it to the caller, same read only connection
+    # either way, nothing this ever needs to roll back
+    conn.commit()
+    return rows
 
 
 def connect():

@@ -171,6 +171,43 @@ def apply_winning_pattern(
     ):
         cur.execute(f"ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS {column} {coltype}")
 
+    # row level security, same table this function already owns the
+    # schema of. the real abac decision used to live only in
+    # rag_query.py's own WHERE clause, one layer, a bug there or a future
+    # code path that forgets to call it would have seen every row. this
+    # is the second, independent layer: rag_reader (the only role
+    # rag-query-relay ever connects as) has no bypassrls, so a row only
+    # ever comes back if this policy itself says so, regardless of what
+    # sql runs against it. rag_reader is created by
+    # scripts/03-install-data.sh, not here, a grant against a role that
+    # does not exist yet should never be what blocks a real indexing run
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'rag_reader') THEN
+                GRANT SELECT ON rag_chunks TO rag_reader;
+            END IF;
+        END
+        $$;
+
+        ALTER TABLE rag_chunks ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE rag_chunks FORCE ROW LEVEL SECURITY;
+
+        DROP POLICY IF EXISTS rag_chunks_abac ON rag_chunks;
+        CREATE POLICY rag_chunks_abac ON rag_chunks
+            FOR SELECT
+            USING (
+                clearance_level = ANY(string_to_array(current_setting('app.allowed_levels', true), ','))
+                AND (
+                    dept = current_setting('app.dept', true)
+                    OR team = NULLIF(current_setting('app.team', true), '')
+                    OR project_scope = 'enterprise-wide'
+                )
+            )
+        """
+    )
+
     def embed_chunks(texts: list[str]) -> list[list[float]]:
         resp = requests.post(
             f"{ogx_base_url}/v1/embeddings",

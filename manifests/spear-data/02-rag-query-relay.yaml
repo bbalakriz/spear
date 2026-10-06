@@ -49,15 +49,22 @@ spec:
               value: "5432"
             - name: PGVECTOR_DB
               value: ragdb
+            # rag_reader, not raguser: this relay's only job is reading
+            # rag_chunks through the row level security policy on it, see
+            # scripts/03-install-data.sh's own ensure_rag_reader_role.
+            # raguser is a postgres superuser with bypassrls set, it
+            # would silently ignore that policy entirely, a role this
+            # relay connects as has to be one the policy can actually
+            # constrain
             - name: PGVECTOR_USER
               valueFrom:
                 secretKeyRef:
-                  name: pgvector-creds
+                  name: rag-reader-creds
                   key: user
             - name: PGVECTOR_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: pgvector-creds
+                  name: rag-reader-creds
                   key: password
 ---
 apiVersion: v1

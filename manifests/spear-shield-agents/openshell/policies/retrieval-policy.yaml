@@ -70,3 +70,20 @@ network_policies:
       - path: /usr/bin/python3*
       - path: /usr/local/bin/python3*
       - path: /opt/app-root/bin/python3*
+  cluster_mlflow:
+    name: cluster-mlflow
+    endpoints:
+      # the real, in process mlflow tracing in main.py, PHASE3_PLAN.md
+      # section 4. an externally routed hostname, same shape cluster_auth
+      # uses on the coordinator's own policy, no allowed_ips for the same
+      # reason, the wildcard apps route resolves outside the
+      # cluster/service cidrs
+      - host: MLFLOW_HOST_PLACEHOLDER
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+    binaries:
+      - path: /usr/bin/python3*
+      - path: /usr/local/bin/python3*
+      - path: /opt/app-root/bin/python3*

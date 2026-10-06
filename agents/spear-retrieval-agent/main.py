@@ -52,6 +52,7 @@ from typing import Any
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "_shared"))
 from a2a_server import completed_task, serve, text_from_message  # noqa: E402
 from http_client import http_json, mcp_json  # noqa: E402
+import mlflow_tracing  # noqa: E402
 
 HOST = os.environ.get("AGENT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("AGENT_PORT", "8080"))
@@ -160,7 +161,12 @@ def _trace_step(
     )
 
 
+@mlflow_tracing.trace(name="rag_search", span_type=mlflow_tracing.SPAN_TYPE_RETRIEVER)
 def run_rag_search(arguments: dict[str, Any], claims: dict[str, Any], trace: list[dict[str, Any]]) -> str:
+    # no bearer token in this function's own arguments, safe to let the
+    # decorator above auto capture them as the span's real input,
+    # unlike run_work_tracker_tool below, which closes over caller_token
+    # in a nested function instead for exactly that reason
     query = str(arguments.get("query", "")).strip()
     if not query:
         return json.dumps({"error": "rag_search needs a query"})
@@ -175,6 +181,12 @@ def run_rag_search(arguments: dict[str, Any], claims: dict[str, Any], trace: lis
             "top_k": 5,
         },
     )
+    documents = response.get("documents") or []
+    span = mlflow_tracing.current_span()
+    if span is not None:
+        span.set_attribute("ok", "error" not in response)
+        span.set_attribute("clearance", claims.get("clearance_level") or "none")
+        span.set_attribute("dept", claims.get("dept") or "none")
     _trace_step(
         trace,
         "rag_search",
@@ -187,10 +199,9 @@ def run_rag_search(arguments: dict[str, Any], claims: dict[str, Any], trace: lis
     )
     if "error" in response:
         return json.dumps({"error": response["error"]})
-    results = response.get("documents") or []
     trimmed = [
         {"doc_id": r["doc_id"], "source": r["source"], "content": r["content"][:800]}
-        for r in results
+        for r in documents
     ]
     return json.dumps({"caller": claims.get("preferred_username"), "count": len(trimmed), "documents": trimmed})
 
@@ -226,65 +237,96 @@ def run_work_tracker_tool(
     name: str, arguments: dict[str, Any], caller_token: str, trace: list[dict[str, Any]]
 ) -> str:
     started_at = time.monotonic()
-    # the gateway's own per tool rbac authpolicy rejects a disallowed
-    # tool call with a real http error status before spear-openproject-mcp
-    # ever sees it, which urllib raises as an exception rather than
-    # handing back a normal response body, confirmed live for a caller
-    # lacking the update_work_package role. caught here, not left to
-    # escape past the trace step below, so this hop is never silently
-    # missing from the flow diagram, it is the one place a real block
-    # actually happened
-    try:
-        response = mcp_call(name, arguments, caller_token)
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode(errors="replace")[:300]
-        _trace_step(
-            trace,
-            f"mcp tool call: {name}",
-            f"blocked, mcp gateway's own tool rbac authpolicy returned http {exc.code}: {body}",
-            started_at,
-            frm="retrieval-agent (kata sandbox)",
-            to="mcp-gateway -> spear-openproject-mcp",
-            protocol="mcp json-rpc tools/call",
-            ok=False,
-        )
-        return json.dumps({"error": f"http {exc.code}: {body}"})
-    except Exception as exc:  # noqa: BLE001
-        _trace_step(
-            trace,
-            f"mcp tool call: {name}",
-            f"blocked, call to mcp-gateway failed: {exc}",
-            started_at,
-            frm="retrieval-agent (kata sandbox)",
-            to="mcp-gateway -> spear-openproject-mcp",
-            protocol="mcp json-rpc tools/call",
-            ok=False,
-        )
-        return json.dumps({"error": str(exc)})
 
-    result = response.get("result") or {}
-    content = result.get("content") or []
-    text = content[0].get("text") if content else json.dumps(result)
-    # a refusal that reaches this point came back as a normal http 200,
-    # spear-openproject-mcp's own assignee=self check for example, see
-    # its server.py, "error" in the jsonrpc body or isError on the mcp
-    # result are both still a real block even with no exception at all
-    blocked = "error" in response or bool(result.get("isError"))
+    @mlflow_tracing.trace(name=f"mcp tool call: {name}", span_type=mlflow_tracing.SPAN_TYPE_TOOL)
+    def _call(tool_name: str, tool_arguments: dict[str, Any]) -> dict[str, Any]:
+        # caller_token reaches mcp_call only through this closure, never
+        # as one of this function's own bound arguments, same rule as
+        # delegate_tool_calls' own _delegate in the coordinator: a
+        # bearer token must never land in a trace
+        span = mlflow_tracing.current_span()
+        # the gateway's own per tool rbac authpolicy rejects a disallowed
+        # tool call with a real http error status before spear-openproject-mcp
+        # ever sees it, which urllib raises as an exception rather than
+        # handing back a normal response body, confirmed live for a caller
+        # lacking the update_work_package role
+        try:
+            response = mcp_call(tool_name, tool_arguments, caller_token)
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode(errors="replace")[:300]
+            if span is not None:
+                span.set_attribute("ok", False)
+                span.set_attribute("category", "tool-rbac")
+                span.set_outputs({"error": f"http {exc.code}: {body}"})
+            return {"kind": "tool-rbac", "detail": f"http {exc.code}: {body}"}
+        except Exception as exc:  # noqa: BLE001
+            if span is not None:
+                span.set_attribute("ok", False)
+                span.set_attribute("category", "hop-failure")
+                span.set_outputs({"error": str(exc)})
+            return {"kind": "hop-failure", "detail": str(exc)}
+
+        result = response.get("result") or {}
+        content = result.get("content") or []
+        text = content[0].get("text") if content else json.dumps(result)
+        # a refusal that reaches this point came back as a normal http 200,
+        # spear-openproject-mcp's own assignee=self check for example, see
+        # its server.py, "error" in the jsonrpc body or isError on the mcp
+        # result are both still a real block even with no exception at all
+        blocked = "error" in response or bool(result.get("isError"))
+        if span is not None:
+            span.set_attribute("ok", not blocked)
+            if blocked:
+                span.set_attribute("category", "assignee-self")
+            # the real mcp result, not just whether it was blocked, this
+            # is what a reviewer or an eval judge actually needs to see
+            span.set_outputs({"error": response["error"]} if "error" in response else result)
+        if "error" in response:
+            return {"kind": "assignee-self", "detail": response["error"]}
+        if result.get("isError"):
+            return {"kind": "assignee-self", "detail": text}
+        return {"kind": "ok", "text": text}
+
+    outcome = _call(name, arguments)
+    kind = outcome["kind"]
+    if kind == "tool-rbac":
+        _trace_step(
+            trace,
+            f"mcp tool call: {name}",
+            f"blocked, mcp gateway's own tool rbac authpolicy returned {outcome['detail']}",
+            started_at,
+            frm="retrieval-agent (kata sandbox)",
+            to="mcp-gateway -> spear-openproject-mcp",
+            protocol="mcp json-rpc tools/call",
+            ok=False,
+        )
+        return json.dumps({"error": outcome["detail"]})
+    if kind == "hop-failure":
+        _trace_step(
+            trace,
+            f"mcp tool call: {name}",
+            f"blocked, call to mcp-gateway failed: {outcome['detail']}",
+            started_at,
+            frm="retrieval-agent (kata sandbox)",
+            to="mcp-gateway -> spear-openproject-mcp",
+            protocol="mcp json-rpc tools/call",
+            ok=False,
+        )
+        return json.dumps({"error": outcome["detail"]})
+    blocked = kind == "assignee-self"
     _trace_step(
         trace,
         f"mcp tool call: {name}",
-        "gateway tool rbac, then this project's own assignee=self check" if not blocked else f"blocked: {text}",
+        "gateway tool rbac, then this project's own assignee=self check" if not blocked else f"blocked: {outcome['detail']}",
         started_at,
         frm="retrieval-agent (kata sandbox)",
         to="mcp-gateway -> spear-openproject-mcp",
         protocol="mcp json-rpc tools/call",
         ok=not blocked,
     )
-    if "error" in response:
-        return json.dumps({"error": response["error"]})
-    if result.get("isError"):
-        return json.dumps({"error": text})
-    return text
+    if blocked:
+        return json.dumps({"error": outcome["detail"]})
+    return outcome["text"]
 
 
 def run_tool_call(
@@ -302,7 +344,7 @@ def run_tool_call(
         return json.dumps({"error": str(exc)})
 
 
-def on_rpc(body: dict[str, Any], auth_header: str) -> dict[str, Any] | None:
+def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> dict[str, Any] | None:
     method = body.get("method")
     # demo only method, owner-console's security demo page uses this to
     # prove the coordinator's workload identity hop live. confirmed this
@@ -341,11 +383,29 @@ def on_rpc(body: dict[str, Any], auth_header: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         calls = []
     trace: list[dict[str, Any]] = []
-    results = [{"id": call.get("id"), "result": run_tool_call(call, claims, caller_token, trace)} for call in calls]
+    # headers come in whatever case the coordinator's own http client sent
+    # them with, a plain case folded lookup here is cheaper than trusting
+    # one exact spelling, same traceparent mlflow's own distributed
+    # tracing helper puts on the coordinator's outbound call
+    lowered_headers = {k.lower(): v for k, v in headers.items()}
+    inbound_trace_headers = {"traceparent": lowered_headers["traceparent"]} if "traceparent" in lowered_headers else {}
+
+    @mlflow_tracing.trace(name="retrieval-agent", span_type=mlflow_tracing.SPAN_TYPE_AGENT)
+    def _handle(caller: str, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # caller_token and the mutable trace list reach run_tool_call
+        # only through this closure, never as this function's own bound
+        # arguments: a bearer token must never land in a trace, and
+        # trace is a side output being appended to, not worth logging
+        # again as an input
+        return [{"id": call.get("id"), "result": run_tool_call(call, claims, caller_token, trace)} for call in tool_calls]
+
+    with mlflow_tracing.continue_trace_from_headers(inbound_trace_headers):
+        results = _handle(claims.get("preferred_username"), calls)
     return completed_task(body.get("id"), json.dumps(results), trace)
 
 
 def main() -> None:
+    mlflow_tracing.configure()
     print(f"spear-retrieval-agent mcp_gateway={MCP_GATEWAY_URL}")
     serve(HOST, PORT, on_rpc, agent_card)
 

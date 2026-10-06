@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-JsonHandler = Callable[[dict[str, Any], str], dict[str, Any] | None]
+JsonHandler = Callable[[dict[str, Any], str, dict[str, str]], dict[str, Any] | None]
 
 
 def serve(host: str, port: int, on_rpc: JsonHandler, on_card: Callable[[], dict[str, Any]]) -> None:
@@ -62,8 +62,12 @@ def serve(host: str, port: int, on_rpc: JsonHandler, on_card: Callable[[], dict[
                 # receives the user's query plus their real keycloak jwt as
                 # a plain Authorization header on this request, not inside
                 # the json-rpc body, that is how an ordinary http caller
-                # like owner-console-backend actually sends a bearer token
-                result = on_rpc(body, self.headers.get("authorization", ""))
+                # like owner-console-backend actually sends a bearer token.
+                # the full header map rides along too now, PHASE3_PLAN.md
+                # section 4: it is the only way retrieval ever sees the
+                # coordinator's own outbound traceparent header to stitch
+                # its own mlflow spans onto the same real trace
+                result = on_rpc(body, self.headers.get("authorization", ""), dict(self.headers))
             except Exception as exc:  # noqa: BLE001
                 result = {
                     "jsonrpc": "2.0",

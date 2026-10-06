@@ -42,6 +42,7 @@ from typing import Any
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "_shared"))
 from a2a_server import completed_task, serve, text_from_message  # noqa: E402
 from http_client import http_json  # noqa: E402
+import mlflow_tracing  # noqa: E402
 
 HOST = os.environ.get("AGENT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("AGENT_PORT", "8080"))
@@ -196,6 +197,7 @@ def _trace_step(
     )
 
 
+@mlflow_tracing.trace(name="chat_completion", span_type=mlflow_tracing.SPAN_TYPE_LLM)
 def chat_completion(messages: list[dict[str, Any]]) -> dict[str, Any]:
     # passthrough: true in coordinator-agent-config is what makes tools/
     # tool_choice actually work here, confirmed live: without it nemo
@@ -204,11 +206,14 @@ def chat_completion(messages: list[dict[str, Any]]) -> dict[str, Any]:
     # guardrails configuration has 'passthrough: true'". a blocked rail
     # still fires in passthrough mode, confirmed live too, it comes back
     # as a normal 200 with a refusal message in message.content, same
-    # shape as any other answer, nothing special to catch here
+    # shape as any other answer, nothing special to catch here, and now
+    # that the decorator above captures this whole response as the
+    # span's real output, a refusal shows up in the trace itself too,
+    # not just this function's own return value
     headers = {"content-type": "application/json"}
     if OGX_API_KEY:
         headers["authorization"] = f"Bearer {OGX_API_KEY}"
-    return http_json(
+    response = http_json(
         f"{OGX_BASE_URL}/v1/chat/completions",
         {
             "model": GENERATION_MODEL,
@@ -219,6 +224,18 @@ def chat_completion(messages: list[dict[str, Any]]) -> dict[str, Any]:
         },
         extra_headers=headers,
     )
+    # real token counts, not estimated ones, already in ogx's own
+    # openai compatible response body, just never read before now.
+    # pulled out as their own attributes too since those are easier to
+    # query across many traces than digging through the full response
+    # the decorator already stored as this span's output
+    span = mlflow_tracing.current_span()
+    if span is not None:
+        usage = response.get("usage") or {}
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            if key in usage:
+                span.set_attribute(key, usage[key])
+    return response
 
 
 def _looks_like_tool_error(raw: str) -> bool:
@@ -244,26 +261,58 @@ def delegate_tool_calls(
         {"id": tc["id"], "name": tc["function"]["name"], "arguments": json.loads(tc["function"]["arguments"] or "{}")}
         for tc in tool_calls
     ]
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "coord-delegate",
-        "method": "message/send",
-        "params": {
-            "message": {
-                "role": "user",
-                "parts": [{"kind": "text", "type": "text", "text": json.dumps({"tool_calls": calls_payload})}],
+
+    @mlflow_tracing.trace(name="tool delegation", span_type=mlflow_tracing.SPAN_TYPE_TOOL)
+    def _delegate(calls: list[dict[str, Any]]) -> dict[str, Any]:
+        # caller_token reaches the outbound a2a payload only through
+        # this closure, never as one of this function's own bound
+        # arguments: mlflow.trace auto captures every bound argument,
+        # the real end user's bearer token must never land in a trace
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "coord-delegate",
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "role": "user",
+                    "parts": [{"kind": "text", "type": "text", "text": json.dumps({"tool_calls": calls})}],
+                },
+                "callerToken": caller_token,
             },
-            # the real end user's own jwt, not this sandbox's own
-            # workload identity, see this file's module docstring
-            "callerToken": caller_token,
-        },
-    }
+        }
+        # the real traceparent header, the one thing that turns retrieval's
+        # own spans into children of this one instead of a second,
+        # disconnected trace, PHASE3_PLAN.md section 4
+        trace_headers = mlflow_tracing.outgoing_trace_headers()
+        body = http_json(RETRIEVAL_A2A_URL, payload, extra_headers=trace_headers)
+        result = body.get("result") or {}
+        artifacts = result.get("artifacts") or []
+        text = artifacts[0]["parts"][0]["text"] if artifacts else json.dumps({"error": body})
+        try:
+            results = json.loads(text)
+            by_id = {r["id"]: r["result"] for r in results if "id" in r}
+        except json.JSONDecodeError:
+            by_id = {tc["id"]: text for tc in calls}
+        # a per tool call refusal (spear-openproject-mcp's own assignee=self
+        # check, or the gateway's own tool rbac authpolicy, see
+        # run_work_tracker_tool in spear-retrieval-agent) already renders its
+        # own red hop below once retrieval's sub trace is spliced in, marking
+        # this outer hop red too so the whole failing sub chain stands out,
+        # not just the one deepest box
+        any_tool_error = any(_looks_like_tool_error(v) for v in by_id.values())
+        span = mlflow_tracing.current_span()
+        if span is not None:
+            span.set_attribute("ok", not any_tool_error)
+        return {"by_id": by_id, "sub_trace": result.get("trace") or [], "any_tool_error": any_tool_error}
+
     try:
-        body = http_json(RETRIEVAL_A2A_URL, payload)
+        outcome = _delegate(calls_payload)
     except Exception as exc:  # noqa: BLE001
         # the a2a hop itself failed outright, not a tool level refusal,
         # recorded as its own real block rather than left to crash this
-        # whole request with no trace at all
+        # whole request with no trace at all. mlflow's own decorator
+        # already records this exception on the span itself, nothing
+        # extra to set here
         _trace_step(
             trace,
             "tool delegation",
@@ -276,21 +325,7 @@ def delegate_tool_calls(
         )
         return {tc["id"]: json.dumps({"error": str(exc)}) for tc in tool_calls}
 
-    result = body.get("result") or {}
-    artifacts = result.get("artifacts") or []
-    text = artifacts[0]["parts"][0]["text"] if artifacts else json.dumps({"error": body})
-    try:
-        results = json.loads(text)
-        by_id = {r["id"]: r["result"] for r in results if "id" in r}
-    except json.JSONDecodeError:
-        by_id = {tc["id"]: text for tc in tool_calls}
-    # a per tool call refusal (spear-openproject-mcp's own assignee=self
-    # check, or the gateway's own tool rbac authpolicy, see
-    # run_work_tracker_tool in spear-retrieval-agent) already renders its
-    # own red hop below once retrieval's sub trace is spliced in, marking
-    # this outer hop red too so the whole failing sub chain stands out,
-    # not just the one deepest box
-    any_tool_error = any(_looks_like_tool_error(v) for v in by_id.values())
+    by_id = outcome["by_id"]
     _trace_step(
         trace,
         "tool delegation",
@@ -299,12 +334,12 @@ def delegate_tool_calls(
         frm="coordinator-agent (runc sandbox)",
         to="retrieval-agent (kata sandbox)",
         protocol="a2a message/send",
-        ok=not any_tool_error,
+        ok=not outcome["any_tool_error"],
     )
     # retrieval's own completed_task already carries its own real sub
     # hops (rag-query-relay, mcp-gateway), spliced in right after this
     # hop so the flow diagram shows the whole chain, not just this edge
-    trace.extend(result.get("trace") or [])
+    trace.extend(outcome["sub_trace"])
     return {tc["id"]: by_id.get(tc["id"], json.dumps({"error": "no result returned for this tool call"})) for tc in tool_calls}
 
 
@@ -330,6 +365,11 @@ def answer(user_text: str, caller_token: str) -> tuple[str, list[dict[str, Any]]
 
     for round_num in range(MAX_TOOL_ROUNDS):
         started_at = time.monotonic()
+        # chat_completion is its own @mlflow_tracing.trace() now, a real
+        # span with the full messages in and the full response out,
+        # nothing left to wrap here, round number is implicit in the
+        # trace tree's own ordering and in how many messages each call
+        # carries
         response = chat_completion(messages)
         choice = (response.get("choices") or [{}])[0]
         message = choice.get("message") or {}
@@ -368,7 +408,7 @@ def answer(user_text: str, caller_token: str) -> tuple[str, list[dict[str, Any]]
     return "the model kept calling tools without giving a final answer, stopping after too many rounds", trace
 
 
-def on_rpc(body: dict[str, Any], auth_header: str) -> dict[str, Any] | None:
+def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> dict[str, Any] | None:
     method = body.get("method")
     # demo only method, owner-console's security demo page uses this to
     # prove the workload identity hop live: makes this sandbox's own real
@@ -406,7 +446,19 @@ def on_rpc(body: dict[str, Any], auth_header: str) -> dict[str, Any] | None:
         }
     prompt = text_from_message(body)
     print(f"coordinator request (sandbox={socket.gethostname()}): {prompt}")
-    text, trace = answer(prompt, caller_token)
+    # root span for the whole request, PHASE3_PLAN.md section 4. this
+    # sandbox is always the root, owner-console-backend calls in over a2a
+    # but never starts a trace of its own, so there is nothing upstream
+    # for this span to continue from, unlike the delegate_tool_calls hop
+    # below which hands its own traceparent on to retrieval
+    @mlflow_tracing.trace(name="coordinator-agent", span_type=mlflow_tracing.SPAN_TYPE_AGENT)
+    def _handle(question: str) -> tuple[str, list[dict[str, Any]]]:
+        # caller_token reaches answer()/delegate_tool_calls() only
+        # through this closure, never as a traced argument, same rule
+        # as _delegate above
+        return answer(question, caller_token)
+
+    text, trace = _handle(prompt)
     trace.insert(
         0,
         {
@@ -422,6 +474,7 @@ def on_rpc(body: dict[str, Any], auth_header: str) -> dict[str, Any] | None:
 
 
 def main() -> None:
+    mlflow_tracing.configure()
     print(f"spear-coordinator-agent retrieval_a2a={RETRIEVAL_A2A_URL} model={GENERATION_MODEL}")
     serve(HOST, PORT, on_rpc, agent_card)
 

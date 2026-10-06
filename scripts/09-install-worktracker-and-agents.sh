@@ -12,7 +12,7 @@ set -euo pipefail
 # PHASE2_PLAN.md sections 2, 4, 5, 6, 7. the sandboxed agents themselves
 # (image builds, sandbox create, policy, provider) are now scripted too,
 # see deploy_sandboxed_agents below, adapted from the reference project's
-# own manifests/30-openshell/deploy-agents-job.yaml.tmpl (dbs-sow-assessment/
+# own manifests/30-openshell/deploy-agents-job.yaml.tmpl in the reference repo (dbs-sow-assessment/
 # rhoai-agentic-demo), which already proved the real openshell cli flags
 # and ordering live: runtime_class_name is snake_case not the kubernetes
 # field's own camelCase, providers_v2_enabled has to be turned on globally
@@ -57,6 +57,10 @@ source "${ROOT_DIR}/scripts/lib-common.sh"
 
 WORKTRACKER_MANIFESTS="${ROOT_DIR}/manifests/spear-worktracker"
 AGENTS_MANIFESTS="${ROOT_DIR}/manifests/spear-shield-agents"
+# where the real Mlflow cr lives, same constant scripts/08-install-console.sh
+# and scripts/04-install-pipelines.sh already use, not re-derived some
+# other way here
+SHARED_NS="redhat-ods-applications"
 
 # openproject requires lower, upper, numeric, and a special character.
 # a fixed prefix plus random alnum plus fixed suffix guarantees all four
@@ -205,12 +209,26 @@ resolve_hosts() {
   MCP_PUBLIC_HOST="mcp-${AGENTS_NS}.${CLUSTER_DOMAIN}"
   ISSUER_URL="https://${SSO_HOST}/realms/${AGENTS_NS}"
 
+  # the real in process mlflow tracing in both agents, PHASE3_PLAN.md
+  # section 4. same resolution scripts/08-install-console.sh already
+  # uses for the console backend, read from the real Mlflow CR's own
+  # status field, never hardcoded or re-derived some other way
+  MLFLOW_URL="$(oc get mlflow mlflow -n "${SHARED_NS}" -o jsonpath='{.status.url}' 2>/dev/null || true)"
+  if [[ -z "${MLFLOW_URL}" ]]; then
+    echo "could not resolve the mlflow cr's own route (mlflow 'mlflow' in namespace '${SHARED_NS}'), run scripts/08-install-console.sh first" >&2
+    exit 1
+  fi
+  MLFLOW_HOST="${MLFLOW_URL#https://}"
+  MLFLOW_HOST="${MLFLOW_HOST#http://}"
+  MLFLOW_HOST="${MLFLOW_HOST%%/*}"
+
   log "cluster domain:    ${CLUSTER_DOMAIN}"
   log "sso issuer:        ${ISSUER_URL}"
   log "openproject host:  ${OPENPROJECT_HOST}"
   log "mcp public host:   ${MCP_PUBLIC_HOST}"
   log "guardrails route:  ${GUARDRAILS_ROUTE}"
   log "spire oidc route:  ${SPIRE_OIDC_ROUTE}"
+  log "mlflow url:        ${MLFLOW_URL}"
 }
 
 apply_templated() {
@@ -241,6 +259,7 @@ render_openshell_file() {
     -e "s|SSO_HOST_PLACEHOLDER|${SSO_HOST}|g" \
     -e "s|ISSUER_URL_PLACEHOLDER|${ISSUER_URL}|g" \
     -e "s|GUARDRAILS_HOST_PLACEHOLDER|${GUARDRAILS_HOST}|g" \
+    -e "s|MLFLOW_HOST_PLACEHOLDER|${MLFLOW_HOST}|g" \
     -e "s|CLUSTER_NETWORK_CIDR_PLACEHOLDER|${CLUSTER_NETWORK_CIDR}|g" \
     -e "s|SERVICE_NETWORK_CIDR_PLACEHOLDER|${SERVICE_NETWORK_CIDR}|g" \
     "${src}" > "${dest}"
@@ -547,6 +566,7 @@ run_agents_deploy_job() {
   sed \
     -e "s|MCP_PUBLIC_HOST_PLACEHOLDER|${MCP_PUBLIC_HOST}|g" \
     -e "s|GUARDRAILS_ROUTE_PLACEHOLDER|${GUARDRAILS_ROUTE}|g" \
+    -e "s|MLFLOW_URL_PLACEHOLDER|${MLFLOW_URL}|g" \
     -e "s|AGENT_RUNTIME_CLASS_PLACEHOLDER|${runtime_class}|g" \
     "${AGENTS_MANIFESTS}/openshell/deploy-agents-job.yaml" | oc apply -f -
 
@@ -671,6 +691,10 @@ main() {
 
   log "spear-coordinator-agent's own credential for calling spear-guardrails directly, a dedicated sa plus a long lived token (sandboxes never automount one, confirmed live)"
   oc apply -f "${AGENTS_MANIFESTS}/openshell/coordinator-guardrails-sa.yaml"
+
+  log "each sandbox's own credential for real in process mlflow tracing, PHASE3_PLAN.md section 4"
+  oc apply -f "${AGENTS_MANIFESTS}/openshell/agents-mlflow-sa.yaml"
+  oc apply -f "${ROOT_DIR}/manifests/spear-pipelines/06-agents-mlflow-rbac.yaml"
 
   log "spear-shield-a2a-gateway, cluster spiffeid for the two sandboxed agents"
   oc apply -f "${AGENTS_MANIFESTS}/06-cluster-spiffeid.yaml"

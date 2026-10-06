@@ -1,0 +1,41 @@
+# credentials for each agent sandbox's own real, in process mlflow
+# tracing, PHASE3_PLAN.md section 4. same shape and same reasoning as
+# coordinator-guardrails-sa.yaml right next to this file: a long lived
+# token secret, not a projected volume, since openshell sandboxes set
+# automountServiceAccountToken: false and never get a per pod token the
+# usual way. one service account per sandbox, not one shared between
+# them, same separation of identity the guardrails caller credential
+# already keeps.
+#
+# the Role/RoleBinding half granting these actual mlflow access lives
+# next to mlflow itself, manifests/spear-pipelines/06-agents-mlflow-rbac.yaml,
+# same split coordinator-guardrails-sa.yaml already uses
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-coordinator-mlflow-caller
+  namespace: spear-shield-agents
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spear-coordinator-mlflow-caller-token
+  namespace: spear-shield-agents
+  annotations:
+    kubernetes.io/service-account.name: spear-coordinator-mlflow-caller
+type: kubernetes.io/service-account-token
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-retrieval-mlflow-caller
+  namespace: spear-shield-agents
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spear-retrieval-mlflow-caller-token
+  namespace: spear-shield-agents
+  annotations:
+    kubernetes.io/service-account.name: spear-retrieval-mlflow-caller
+type: kubernetes.io/service-account-token

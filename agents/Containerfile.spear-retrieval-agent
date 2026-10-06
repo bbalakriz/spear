@@ -22,6 +22,7 @@ USER 1001
 
 COPY --chown=1001:0 _shared/a2a_server.py /sandbox/a2a_server.py
 COPY --chown=1001:0 _shared/http_client.py /sandbox/http_client.py
+COPY --chown=1001:0 _shared/mlflow_tracing.py /sandbox/mlflow_tracing.py
 COPY --chown=1001:0 spear-retrieval-agent/rag_query.py /sandbox/rag_query.py
 COPY --chown=1001:0 spear-retrieval-agent/rag_query_server.py /sandbox/rag_query_server.py
 COPY --chown=1001:0 spear-retrieval-agent/main.py /sandbox/main.py

@@ -51,10 +51,25 @@ spec:
               value: "MCP_PUBLIC_HOST_PLACEHOLDER"
             - name: GUARDRAILS_ROUTE
               value: "GUARDRAILS_ROUTE_PLACEHOLDER"
+            - name: MLFLOW_URL
+              value: "MLFLOW_URL_PLACEHOLDER"
             - name: OGX_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: spear-coordinator-guardrails-caller-token
+                  key: token
+            # one token per sandbox, real in process mlflow tracing,
+            # PHASE3_PLAN.md section 4, see agents-mlflow-sa.yaml for
+            # where these secrets come from
+            - name: COORDINATOR_MLFLOW_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: spear-coordinator-mlflow-caller-token
+                  key: token
+            - name: RETRIEVAL_MLFLOW_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: spear-retrieval-mlflow-caller-token
                   key: token
           command: ["/bin/sh", "-ec"]
           args:
@@ -104,6 +119,8 @@ spec:
                 --no-auto-providers \
                 --env AGENT_NAME=spear-retrieval-agent \
                 --env MCP_GATEWAY_HOST_HEADER="${MCP_PUBLIC_HOST}" \
+                --env MLFLOW_URL="${MLFLOW_URL}" \
+                --env MLFLOW_TRACKING_TOKEN="${RETRIEVAL_MLFLOW_TOKEN}" \
                 -- python3 /sandbox/main.py \
                 || die "spear-retrieval sandbox create failed"
               sleep 20
@@ -121,6 +138,8 @@ spec:
                 --env AGENT_NAME=spear-coordinator-agent \
                 --env OGX_BASE_URL="${GUARDRAILS_ROUTE}" \
                 --env OGX_API_KEY="${OGX_API_KEY}" \
+                --env MLFLOW_URL="${MLFLOW_URL}" \
+                --env MLFLOW_TRACKING_TOKEN="${COORDINATOR_MLFLOW_TOKEN}" \
                 -- python3 /sandbox/main.py \
                 || die "spear-coordinator sandbox create failed"
               sleep 20

@@ -3,9 +3,13 @@
    markdown, this makes the rendered elements read as part of the chat
    turn rather than as an unstyled html dump. theme agnostic on purpose,
    currentColor and patternfly's own global text vars only, so it reads
-   correctly in both the light and the dark console theme */
+   correctly in both the light and the dark console theme. sizes inherit
+   the console's own scale on purpose, no explicit font-size on the
+   container or the headings, an explicit rem there fought the console's
+   own base size and read oversized next to every other element on the
+   page, only the relative hierarchy below is ours */
 .coordinator-answer-md {
-  font-size: 1rem;
+  font-size: inherit;
   line-height: 1.5;
 }
 
@@ -29,15 +33,15 @@
 }
 
 .coordinator-answer-md h1 {
-  font-size: 1.35rem;
+  font-size: 1.15em;
 }
 
 .coordinator-answer-md h2 {
-  font-size: 1.2rem;
+  font-size: 1.08em;
 }
 
 .coordinator-answer-md h3 {
-  font-size: 1.05rem;
+  font-size: 1em;
 }
 
 .coordinator-answer-md p {

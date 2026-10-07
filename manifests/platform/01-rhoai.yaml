@@ -120,6 +120,7 @@ spec:
     mcpRegistry: true
     genAiStudio: true
     genAiTracing: true
+    disableLMEval: false
   notebookController:
     enabled: true
     notebookNamespace: rhods-notebooks

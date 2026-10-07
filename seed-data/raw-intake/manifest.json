@@ -78,6 +78,19 @@
       "data_owner": null,
       "effective_date": null,
       "review_date": null
+    },
+    {
+      "doc_id": "HR-COMP-2026-07",
+      "title": "Executive Compensation Review Data - Handling Standard",
+      "filename": "hr_compensation_handling_standard.md",
+      "source": "internal",
+      "clearance_level": "restricted",
+      "dept": "hr",
+      "team": "total-rewards",
+      "project_scope": "hr-total-rewards",
+      "data_owner": "total-rewards@corp.example",
+      "effective_date": "2026-03-01",
+      "review_date": "2027-03-01"
     }
   ]
 }

@@ -1,0 +1,16 @@
+# a dummy, non secret value. the raw ogx server ibm-clear's job calls
+# against (bypassing guardrails, since this is an internal judge call not
+# live user traffic) needs no real auth at all, confirmed live, but
+# ibm-clear's own litellm backend refuses to make any openai compatible
+# call client side without *some* non empty OPENAI_API_KEY, regardless of
+# whether the server actually checks it. evalhub mounts whatever secret
+# model.auth.secret_ref names on the job submission at
+# /var/run/secrets/model/api-key, confirmed live.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ogx-dummy-model-auth
+  namespace: spear-pipelines
+type: Opaque
+stringData:
+  api-key: dummy-not-required

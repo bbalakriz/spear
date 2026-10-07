@@ -1,0 +1,120 @@
+# newer community provider images than this cluster's bundled rhods-operator
+# 3.5.1 ships (ragas v0.5.0, ibm-clear v0.5.0), both confirmed live to have
+# real bugs fixed in later releases: v0.5.0 ragas's own llm wrapper is
+# incompatible with its own pinned ragas library's newer collections metric
+# api, and v0.5.0 ibm-clear's eval-hub-sdk fetches trace info via an
+# endpoint that never carries span data against this mlflow server's v3
+# trace schema. both confirmed fixed in v0.6.2 (ragas) and v0.6.0
+# (ibm-clear) on quay.io.
+#
+# the operator only looks up a provider's source configmap by the
+# trustyai.opendatahub.io/evalhub-provider-name label inside its own
+# namespace (redhat-ods-applications), and continuously reconciles the
+# existing ragas/ibm-clear names back to its own bundled v0.5.0 content the
+# moment either is edited directly, confirmed live (reverted within
+# seconds). a brand new name has no red hat owned template to fight it, so
+# it holds. this is the real mechanism behind what looked like a friend's
+# "custom provider" trick: a new name, not a version override on the
+# existing one.
+#
+# these live in redhat-ods-applications, the operator's own namespace, not
+# spear-shield-eval, since that is the only place the operator's lookup
+# ever checks. scripts/10-install-evalhub.sh applies this file and then
+# adds ragas-v062/ibm-clear-v060 to the evalhub cr's spec.providers.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: community-ragas-v062
+  namespace: redhat-ods-applications
+  labels:
+    trustyai.opendatahub.io/evalhub-provider-name: ragas-v062
+    trustyai.opendatahub.io/evalhub-provider-type: system
+data:
+  ragas-v062.yaml: |
+    id: ragas-v062
+    name: RAGAS
+    title: RAGAS
+    description: >
+      Retrieval Augmented Generation Assessment — evaluates RAG pipeline quality
+      using metrics like faithfulness, answer relevancy, context precision/recall,
+      and more. Models are accessed via OpenAI-compatible endpoints.
+    runtime:
+      k8s:
+        image: quay.io/evalhub/community-ragas:v0.6.2
+        entrypoint:
+          - python
+          - main.py
+        cpu_request: 100m
+        memory_request: 128Mi
+        cpu_limit: 1000m
+        memory_limit: 2Gi
+      local:
+        command: python tests/features/test_data/runtime/main.py
+    benchmarks:
+      - id: ragas_rag_default
+        name: RAG Default Suite
+        description: Default RAG evaluation with answer relevancy, context precision, faithfulness, and context recall
+        category: rag_evaluation
+        metrics:
+          - answer_relevancy
+          - context_precision
+          - faithfulness
+          - context_recall
+        tags:
+          - ragas
+          - rag
+          - default
+        primary_score:
+          metric: faithfulness
+          lower_is_better: false
+        pass_criteria:
+          threshold: 0.5
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: community-ibm-clear-v060
+  namespace: redhat-ods-applications
+  labels:
+    trustyai.opendatahub.io/evalhub-provider-name: ibm-clear-v060
+    trustyai.opendatahub.io/evalhub-provider-type: system
+data:
+  ibm-clear-v060.yaml: |
+    id: ibm-clear-v060
+    name: IBM CLEAR
+    title: IBM CLEAR
+    description: IBM CLEAR evaluation framework for error analysis and reporting
+    runtime:
+      k8s:
+        image: quay.io/evalhub/community-ibm-clear:v0.6.0
+        entrypoint:
+          - python
+          - main.py
+        cpu_request: 100m
+        memory_request: 128Mi
+        cpu_limit: 500m
+        memory_limit: 1Gi
+      local:
+        command: python tests/features/test_data/runtime/main.py
+    benchmarks:
+      - id: agentic-evaluation
+        name: Agentic Evaluation
+        description: Agentic evaluation that identifies error categories from agent traces and quantifies their frequencies
+        category: error-analysis
+        metrics:
+          - total_interactions
+          - total_issues
+          - interactions_with_issues
+          - interactions_no_issues
+          - total_agents
+          - pct_interactions_with_issues
+          - issues_per_interaction
+          - average_score
+        tags:
+          - erroranalysis
+          - ibmclear
+        primary_score:
+          metric: average_score
+          lower_is_better: false
+        pass_criteria:
+          threshold: 0.5

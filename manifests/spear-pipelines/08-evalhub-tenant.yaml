@@ -1,0 +1,81 @@
+# registers spear-pipelines itself as a second evalhub tenant, alongside
+# evalhub's own home namespace spear-shield-eval. confirmed live: every
+# evaluation job's adapter pod gets MLFLOW_WORKSPACE forced to whichever
+# namespace the job actually runs in (the x-tenant header's namespace),
+# not evalhub's own cr level spec.env default, so ibm-clear's
+# mlflow_traces_experiment_name lookup only ever sees experiments already
+# in that same namespace's own mlflow workspace. spear-shield-security-trace
+# lives in spear-pipelines, so evaluation jobs reading it have to run here
+# too, not in spear-shield-eval's own empty workspace.
+#
+# the tenant label's value is intentionally empty, same as
+# manifests/spear-shield-eval/00-namespace.yaml, the operator only checks
+# for the label's presence.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-pipelines
+  labels:
+    evalhub.trustyai.opendatahub.io/tenant: ""
+---
+# same caller serviceaccount already used against the spear-shield-eval
+# tenant (manifests/spear-shield-eval/02-caller-rbac.yaml), granted here
+# too so one token can submit jobs against either tenant namespace by
+# switching the x-tenant header.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: evalhub-evaluator
+  namespace: spear-pipelines
+rules:
+  - apiGroups: ["trustyai.opendatahub.io"]
+    resources: ["evaluations", "collections", "providers"]
+    verbs: ["get", "list", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-shield-eval-caller
+  namespace: spear-pipelines
+subjects:
+  - kind: ServiceAccount
+    name: spear-shield-eval-caller
+    namespace: spear-shield-eval
+roleRef:
+  kind: Role
+  name: evalhub-evaluator
+  apiGroup: rbac.authorization.k8s.io
+---
+# evalhub forwards the real calling identity's own bearer token to mlflow
+# for mlflow's own subjectaccessreview check on experiment access, not
+# evalhub's own backend identity, confirmed live. evalhub-service is the
+# real serviceaccount name the trustyai operator gives the evalhub
+# deployment itself for this cr, discovered live via
+# oc get deployment evalhub -o jsonpath='{.spec.template.spec.serviceAccountName}',
+# not assumed or guessed.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spear-pipelines-mlflow-evalhub-caller
+  namespace: spear-pipelines
+rules:
+  - apiGroups: [mlflow.kubeflow.org]
+    resources: [experiments]
+    verbs: [get, list, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-pipelines-mlflow-evalhub-caller
+  namespace: spear-pipelines
+subjects:
+  - kind: ServiceAccount
+    name: evalhub-service
+    namespace: spear-shield-eval
+  - kind: ServiceAccount
+    name: spear-shield-eval-caller
+    namespace: spear-shield-eval
+roleRef:
+  kind: Role
+  name: spear-pipelines-mlflow-evalhub-caller
+  apiGroup: rbac.authorization.k8s.io

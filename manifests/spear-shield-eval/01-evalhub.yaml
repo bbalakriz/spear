@@ -1,0 +1,56 @@
+# the real evalhub instance, trustyai.opendatahub.io/v1, bundled inside
+# rhods-operator 3.5 already running on this cluster, no separate operator
+# subscription needed. tenancy single since this is our own project's one
+# and only tenant, nothing cross namespace to propagate to.
+#
+# providers: ragas and ibm-clear are both real, out of the box provider
+# configmaps this cluster already ships
+# (trustyai-service-operator-evalhub-provider-{ragas,ibm-clear} in
+# redhat-ods-applications), confirmed live, no custom adapter image needed
+# for either. ragas-v062 and ibm-clear-v060 are the same two providers on
+# newer community images, since this cluster's bundled v0.5.0 of both has
+# confirmed real bugs (see manifests/spear-shield-eval/03-custom-providers.yaml),
+# left in place alongside the stock ones rather than replacing them.
+#
+# env wires the real, already running mlflow instance in, same one
+# agents/_shared/mlflow_tracing.py writes spear-shield-security-trace into.
+# the internal service address and workspace header match what
+# scripts/09-install-worktracker-and-agents.sh already resolves for the
+# agents, reused here rather than re-derived a different way.
+#
+# tenancy multi, not single: confirmed live that every evaluation job's
+# own adapter pod gets MLFLOW_WORKSPACE forced to its own tenant
+# namespace, not this cr's own spec.env default, so ibm-clear's
+# mlflow_traces_experiment_name lookup only ever sees experiments in
+# whatever namespace the job actually runs in. spear-shield-security-trace
+# lives in spear-pipelines's own mlflow workspace, so spear-pipelines has
+# to be a real evalhub tenant too (manifests/spear-pipelines/08-evalhub-tenant.yaml),
+# single would only ever serve spear-shield-eval's own, empty workspace.
+apiVersion: trustyai.opendatahub.io/v1
+kind: EvalHub
+metadata:
+  name: evalhub
+  namespace: spear-shield-eval
+spec:
+  replicas: 1
+  tenancy: multi
+  database:
+    type: postgresql
+    secret: evalhub-db-credentials
+  providers:
+    - ragas
+    - ibm-clear
+    - ragas-v062
+    - ibm-clear-v060
+    # garak, the third real evaluation axis, confirmed live from its own
+    # already shipped trustyai-service-operator-evalhub-provider-garak
+    # configmap, system type same as ragas/ibm-clear, no community override
+    # needed here, nothing in it hints at the v0.5.0 style bugs those two
+    # had. not registered on this cr until this point since nothing had
+    # submitted a job against it yet
+    - garak
+  env:
+    - name: MLFLOW_TRACKING_URI
+      value: "https://mlflow.redhat-ods-applications.svc:8443/mlflow"
+    - name: MLFLOW_WORKSPACE
+      value: "spear-pipelines"

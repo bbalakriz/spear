@@ -1,0 +1,40 @@
+# a serviceaccount for calling evalhub's own rest api to submit and poll
+# evaluation jobs, same long lived token shape the agent sandboxes'
+# own caller tokens use (coordinator-guardrails-sa.yaml), minted with
+# oc create token rather than a projected volume since this is called
+# from outside any pod for now, by scripts/11-submit-evalhub-jobs.sh.
+#
+# the role's resource/verb list and the mlflow experiments grant are
+# exactly what the real rhods-operator 3.5 docs show for an
+# evalhub-evaluator role, trustyai.opendatahub.io virtual resources, not
+# real crds, enforced by evalhub's own subjectaccessreview checks keyed
+# off the x-tenant header.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-shield-eval-caller
+  namespace: spear-shield-eval
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: evalhub-evaluator
+  namespace: spear-shield-eval
+rules:
+  - apiGroups: ["trustyai.opendatahub.io"]
+    resources: ["evaluations", "collections", "providers"]
+    verbs: ["get", "list", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-shield-eval-caller
+  namespace: spear-shield-eval
+subjects:
+  - kind: ServiceAccount
+    name: spear-shield-eval-caller
+    namespace: spear-shield-eval
+roleRef:
+  kind: Role
+  name: evalhub-evaluator
+  apiGroup: rbac.authorization.k8s.io

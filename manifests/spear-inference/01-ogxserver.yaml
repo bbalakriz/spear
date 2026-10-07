@@ -181,6 +181,19 @@ spec:
           ports:
             - protocol: TCP
               port: 8321
+        # evalhub's own eval job pods call this raw server directly as
+        # their judge/embedding model, bypassing guardrails since this is
+        # an internal evaluation call not live user traffic. confirmed
+        # live the same way as the gaps above: the sidecar proxy's own
+        # chat completions call hung until deadline exceeded with no
+        # entry here, scripts/10-install-evalhub.sh
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: spear-shield-eval
+          ports:
+            - protocol: TCP
+              port: 8321
   workload:
     overrides:
       env:

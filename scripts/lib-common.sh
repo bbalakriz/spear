@@ -7,7 +7,11 @@
 # confirmed live 2026-09-25, there is no new operator subscription to
 # approve here.
 
-log() { printf '== %s ==\n' "$*"; }
+# stderr, not stdout: scripts/11-submit-evalhub-jobs.sh pipes a function's
+# own stdout straight into python3 -m json.tool as real data, a log line
+# mixed into that same stream breaks the parse, confirmed live,
+# "Expecting value: line 1 column 1"
+log() { printf '== %s ==\n' "$*" >&2; }
 
 # NAMESPACE_MIGRATION_PLAN.md: the one place every namespace name this
 # project owns is defined, replacing the 11 separate copies of
@@ -23,6 +27,10 @@ PIPELINES_NS="spear-pipelines"
 CONSOLE_NS="spear-console"
 WORKTRACKER_NS="spear-worktracker"
 AGENTS_NS="spear-shield-agents"
+# evalhub's own namespace, a dedicated tenant rather than redhat-ods-applications,
+# per that namespace's own restrictive NetworkPolicy, confirmed live against
+# this cluster's real rhods-operator 3.5 docs, see scripts/10-install-evalhub.sh
+EVAL_NS="spear-shield-eval"
 
 # generates a random secret once, never regenerates against an already
 # provisioned one. same pattern as agent-pack's ensure_keycloak_db_secret,

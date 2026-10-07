@@ -1,0 +1,16 @@
+# a dedicated tenant for evalhub, not redhat-ods-applications. that
+# namespace's own NetworkPolicy resources restrict cross namespace
+# traffic and would need extra labeling just to let the evaluation job
+# sidecar reach the evalhub api, confirmed against this cluster's real
+# rhods-operator 3.5 docs. a plain namespace of our own avoids all of that.
+#
+# no tenant label on this namespace: this is evalhub's own home in
+# tenancy: multi mode, not a tenant of itself. confirmed live, the
+# operator refuses to start otherwise ("A multi-tenant EvalHub cannot be
+# deployed in a tenant namespace"). manifests/spear-pipelines/08-evalhub-tenant.yaml
+# carries the real tenant label instead, see 01-evalhub.yaml's own
+# comment for why.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-shield-eval

@@ -49,6 +49,23 @@ metadata:
   name: mlflow
   namespace: redhat-ods-applications
 spec:
+  # off by default on this operator, confirmed live 2026-10-07 via
+  # spec.serveArtifacts on the running cr, even though defaultArtifactRoot
+  # below already points at a real, fully wired s3 backend. every evalhub
+  # provider's own result save path (ragas, ibm-clear, same shared sdk
+  # method, callbacks.mlflow.save) tries to upload real artifacts
+  # (clear_results.html among them) through this same proxy endpoint and
+  # gets a flat 503 until this is true, confirmed live against the real
+  # error text before flipping this
+  serveArtifacts: true
+  # without this, the operator defaults the proxy's own write target to
+  # file:///mlflow/artifacts, confirmed live there is no volume mounted at
+  # that path at all on the real pod, every proxied upload would land on
+  # ephemeral container storage and vanish on the next restart. same
+  # bucket defaultArtifactRoot already uses below, same s3 creds already
+  # wired through spec.env, no new storage needed, the crd's own field doc
+  # says exactly that for an s3 destination
+  artifactsDestination: s3://dsp-pipeline-artifacts/mlflow
   workspaceLabelSelector:
     matchLabels:
       spear.io/mlflow-workspace: "true"

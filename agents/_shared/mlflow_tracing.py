@@ -45,7 +45,12 @@ MLFLOW_EXPERIMENT = os.environ.get("MLFLOW_EXPERIMENT", "spear-shield-security-t
 # span_type parameter just takes a plain string, these are the same
 # values SpanType's real members hold
 SPAN_TYPE_AGENT = "AGENT"
-SPAN_TYPE_LLM = "LLM"
+# CHAT_MODEL, not the more generic LLM: confirmed live against a real
+# ibm-clear evalhub job, its own mlflow trace parser only ever treats
+# CHAT_MODEL/MODEL/GENERATION as an actual model call span, LLM is a
+# real mlflow.entities.SpanType member too but every trace tagged with
+# it came back "no LLM calls found" from clear's own preprocessor, 9 for 9
+SPAN_TYPE_LLM = "CHAT_MODEL"
 SPAN_TYPE_RETRIEVER = "RETRIEVER"
 SPAN_TYPE_TOOL = "TOOL"
 

@@ -146,11 +146,17 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      # the real cycle (ragas export job, ibm-clear, garak and
-      # confidential-data-leak-scan jobs, each polled to completion) ran
-      # end to end inside about 2 minutes every time this was proven live
-      # this session, 20 minutes is comfortably loose, not tight
-      activeDeadlineSeconds: 1200
+      # revised after a real regression caught live: ragas and ibm-clear
+      # are judged by a real LLM against the real, steadily growing trace
+      # history, one real cycle measured ragas taking 621s and ibm-clear
+      # taking 92s, both past the 90s wait_for_job used to allow, both
+      # silently dropped from that cycle's own mlflow results with no
+      # error anywhere, see 11-submit-evalhub-jobs.sh's own wait_for_job
+      # comment for the full finding. that function's own deadline is now
+      # 900s per job, so the worst realistic case across all four jobs
+      # plus the ragas dataset export step needs real headroom above the
+      # old 20 minutes, not the same number carried over unexamined
+      activeDeadlineSeconds: 2700
       backoffLimit: 1
       template:
         spec:
@@ -171,7 +177,7 @@ spec:
               # spear-shield-eval -o
               # jsonpath='{.image.dockerImageReference}'` prints the
               # current one
-              image: image-registry.openshift-image-registry.svc:5000/spear-shield-eval/evalhub-cycle-runner@sha256:5299cc845f9a822f470fb2a4921087deb1ea074fd60bf9078ecd4be5f0f72a1e
+              image: image-registry.openshift-image-registry.svc:5000/spear-shield-eval/evalhub-cycle-runner@sha256:6bac2ae1b5ed7f0026e65fff92476dc19afdc6d5f57d6714a48f70faaa0aa5f0
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities:

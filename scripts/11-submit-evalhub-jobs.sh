@@ -401,12 +401,21 @@ PYEOF
 }
 
 # polls a submitted job until evalhub itself reports completed/failed,
-# printing the final job json on stdout. these jobs finish in under two
-# minutes in every real run this session, 90s/5s is comfortably loose,
-# not tight
+# printing the final job json on stdout. 90s/5s used to be comfortably
+# loose, confirmed live it no longer is: ragas and ibm-clear are judged by
+# a real LLM against the real, steadily growing trace history
+# (export_and_upload_ragas_dataset/mlflow_traces_max_results both scale
+# with it), caught live scanning a real cycle's own mlflow runs after the
+# fact, ragas took 621s and ibm-clear took 92s, both past the old 90s
+# deadline, both silently dropped from that cycle with no error anywhere:
+# wait_for_job logged its own timeout warning same as always, but the
+# stale non-terminal body it returned has no "benchmarks" for
+# log_eval_to_mlflow.py's own loop to iterate, so it logged nothing and
+# said nothing either, the job itself still reported overall success.
+# 900s/5s leaves real headroom above the worst case measured so far
 wait_for_job() {
   local tenant="$1" job_id="$2"
-  local deadline=$((SECONDS + 90))
+  local deadline=$((SECONDS + 900))
   local state="" body=""
   while [ "${SECONDS}" -lt "${deadline}" ]; do
     body="$(curl -sk -H "Authorization: Bearer $(caller_token)" -H "X-Tenant: ${tenant}" \
@@ -418,7 +427,7 @@ wait_for_job() {
     fi
     sleep 5
   done
-  log "job ${job_id} did not reach a terminal state within 90s, last seen state: ${state}"
+  log "job ${job_id} did not reach a terminal state within 900s, last seen state: ${state}"
   echo "${body}"
 }
 

@@ -1,0 +1,19 @@
+# standard safety net for any future root context image build that uses
+# a wildcard COPY, e.g. `COPY . .`. does NOT help the one real root
+# context build this repo has today though, evalhub/Containerfile.
+# evalhub-cycle-runner, confirmed live: `oc start-build --from-dir=.`
+# tars up and uploads the whole directory client side before this file
+# is ever consulted, that upload is kept small with that build's own
+# documented `--exclude` flag instead, see its Containerfile comment
+.git/
+.venv-kfp/
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.pyc
+archive/
+*.docx
+*.pptx
+*.rtf
+*.excalidraw

@@ -6,12 +6,17 @@
 # so this needs none of the iproute/nftables setup
 # spear-coordinator-agent's own Containerfile needs.
 #
+# lives in evalhub/, not agents/: this is an evalhub provider, not a
+# conversational agent, it never runs inside the openshell sandbox
+# runtime the real agents share, a different kind of thing entirely, kept
+# separate on purpose once that got pointed out on review
+#
 # eval-hub-sdk confirmed live to resolve against this cluster's own
 # packages.redhat.com index with no extra credentials needed, no vendoring
 # from the shipped garak image required.
 #
 # build in cluster:
-#   oc start-build spear-confidential-data-provider --from-dir=agents --wait -n spear-shield-eval
+#   oc start-build spear-confidential-data-provider --from-dir=evalhub --wait -n spear-shield-eval
 
 FROM registry.access.redhat.com/ubi9/python-312:latest
 

@@ -56,7 +56,7 @@ class WorkspaceHeader(RequestHeaderProvider):
         # MLFLOW_WORKSPACE env var below already feeds the same value
         # through mlflow's own env fallback, masking the wrong casing
         # entirely, found while chasing the same bug for real in
-        # agents/spear-confidential-data-provider/adapter.py, where no
+        # evalhub/spear-confidential-data-provider/adapter.py, where no
         # such masking env var existed and it broke visibly
         return {"X-MLFLOW-WORKSPACE": WORKSPACE}
 

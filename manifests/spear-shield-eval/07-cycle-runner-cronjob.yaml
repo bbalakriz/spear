@@ -171,7 +171,7 @@ spec:
               # spear-shield-eval -o
               # jsonpath='{.image.dockerImageReference}'` prints the
               # current one
-              image: image-registry.openshift-image-registry.svc:5000/spear-shield-eval/evalhub-cycle-runner@sha256:19b06cdeea8dcb651edba2de30eeff1201d9ea3d5821cdb9d13a58ba7ac1d2a0
+              image: image-registry.openshift-image-registry.svc:5000/spear-shield-eval/evalhub-cycle-runner@sha256:5299cc845f9a822f470fb2a4921087deb1ea074fd60bf9078ecd4be5f0f72a1e
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities:

@@ -3,7 +3,7 @@
 # manifests/spear-shield-eval/03-custom-providers.yaml already documents (a
 # brand new provider name, no red hat owned reconcile loop fighting it).
 # image is our own, built straight out of
-# agents/spear-confidential-data-provider via
+# evalhub/spear-confidential-data-provider via
 # 04-confidential-data-provider-build.yaml's own imagestream/buildconfig,
 # not a quay.io pull.
 #
@@ -35,13 +35,13 @@ data:
     # floating :latest tag means a node that already pulled an older
     # build never re-checks the registry for newer content, it just
     # reuses its own stale local cache. bump this digest by hand every
-    # time agents/spear-confidential-data-provider actually changes and
+    # time evalhub/spear-confidential-data-provider actually changes and
     # gets rebuilt, `oc get istag spear-confidential-data-provider:latest
     # -n spear-shield-eval -o jsonpath='{.image.dockerImageReference}'`
     # prints the current one
     runtime:
       k8s:
-        image: image-registry.openshift-image-registry.svc:5000/spear-shield-eval/spear-confidential-data-provider@sha256:2b81f9bb85eaf085ac1637a786317136db60ad78c5192331a1b539395ca583ca
+        image: image-registry.openshift-image-registry.svc:5000/spear-shield-eval/spear-confidential-data-provider@sha256:d30ff4784dfc1f6a2bc070b03b2995fb7328bdd46db681aa9cb43b6058e63367
         entrypoint:
           - python3
           - main.py

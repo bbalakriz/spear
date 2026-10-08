@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # stands up a real evalhub instance (trustyai.opendatahub.io/v1, bundled
-# inside rhods-operator 3.5 already on this cluster) with the ragas and
-# ibm-clear providers, both real out of the box providers this cluster
-# already ships, confirmed live, no custom adapter image for either.
+# inside rhods-operator 3.5 already on this cluster) with ragas-v062,
+# ibm-clear-v060 and garak registered. the stock ragas/ibm-clear configmaps
+# this cluster ships are not registered at all, confirmed live their
+# bundled v0.5.0 images have real bugs, see
+# manifests/spear-shield-eval/03-custom-providers.yaml, no reason to enable
+# a provider nothing here ever submits a job against.
 #
 # run after 03-install-data.sh (pgvector) and 09-install-worktracker-and-agents.sh
 # (mlflow tracing on both agents, the trace data ibm-clear reads straight
@@ -126,7 +129,7 @@ main() {
   log "custom provider configmaps: ragas-v062, ibm-clear-v060, on the operator's own newer quay.io tags"
   oc apply -f "${ROOT_DIR}/manifests/spear-shield-eval/03-custom-providers.yaml"
 
-  log "the real evalhub cr, providers: ragas, ibm-clear, ragas-v062, ibm-clear-v060"
+  log "the real evalhub cr, providers: ragas-v062, ibm-clear-v060, garak"
   oc apply -f "${ROOT_DIR}/manifests/spear-shield-eval/01-evalhub.yaml"
   oc wait --for=condition=Available deployment/evalhub -n "${EVAL_NS}" --timeout=300s
 
@@ -157,7 +160,7 @@ main() {
   cat <<EOF
 
 evalhub url: https://${route:-pending}
-providers: ragas, ibm-clear, ragas-v062, ibm-clear-v060
+providers: ragas-v062, ibm-clear-v060, garak
 next step:
   ./scripts/11-submit-evalhub-jobs.sh
 EOF

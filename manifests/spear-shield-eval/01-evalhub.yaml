@@ -3,14 +3,15 @@
 # subscription needed. tenancy single since this is our own project's one
 # and only tenant, nothing cross namespace to propagate to.
 #
-# providers: ragas and ibm-clear are both real, out of the box provider
-# configmaps this cluster already ships
+# providers: the stock ragas and ibm-clear configmaps this cluster ships
 # (trustyai-service-operator-evalhub-provider-{ragas,ibm-clear} in
-# redhat-ods-applications), confirmed live, no custom adapter image needed
-# for either. ragas-v062 and ibm-clear-v060 are the same two providers on
-# newer community images, since this cluster's bundled v0.5.0 of both has
-# confirmed real bugs (see manifests/spear-shield-eval/03-custom-providers.yaml),
-# left in place alongside the stock ones rather than replacing them.
+# redhat-ods-applications) are deliberately not registered here, confirmed
+# live both their bundled v0.5.0 images have real bugs this project hit
+# (see manifests/spear-shield-eval/03-custom-providers.yaml), nothing in
+# this project ever submits a job against either bare name, no reason to
+# enable a provider that cannot run a real job. ragas-v062 and
+# ibm-clear-v060 are the same two providers on newer, confirmed fixed
+# community images, those are the ones every real submission uses.
 #
 # env wires the real, already running mlflow instance in, same one
 # agents/_shared/mlflow_tracing.py writes spear-shield-security-trace into.
@@ -38,8 +39,6 @@ spec:
     type: postgresql
     secret: evalhub-db-credentials
   providers:
-    - ragas
-    - ibm-clear
     - ragas-v062
     - ibm-clear-v060
     # garak, the third real evaluation axis, confirmed live from its own

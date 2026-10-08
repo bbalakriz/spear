@@ -1,0 +1,18 @@
+# pinned to 0.4.4, the exact version the already shipped garak provider
+# image uses (confirmed live, its own wheel filename), not the newer
+# 1.0.5 this index resolves to by default. the sidecar's own wire
+# protocol was proven against 0.4.4, no reason to trust forward
+# compatibility with a major version jump this project never tested
+# oras and olot are real transitive dependencies of
+# evalhub.adapter.oci.persister that plain pip install of eval-hub-sdk
+# does not pull in on its own, confirmed live one at a time via a
+# throwaway import check pod, not guessed
+eval-hub-sdk==0.4.4
+oras
+olot
+presidio-analyzer
+spacy
+# reads real coordinator-agent traces straight out of mlflow instead of
+# calling the live agent, same package export_ragas_dataset.py already
+# uses for the same reason
+mlflow-skinny

@@ -1,0 +1,36 @@
+# ImageStream + BuildConfig for spear-confidential-data-provider, same
+# binary docker build shape as
+# manifests/spear-shield-agents/openshell/agent-builds.yaml, built with
+# `oc start-build spear-confidential-data-provider --from-dir=agents
+# --wait -n spear-shield-eval` so the image lands in this cluster's own
+# internal registry, where the real evalhub operator can actually pull it
+# for a job pod. see PHASE3_PLAN.md section 7.
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: spear-confidential-data-provider
+  namespace: spear-shield-eval
+  labels:
+    app: spear-confidential-data-provider
+spec: {}
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: spear-confidential-data-provider
+  namespace: spear-shield-eval
+  labels:
+    app: spear-confidential-data-provider
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile.spear-confidential-data-provider
+  output:
+    to:
+      kind: ImageStreamTag
+      name: spear-confidential-data-provider:latest
+  triggers: []

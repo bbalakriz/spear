@@ -48,6 +48,9 @@ spec:
     # had. not registered on this cr until this point since nothing had
     # submitted a job against it yet
     - garak
+    # spear-confidential-data, the fourth axis, our own provider, not a
+    # red hat or community one, see 05-confidential-data-provider-config.yaml
+    - spear-confidential-data
   env:
     - name: MLFLOW_TRACKING_URI
       value: "https://mlflow.redhat-ods-applications.svc:8443/mlflow"

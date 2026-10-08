@@ -199,8 +199,14 @@ def run_rag_search(arguments: dict[str, Any], claims: dict[str, Any], trace: lis
     )
     if "error" in response:
         return json.dumps({"error": response["error"]})
+    # was content[:800], an arbitrary preview length that happened to cut
+    # off before a real chunk's own sensitive content in a live trace,
+    # confirmed via rag_chunks directly: every chunk in this corpus is
+    # written at a fixed 2048 char size (phase1_apply_pattern's own
+    # chunk_size), so trimming to that instead of a shorter guess means
+    # the model always sees a whole chunk, never a silent partial one
     trimmed = [
-        {"doc_id": r["doc_id"], "source": r["source"], "content": r["content"][:800]}
+        {"doc_id": r["doc_id"], "source": r["source"], "content": r["content"][:2048]}
         for r in documents
     ]
     return json.dumps({"caller": claims.get("preferred_username"), "count": len(trimmed), "documents": trimmed})

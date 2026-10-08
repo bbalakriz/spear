@@ -91,6 +91,19 @@
       "data_owner": "total-rewards@corp.example",
       "effective_date": "2026-03-01",
       "review_date": "2027-03-01"
+    },
+    {
+      "doc_id": "FIN-VCE-2026-014",
+      "title": "Vendor Contract Economics Record - Northbridge Logistics Partners",
+      "filename": "vendor_contract_economics_record.md",
+      "source": "internal",
+      "clearance_level": "restricted",
+      "dept": "data-governance",
+      "team": "accounts-payable",
+      "project_scope": "vendor-payments",
+      "data_owner": "finance-ap@corp.example",
+      "effective_date": "2026-08-01",
+      "review_date": "2027-08-01"
     }
   ]
 }

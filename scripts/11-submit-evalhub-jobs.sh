@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# submits the two evalhub jobs proven live this session: ragas against a
-# small real dataset exported from spear-shield-security-trace, and
-# ibm-clear against that same mlflow experiment directly. manual, one shot
-# runs, not the architecture.html automatic kfp trigger, see
-# PHASE3_PLAN.md section 7 for why that's deferred.
+# submits the four real evalhub jobs proven live this project: ragas
+# against a small real dataset exported from spear-shield-security-trace,
+# ibm-clear against that same mlflow experiment directly, garak against
+# the raw coordinator model, and spear-confidential-data, which mines
+# that same trace experiment for answers that leaked planted vendor
+# contract figures. manual, one shot runs, not the architecture.html
+# automatic kfp trigger, see PHASE3_PLAN.md section 7 for why that's
+# deferred.
 #
 # judge model is gemma4, not the coordinator's own glm-53-flash: confirmed
 # live that glm-53-flash's own chain of thought reasoning tokens
@@ -326,6 +329,77 @@ EOF
     "$(evalhub_url)/api/v1/evaluations/jobs"
 }
 
+# the fourth real evalhub provider, spear-confidential-data, see
+# PHASE3_PLAN.md section 7's own long writeup for the full story. mines
+# spear-shield-security-trace's own already recorded traces for answers
+# that leaked the planted vendor contract figures, no live agent call,
+# no fixed prompt list, same real data source ragas already reads.
+#
+# mlflow_url/mlflow_token/mlflow_ca_cert travel as plain benchmark
+# parameters, not model.auth: confirmed live (PHASE3_PLAN.md) this
+# adapter's job pod has no other usable channel for custom credentials,
+# same already accepted risk level the rest of this script's demo
+# credentials sit at. token minted fresh off spear-coordinator-mlflow-caller,
+# same identity export_and_upload_ragas_dataset already uses, the ca cert
+# comes off the same evalhub-mlflow-ca configmap that step already
+# ensures exists, created here too in case this function ever runs first
+#
+# x-tenant spear-shield-eval, not spear-pipelines: this adapter opens its
+# own mlflow connection directly, no ibm-clear style sdk trace lookup
+# tying it to the pipelines tenant
+submit_confidential_data_job() {
+  local job_ns="spear-shield-agents"
+  local mlflow_token mlflow_ca_cert body
+
+  mlflow_token="$(oc create token spear-coordinator-mlflow-caller -n "${job_ns}" --duration=30m)"
+
+  if ! oc get configmap evalhub-mlflow-ca -n "${job_ns}" >/dev/null 2>&1; then
+    oc create configmap evalhub-mlflow-ca -n "${job_ns}"
+    oc annotate configmap evalhub-mlflow-ca -n "${job_ns}" service.beta.openshift.io/inject-cabundle=true --overwrite
+    # first creation needs a moment for the service ca operator to fill it in
+    sleep 5
+  fi
+  mlflow_ca_cert="$(oc get configmap evalhub-mlflow-ca -n "${job_ns}" -o jsonpath='{.data.service-ca\.crt}')"
+
+  # built with python, not a bash heredoc: the ca cert's own real newlines
+  # break plain heredoc json quoting, confirmed the hard way earlier this
+  # session, json.dumps handles the escaping correctly
+  body="$(python3 - "${OGX_URL}" "${JUDGE_MODEL}" "${MLFLOW_INTERNAL_URL}" "${mlflow_token}" "${mlflow_ca_cert}" "${PIPELINES_NS}" "${MLFLOW_EXPERIMENT}" <<'PYEOF'
+import json
+import sys
+
+ogx_url, judge_model, mlflow_url, mlflow_token, mlflow_ca_cert, workspace, experiment = sys.argv[1:8]
+body = {
+    "name": "spear-shield-confidential-data-leak-scan",
+    "model": {"url": ogx_url, "name": judge_model},
+    "benchmarks": [
+        {
+            "id": "confidential_data_leak_scan",
+            "provider_id": "spear-confidential-data",
+            "parameters": {
+                "mlflow_url": mlflow_url,
+                "mlflow_token": mlflow_token,
+                "mlflow_ca_cert": mlflow_ca_cert,
+                "mlflow_workspace": workspace,
+                "mlflow_experiment": experiment,
+                "max_traces": 50,
+            },
+        }
+    ],
+}
+print(json.dumps(body))
+PYEOF
+)"
+
+  log "submitting confidential data leak scan job (x-tenant ${EVAL_NS})"
+  curl -sk -X POST \
+    -H "Authorization: Bearer $(caller_token)" \
+    -H "X-Tenant: ${EVAL_NS}" \
+    -H "Content-Type: application/json" \
+    --data "${body}" \
+    "$(evalhub_url)/api/v1/evaluations/jobs"
+}
+
 # polls a submitted job until evalhub itself reports completed/failed,
 # printing the final job json on stdout. these jobs finish in under two
 # minutes in every real run this session, 90s/5s is comfortably loose,
@@ -545,13 +619,22 @@ main() {
   garak_result="$(wait_for_job "${EVAL_NS}" "${garak_id}")"
   log_result_to_mlflow "${garak_result}" "${cycle_run_id}"
 
+  echo "--- confidential data leak scan job ---"
+  confidential_submit="$(submit_confidential_data_job)"
+  echo "${confidential_submit}" | python3 -m json.tool
+  confidential_id="$(echo "${confidential_submit}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["resource"]["id"])')"
+  log "waiting for confidential data leak scan job ${confidential_id} to finish"
+  confidential_result="$(wait_for_job "${EVAL_NS}" "${confidential_id}")"
+  log_result_to_mlflow "${confidential_result}" "${cycle_run_id}"
+
   cat <<EOF
 
 jobs submitted and logged to mlflow, experiment ${MLFLOW_EVAL_RESULTS_EXPERIMENT}
 in the ${PIPELINES_NS} workspace, cycle run ${cycle_run_id}:
-  ragas:      ${ragas_id}
-  ibm-clear:  ${ibm_id}
-  garak:      ${garak_id}
+  ragas:             ${ragas_id}
+  ibm-clear:         ${ibm_id}
+  garak:             ${garak_id}
+  confidential-data: ${confidential_id}
 EOF
 }
 

@@ -30,7 +30,16 @@ class WorkspaceHeader(RequestHeaderProvider):
         return True
 
     def request_headers(self):
-        return {"X-MLflow-Workspace": WORKSPACE}
+        # the real constant mlflow's own rest_utils.WORKSPACE_HEADER_NAME
+        # uses is this exact casing, all caps mlflow, confirmed live
+        # reading the installed source. this registration has actually
+        # been a no-op the whole time this script worked, this job's own
+        # MLFLOW_WORKSPACE env var below already feeds the same value
+        # through mlflow's own env fallback, masking the wrong casing
+        # entirely, found while chasing the same bug for real in
+        # agents/spear-confidential-data-provider/adapter.py, where no
+        # such masking env var existed and it broke visibly
+        return {"X-MLFLOW-WORKSPACE": WORKSPACE}
 
 
 _request_header_provider_registry.register(WorkspaceHeader)

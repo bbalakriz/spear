@@ -1,0 +1,185 @@
+# the recurring cycle scripts/11-submit-evalhub-jobs.sh was always meant
+# to be, PHASE3_PLAN.md section 7's own "recurring cycle, demo window
+# only, not an always on CronJob" note. that note deliberately decided
+# against leaving it always on, every cycle makes real paid calls against
+# gemma4 and glm-53-flash plus a real garak probe, a genuine standing
+# compute and model cost forever once live, not a free toggle. this
+# CronJob reverses that decision partway, not all the way: it exists,
+# wired with real rbac, a real schedule and a real pinned image, but
+# spec.suspend is true, so nothing actually runs until someone flips it,
+# `oc patch cronjob evalhub-cycle-runner -n spear-shield-eval --type
+# merge -p '{"spec":{"suspend":false}}'`, a deliberate choice kept open
+# for a real demo window rather than decided here.
+#
+# every rbac grant below is the minimum the real script
+# (scripts/11-submit-evalhub-jobs.sh, baked into the image
+# 06-cycle-runner-build.yaml builds) actually calls, read line by line out
+# of that script and lib-common.sh, not a blanket admin style grant. the
+# three cross namespace RoleBindings mirror the exact shape
+# manifests/spear-pipelines/06-agents-mlflow-rbac.yaml already uses, a
+# ServiceAccount living in one namespace granted a Role defined in
+# another.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-shield-eval
+---
+# spear-shield-eval: evalhub_url() reads the real route, caller_token()
+# mints a fresh bearer token for spear-shield-eval-caller, the identity
+# every submit_*_job()/wait_for_job() call already proved out manually
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-shield-eval
+rules:
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    resourceNames: ["evalhub"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["spear-shield-eval-caller"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-shield-eval
+subjects:
+  - kind: ServiceAccount
+    name: evalhub-cycle-runner
+    namespace: spear-shield-eval
+roleRef:
+  kind: Role
+  name: evalhub-cycle-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+# spear-shield-agents: every export_and_upload_ragas_dataset/
+# create_eval_cycle_run/log_result_to_mlflow helper runs its own plain job
+# pod here, mints spear-coordinator-mlflow-caller's own token, reads back
+# create_eval_cycle_run's printed RUN_ID off its pod's own log
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-shield-agents
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["spear-coordinator-mlflow-caller"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-shield-agents
+subjects:
+  - kind: ServiceAccount
+    name: evalhub-cycle-runner
+    namespace: spear-shield-eval
+roleRef:
+  kind: Role
+  name: evalhub-cycle-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+# minio: mirror_secret's own read half, minio-root-creds copied into
+# spear-shield-agents so the ragas export job's own mc container can push
+# the dataset, same secret, same reasoning lib-common.sh's own
+# mirror_secret docstring already gives
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: evalhub-cycle-runner
+  namespace: minio
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["minio-root-creds"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: evalhub-cycle-runner
+  namespace: minio
+subjects:
+  - kind: ServiceAccount
+    name: evalhub-cycle-runner
+    namespace: spear-shield-eval
+roleRef:
+  kind: Role
+  name: evalhub-cycle-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-shield-eval
+spec:
+  # suspended by default, see this file's own header comment. daily at
+  # 06:00 once someone turns it on, a judgment call with no real traffic
+  # pattern behind it yet, easy to change later
+  schedule: "0 6 * * *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # the real cycle (ragas export job, ibm-clear, garak and
+      # confidential-data-leak-scan jobs, each polled to completion) ran
+      # end to end inside about 2 minutes every time this was proven live
+      # this session, 20 minutes is comfortably loose, not tight
+      activeDeadlineSeconds: 1200
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: evalhub-cycle-runner
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: cycle-runner
+              # pinned to an exact digest, not :latest, same reasoning
+              # 05-confidential-data-provider-config.yaml's own comment
+              # gives: job pods use imagePullPolicy IfNotPresent, a
+              # floating tag on an already-pulled node never gets
+              # rechecked. bump this digest by hand after a real rebuild,
+              # `oc get istag evalhub-cycle-runner:latest -n
+              # spear-shield-eval -o
+              # jsonpath='{.image.dockerImageReference}'` prints the
+              # current one
+              image: image-registry.openshift-image-registry.svc:5000/spear-shield-eval/evalhub-cycle-runner@sha256:19b06cdeea8dcb651edba2de30eeff1201d9ea3d5821cdb9d13a58ba7ac1d2a0
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi

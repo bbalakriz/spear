@@ -1,0 +1,40 @@
+# wraps scripts/11-submit-evalhub-jobs.sh as a real in cluster image, so
+# the recurring cycle manifests/spear-shield-eval/07-cycle-runner-cronjob.yaml
+# defines can actually run it on a schedule instead of only by hand from a
+# laptop. see PHASE3_PLAN.md section 7's own "recurring cycle" note, the
+# plan was always this same script, same cadence, just not left running
+# unattended by default.
+#
+# built off the real openshift/cli imagestream this cluster already
+# ships, confirmed live via a throwaway probe pod: oc, bash, python3 and
+# curl are all already there. jq is the one thing missing, installed from
+# the same ubi repos already configured in that image, no new
+# subscription or entitlement needed, confirmed live the install just
+# works.
+#
+# no oc login step anywhere below: running inside a pod, oc and kubectl
+# both pick up the mounted service account token and the in cluster
+# server address automatically, the same way every other k8s client in
+# this repo already does, nothing to configure here.
+FROM image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+
+USER 0
+RUN microdnf install -y jq && microdnf clean all
+
+RUN install -d -o 1001 -g 0 -m 775 /app
+WORKDIR /app
+
+COPY --chown=1001:0 lib-common.sh /app/scripts/lib-common.sh
+COPY --chown=1001:0 11-submit-evalhub-jobs.sh /app/scripts/11-submit-evalhub-jobs.sh
+COPY --chown=1001:0 lib/export_ragas_dataset.py /app/scripts/lib/export_ragas_dataset.py
+COPY --chown=1001:0 lib/create_eval_cycle_run.py /app/scripts/lib/create_eval_cycle_run.py
+COPY --chown=1001:0 lib/log_eval_to_mlflow.py /app/scripts/lib/log_eval_to_mlflow.py
+RUN chmod +x /app/scripts/11-submit-evalhub-jobs.sh
+
+USER 1001
+# the base image's own default $HOME (/root) is not writable by a non
+# root uid, oc still wants somewhere to write a small plugin/preferences
+# cache on first use even for non interactive commands, confirmed live
+ENV HOME=/app
+
+ENTRYPOINT ["/app/scripts/11-submit-evalhub-jobs.sh"]

@@ -220,7 +220,7 @@ const JobStatusTile = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }
   }
 
   return (
-    <Card isCompact>
+    <Card isCompact style={{ height: '100%' }}>
       <CardBody>
         <Content component="small" style={{ color: '#6b6f76', display: 'block' }}>
           {JOB_TITLES[jobName] ?? jobName}
@@ -565,7 +565,11 @@ export default function TrendPage() {
         )}
         {!error && cycles !== null && cycles.length > 0 && (
           <>
-            <Flex gap={{ default: 'gapMd' }} style={{ marginBottom: '1rem' }}>
+            <Flex
+              alignItems={{ default: 'alignItemsStretch' }}
+              gap={{ default: 'gapMd' }}
+              style={{ marginBottom: '1rem' }}
+            >
               {Object.keys(METRICS_BY_JOB).map((jobName) => (
                 <FlexItem key={jobName} flex={{ default: 'flex_1' }}>
                   <JobStatusTile jobName={jobName} cycles={cycles} />

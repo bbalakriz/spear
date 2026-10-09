@@ -49,6 +49,19 @@ interface TraceStep {
   // entirely on older cached turns, treated as ok in that case so this
   // stays backward compatible rather than flagging everything red
   ok?: boolean;
+  // real wall clock moment this hop finished, epoch ms, missing on
+  // older cached turns from before the backend started sending it
+  timestamp_ms?: number;
+}
+
+// hh:mm:ss.mmm in the browser's own local time, short enough to sit
+// next to the duration without crowding the step name above it
+function formatHopTime(ms?: number): string | null {
+  if (!ms) return null;
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString(undefined, { hour12: false });
+  const millis = String(d.getMilliseconds()).padStart(3, '0');
+  return `${time}.${millis}`;
 }
 
 // every real component name the backend trace can ever name on either
@@ -102,12 +115,29 @@ const TimelineHop = ({ hop, isLast }: { hop: TraceStep; isLast: boolean }) => {
         </Flex>
       </FlexItem>
       <FlexItem grow={{ default: 'grow' }} style={{ paddingBottom: isLast ? 0 : '1rem' }}>
-        <Content
-          component="small"
-          style={{ fontWeight: 'bold', color: isBlocked ? dangerColor : undefined }}
+        <Flex
+          justifyContent={{ default: 'justifyContentSpaceBetween' }}
+          alignItems={{ default: 'alignItemsCenter' }}
         >
-          {isBlocked ? `blocked: ${hop.step}` : hop.step}
-        </Content>
+          <FlexItem>
+            <Content
+              component="small"
+              style={{ fontWeight: 'bold', color: isBlocked ? dangerColor : undefined }}
+            >
+              {isBlocked ? `blocked: ${hop.step}` : hop.step}
+            </Content>
+          </FlexItem>
+          {formatHopTime(hop.timestamp_ms) && (
+            <FlexItem>
+              <Content
+                component="small"
+                style={{ color: 'var(--pf-t--global--text--color--subtle)' }}
+              >
+                {formatHopTime(hop.timestamp_ms)}
+              </Content>
+            </FlexItem>
+          )}
+        </Flex>
         <Content
           component="small"
           style={{ display: 'block', color: 'var(--pf-t--global--text--color--subtle)' }}

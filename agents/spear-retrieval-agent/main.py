@@ -144,15 +144,18 @@ def _trace_step(
 ) -> None:
     # same shape as spear-coordinator-agent's own helper, real wall clock
     # timing per hop, spliced into the coordinator's own trace one level
-    # up so owner-console's flow diagram shows the whole chain. ok is
-    # false only for a hop that was genuinely refused or failed, so the
-    # flow diagram can render exactly that box red instead of leaving the
-    # viewer to guess which step actually blocked the request
+    # up so owner-console's chat page shows the whole chain as one
+    # timeline. ok is false only for a hop that was genuinely refused or
+    # failed, so the timeline can render exactly that step red instead
+    # of leaving the viewer to guess which one actually blocked the
+    # request. timestamp_ms is wall clock (time.time()), duration_ms
+    # stays on time.monotonic() so it can't be skewed by a clock jump
     trace.append(
         {
             "step": step,
             "detail": detail,
             "duration_ms": round((time.monotonic() - started_at) * 1000),
+            "timestamp_ms": round(time.time() * 1000),
             "from": frm,
             "to": to,
             "protocol": protocol,

@@ -80,6 +80,12 @@ GUARDRAILS_CONFIG_ID = os.environ.get("GUARDRAILS_CONFIG_ID", "coordinator-agent
 # function name and arguments back, not assumed from the "tool calling
 # enabled" capability line in PHASE1_PLAN.md alone
 GENERATION_MODEL = os.environ.get("GENERATION_MODEL", "openai/publishers/prelude-maas/models/glm-53-flash")
+# the trace shown on owner-console's chat page used to hard code
+# glm-53-flash in this label, so it kept saying that even if
+# GENERATION_MODEL were ever pointed at a different model. derived from
+# the real env var instead, same last path segment convention the trend
+# page's own shortModelName uses
+GENERATION_MODEL_SHORT = GENERATION_MODEL.rstrip("/").split("/")[-1]
 
 TOOLS = [
     {
@@ -180,15 +186,19 @@ def _trace_step(
     # real wall clock timing for one hop of this request, not a fabricated
     # or estimated number. from/to/protocol name the two real components
     # on each side of this hop, owner-console's chat page renders the
-    # whole list as a live box and arrow request flow, not just text. ok
-    # is false only for a hop that was genuinely refused or failed, so a
-    # blocked request renders as a red box at the real point of failure
-    # instead of a generic looking green chain all the way through
+    # whole list as a timeline, not just text. ok is false only for a
+    # hop that was genuinely refused or failed, so a blocked request
+    # renders red at the real point of failure instead of a generic
+    # looking green chain all the way through. time.monotonic() drives
+    # duration_ms since it can't jump backwards mid request, time.time()
+    # drives timestamp_ms since that one needs to mean something to a
+    # human reading it, not just measure an interval
     trace.append(
         {
             "step": step,
             "detail": detail,
             "duration_ms": round((time.monotonic() - started_at) * 1000),
+            "timestamp_ms": round(time.time() * 1000),
             "from": frm,
             "to": to,
             "protocol": protocol,
@@ -374,13 +384,14 @@ def answer(user_text: str, caller_token: str) -> tuple[str, list[dict[str, Any]]
         choice = (response.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         tool_calls = message.get("tool_calls") or []
+        guardrails_node = f"guardrails + {GENERATION_MODEL_SHORT}"
         _trace_step(
             trace,
             f"model reasoning, round {round_num + 1}",
-            "guardrails + glm-53-flash decided to call tools" if tool_calls else "guardrails + glm-53-flash wrote a final answer",
+            f"{guardrails_node} decided to call tools" if tool_calls else f"{guardrails_node} wrote a final answer",
             started_at,
             frm="coordinator-agent (runc sandbox)",
-            to="guardrails + glm-53-flash",
+            to=guardrails_node,
             protocol="openai chat/completions",
         )
 
@@ -409,6 +420,10 @@ def answer(user_text: str, caller_token: str) -> tuple[str, list[dict[str, Any]]
 
 
 def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> dict[str, Any] | None:
+    # real wall clock moment this request actually arrived, used below
+    # for the "request received" step's own timestamp since that one is
+    # built by hand rather than through _trace_step
+    received_at_ms = round(time.time() * 1000)
     method = body.get("method")
     # demo only method, owner-console's security demo page uses this to
     # prove the workload identity hop live: makes this sandbox's own real
@@ -465,6 +480,7 @@ def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> d
             "step": "request received",
             "detail": f"coordinator sandbox {socket.gethostname()} (runc), caller identity already verified by the a2a gateway's own authpolicy",
             "duration_ms": 0,
+            "timestamp_ms": received_at_ms,
             "from": "owner-console-backend",
             "to": "coordinator-agent (runc sandbox)",
             "protocol": "a2a message/send",

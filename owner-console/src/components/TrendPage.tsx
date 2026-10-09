@@ -337,11 +337,18 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
                 ariaDesc={metric.label}
                 containerComponent={
                   <ChartVoronoiContainer
-                    labels={({ datum }: { datum: SeriesPoint }) =>
-                      `${formatCycleLabel(datum.cycle)}\n${metric.label}: ${formatValue(datum.y)}\nmodel: ${shortModelName(
+                    labels={({ datum }: { datum: Partial<SeriesPoint> }) => {
+                      // the dashed threshold line's own two points carry
+                      // just x/y, no cycle or benchmark at all, the voronoi
+                      // container's hover lookup runs across every child's
+                      // data including that one, so this has to handle a
+                      // datum with no benchmark rather than assume every
+                      // hovered point came from a real eval cycle
+                      if (!datum.benchmark) return `threshold: ${formatValue(datum.y as number)}`;
+                      return `${formatCycleLabel(datum.cycle)}\n${metric.label}: ${formatValue(datum.y as number)}\nmodel: ${shortModelName(
                         datum.benchmark.params.model ?? datum.benchmark.params.model_name,
-                      )}`
-                    }
+                      )}`;
+                    }}
                   />
                 }
                 height={220}

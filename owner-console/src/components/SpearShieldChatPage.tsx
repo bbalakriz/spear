@@ -1,4 +1,8 @@
-import { DocumentTitle, ListPageHeader, consoleFetchJSON } from '@openshift-console/dynamic-plugin-sdk';
+import {
+  DocumentTitle,
+  ListPageHeader,
+  consoleFetchJSON,
+} from '@openshift-console/dynamic-plugin-sdk';
 import { useTranslation } from 'react-i18next';
 import {
   Alert,
@@ -14,7 +18,6 @@ import {
   TextArea,
 } from '@patternfly/react-core';
 import {
-  ArrowRightIcon,
   BrainIcon,
   CubesIcon,
   DatabaseIcon,
@@ -49,7 +52,7 @@ interface TraceStep {
 }
 
 // every real component name the backend trace can ever name on either
-// side of a hop, mapped to an icon, so the flow diagram reads as actual
+// side of a hop, mapped to an icon, so the timeline reads as actual
 // named infrastructure rather than generic numbered steps
 const NODE_ICON: Record<string, ComponentType> = {
   'owner-console-backend': OutlinedUserIcon,
@@ -60,80 +63,63 @@ const NODE_ICON: Record<string, ComponentType> = {
   'rag-query-relay': DatabaseIcon,
 };
 
-const FlowNode = ({ name, danger }: { name: string; danger?: boolean }) => {
-  const NodeIcon = NODE_ICON[name] ?? CubesIcon;
+// one real hop in the live trace, rendered as a single row on a running
+// vertical rail rather than a pair of boxes with an arrow between them,
+// a continuous timeline of what the request actually did in order. a
+// hop the backend marked ok: false was a genuine refusal or failure,
+// the dot, the step name and the detail line all turn red for it, so
+// the exact point a blocked request stopped is obvious at a glance
+const TimelineHop = ({ hop, isLast }: { hop: TraceStep; isLast: boolean }) => {
+  const isBlocked = hop.ok === false;
+  const ToIcon = NODE_ICON[hop.to] ?? CubesIcon;
+  const dangerColor = 'var(--pf-t--global--text--color--status--danger--default)';
   return (
-    <Flex
-      direction={{ default: 'column' }}
-      alignItems={{ default: 'alignItemsCenter' }}
-      spaceItems={{ default: 'spaceItemsXs' }}
-      style={{ width: '9rem', textAlign: 'center' }}
-    >
-      <FlexItem>
-        <Icon size="lg" status={danger ? 'danger' : undefined}>
-          <NodeIcon />
-        </Icon>
+    <Flex alignItems={{ default: 'alignItemsFlexStart' }} gap={{ default: 'gapSm' }}>
+      <FlexItem style={{ alignSelf: 'stretch' }}>
+        <Flex
+          direction={{ default: 'column' }}
+          alignItems={{ default: 'alignItemsCenter' }}
+          style={{ width: '1.5rem', height: '100%' }}
+        >
+          <FlexItem>
+            <Icon size="sm" status={isBlocked ? 'danger' : 'success'}>
+              <ToIcon />
+            </Icon>
+          </FlexItem>
+          {!isLast && (
+            <FlexItem grow={{ default: 'grow' }}>
+              <div
+                style={{
+                  width: 2,
+                  height: '100%',
+                  minHeight: '1.25rem',
+                  margin: '0.2rem auto 0',
+                  background: 'var(--pf-t--global--border--color--default)',
+                }}
+              />
+            </FlexItem>
+          )}
+        </Flex>
       </FlexItem>
-      <FlexItem>
+      <FlexItem grow={{ default: 'grow' }} style={{ paddingBottom: isLast ? 0 : '1rem' }}>
         <Content
           component="small"
-          style={{
-            fontWeight: 'bold',
-            lineHeight: 1.2,
-            color: danger ? 'var(--pf-t--global--text--color--status--danger--default)' : undefined,
-          }}
+          style={{ fontWeight: 'bold', color: isBlocked ? dangerColor : undefined }}
         >
-          {name}
+          {isBlocked ? `blocked: ${hop.step}` : hop.step}
         </Content>
-      </FlexItem>
-    </Flex>
-  );
-};
-
-// one real hop, rendered as two named boxes with the actual protocol and
-// wall clock duration on the arrow between them, a request flow diagram
-// built straight from the backend's own live trace, not a static drawing.
-// a hop the backend marked ok: false was a genuine refusal or failure,
-// rendered red end to end, the line, the arrow and the destination box,
-// so the exact point a blocked request actually stopped is obvious at a
-// glance rather than only readable in the prose detail line below it
-const FlowHop = ({ hop }: { hop: TraceStep }) => {
-  const isBlocked = hop.ok === false;
-  const lineColor = isBlocked
-    ? 'var(--pf-t--global--border--color--status--danger--default)'
-    : 'var(--pf-t--global--border--color--default)';
-  return (
-    <Flex alignItems={{ default: 'alignItemsCenter' }} gap={{ default: 'gapSm' }} style={{ marginBottom: '0.75rem' }}>
-      <FlexItem>
-        <FlowNode name={hop.from} />
-      </FlexItem>
-      <FlexItem grow={{ default: 'grow' }}>
-        <div style={{ textAlign: 'center', padding: '0 0.5rem' }}>
-          <Content component="small">{hop.protocol}</Content>
-          <Flex
-            alignItems={{ default: 'alignItemsCenter' }}
-            justifyContent={{ default: 'justifyContentCenter' }}
-            style={{ margin: '0.15rem 0' }}
-          >
-            <div style={{ flexGrow: 1, borderTop: `2px solid ${lineColor}` }} />
-            <Icon size="sm" status={isBlocked ? 'danger' : undefined} style={{ margin: '0 -0.2rem' }}>
-              <ArrowRightIcon />
-            </Icon>
-          </Flex>
-          <Content
-            component="small"
-            style={{
-              fontWeight: 'bold',
-              color: isBlocked ? 'var(--pf-t--global--text--color--status--danger--default)' : undefined,
-            }}
-          >
-            {isBlocked ? `blocked: ${hop.step}` : hop.step}
-          </Content>
-          <Content component="small">{hop.duration_ms} ms</Content>
-        </div>
-      </FlexItem>
-      <FlexItem>
-        <FlowNode name={hop.to} danger={isBlocked} />
+        <Content
+          component="small"
+          style={{ display: 'block', color: 'var(--pf-t--global--text--color--subtle)' }}
+        >
+          {hop.from} {'\u2192'} {hop.to} {'\u00b7'} {hop.protocol} {'\u00b7'} {hop.duration_ms} ms
+        </Content>
+        <Content
+          component="small"
+          style={{ display: 'block', color: isBlocked ? dangerColor : undefined }}
+        >
+          {hop.detail}
+        </Content>
       </FlexItem>
     </Flex>
   );
@@ -177,12 +163,14 @@ const UserAvatar = () => (
 const RequestTrace = ({ trace }: { trace: TraceStep[] }) => {
   // a blocked turn starts expanded, not collapsed behind an extra click,
   // and names the one real reason inline rather than leaving the viewer
-  // to open the diagram just to find out something was refused at all
+  // to open the timeline just to find out something was refused at all
   const blockedHop = trace.find((h) => h.ok === false);
   const [isExpanded, setIsExpanded] = useState(Boolean(blockedHop));
-  const toggleText = blockedHop
-    ? `request flow (${trace.length} hops, blocked at "${blockedHop.step}")`
-    : `request flow (${trace.length} hops, real a2a/mcp calls)`;
+  const toggleText = isExpanded
+    ? 'hide agent activity'
+    : blockedHop
+      ? `Show agent activity (blocked at "${blockedHop.step}")`
+      : `Show agent activity (${trace.length} hops, a2a/mcp calls)`;
   return (
     <ExpandableSection
       toggleText={toggleText}
@@ -190,25 +178,10 @@ const RequestTrace = ({ trace }: { trace: TraceStep[] }) => {
       onToggle={(_e, expanded) => setIsExpanded(expanded)}
       style={{ marginTop: '0.5rem' }}
     >
-      <Card isCompact style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+      <Card isCompact style={{ marginTop: '0.5rem' }}>
         <CardBody>
           {trace.map((hop, i) => (
-            <div key={i}>
-              <FlowHop hop={hop} />
-              <Content
-                component="small"
-                style={{
-                  display: 'block',
-                  margin: '-0.5rem 0 0.75rem 0.5rem',
-                  color:
-                    hop.ok === false
-                      ? 'var(--pf-t--global--text--color--status--danger--default)'
-                      : 'var(--pf-t--global--text--color--subtle)',
-                }}
-              >
-                {hop.detail}
-              </Content>
-            </div>
+            <TimelineHop key={i} hop={hop} isLast={i === trace.length - 1} />
           ))}
         </CardBody>
       </Card>
@@ -259,11 +232,11 @@ export default function SpearShieldChatPage() {
       <ListPageHeader title={t('Ask SPEAR Shield')} />
       <PageSection>
         <Content component="p">
-          SPEAR Shield is this environment{'\u2019'}s governed entry point into the organization{'\u2019'}s
-          knowledge base and work tracker. Every answer below is generated as you, the signed in
-          console user, through the same identity, isolation and guardrails controls the rest of
-          this platform enforces for every other agent to agent and agent to tool call, nothing on
-          this page is a separate or relaxed path.
+          SPEAR Shield is this environment{'\u2019'}s governed entry point into the organization
+          {'\u2019'}s knowledge base and work tracker. Every answer below is generated as you, the
+          signed in console user, through the same identity, isolation and guardrails controls the
+          rest of this platform enforces for every other agent to agent and agent to tool call,
+          nothing on this page is a separate or relaxed path.
         </Content>
 
         <Card style={{ marginTop: '1rem' }}>
@@ -311,7 +284,9 @@ export default function SpearShieldChatPage() {
                           <div className="coordinator-answer-md">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.answer}</ReactMarkdown>
                           </div>
-                          {turn.trace && turn.trace.length > 0 && <RequestTrace trace={turn.trace} />}
+                          {turn.trace && turn.trace.length > 0 && (
+                            <RequestTrace trace={turn.trace} />
+                          )}
                         </>
                       )}
                     </FlexItem>
@@ -344,7 +319,12 @@ export default function SpearShieldChatPage() {
             />
           </FlexItem>
           <FlexItem>
-            <Button variant="primary" isLoading={busy} isDisabled={busy || !draft.trim()} onClick={ask}>
+            <Button
+              variant="primary"
+              isLoading={busy}
+              isDisabled={busy || !draft.trim()}
+              onClick={ask}
+            >
               Ask
             </Button>
           </FlexItem>

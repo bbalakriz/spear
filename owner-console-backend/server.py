@@ -206,6 +206,13 @@ def mlflow_get_artifact(run_id, path):
         return resp.read()
 
 
+def mlflow_list_artifacts(run_id):
+    url = f"{MLFLOW_URL}/api/2.0/mlflow/artifacts/list?run_id={run_id}"
+    req = urllib.request.Request(url, headers=mlflow_headers(), method="GET")
+    with urllib.request.urlopen(req, timeout=30, context=_no_verify_ctx()) as resp:
+        return json.loads(resp.read()).get("files", [])
+
+
 def mlflow_get_run(run_id):
     # unlike runs/search, runs/get is a real get only endpoint, confirmed
     # live, posting a json body to it 404s.
@@ -348,9 +355,25 @@ def recent_eval_cycles(max_results=10):
             data = child.get("data", {})
             tags = {t["key"]: t["value"] for t in data.get("tags", [])}
             metrics = {m["key"]: float(m["value"]) for m in data.get("metrics", [])}
+            params = {p["key"]: p["value"] for p in data.get("params", [])}
+            run_id = child["info"]["run_id"]
+            provider_id = tags.get("evalhub.provider_id", "")
+
+            # a native run (ibm-clear, the only provider that saves straight
+            # to mlflow itself, see log_eval_to_mlflow.py's own header) never
+            # gets the evalhub.provider_id tag this script sets, that is the
+            # real signal to go look for a real artifact worth linking,
+            # rather than paying for an artifact list call on every run
+            report_path = None
+            if not provider_id:
+                for f in mlflow_list_artifacts(run_id):
+                    if not f.get("is_dir") and f.get("path", "").endswith(".html"):
+                        report_path = f["path"]
+                        break
+
             benchmarks.append(
                 {
-                    "run_id": child["info"]["run_id"],
+                    "run_id": run_id,
                     # job_name is the one label every benchmark type
                     # reliably carries: ibm-clear's own native run (the
                     # provider's own save path, this script only tags it,
@@ -359,9 +382,19 @@ def recent_eval_cycles(max_results=10):
                     # confirmed live, so job_name is what a chart legend
                     # should key off, not provider_id
                     "job_name": tags.get("evalhub.job_name", ""),
-                    "provider_id": tags.get("evalhub.provider_id", ""),
-                    "benchmark_id": tags.get("evalhub.benchmark_id", ""),
+                    "provider_id": provider_id or params.get("provider_id", ""),
+                    "benchmark_id": tags.get("evalhub.benchmark_id", "") or params.get("benchmark_id", ""),
                     "metrics": metrics,
+                    # model/threshold/duration/sample size, whichever of
+                    # these a given run actually logged, read straight
+                    # back, nothing recomputed, see log_eval_to_mlflow.py
+                    # and ibm-clear's own native params for the real shape
+                    "params": params,
+                    "report_url": (
+                        f"/trend/artifact?run_id={run_id}&path={urllib.parse.quote(report_path)}"
+                        if report_path
+                        else None
+                    ),
                 }
             )
 
@@ -1319,6 +1352,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _raw(self, status, body, content_type):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _user_token(self):
         auth = self.headers.get("Authorization", "")
         if not auth.lower().startswith("bearer "):
@@ -1361,7 +1401,19 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/spear-shield/status":
                 self._json(200, spear_shield_status())
             elif path == "/trend/eval-cycles":
-                self._json(200, {"cycles": recent_eval_cycles()})
+                limit = int(query.get("limit", 10))
+                self._json(200, {"cycles": recent_eval_cycles(limit)})
+            elif path == "/trend/artifact":
+                run_id = query.get("run_id", "")
+                artifact_path = query.get("path", "")
+                # ".." is rejected outright rather than relied on mlflow's
+                # own server side scoping, no reason to forward anything
+                # that looks like a path escape attempt at all
+                if not run_id or not artifact_path or ".." in artifact_path:
+                    self._json(400, {"error": "run_id and path query params are required"})
+                else:
+                    content_type = "text/html" if artifact_path.endswith(".html") else "application/octet-stream"
+                    self._raw(200, mlflow_get_artifact(run_id, artifact_path), content_type)
             else:
                 self._json(404, {"error": "Not found"})
         except PermissionError as exc:

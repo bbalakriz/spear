@@ -20,6 +20,9 @@ import {
   FormSelect,
   FormSelectOption,
   Label,
+  Modal,
+  ModalBody,
+  ModalHeader,
   PageSection,
   Spinner,
 } from '@patternfly/react-core';
@@ -192,6 +195,39 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
   const [metricKey, setMetricKey] = useState(metricDefs[0].key);
   const metric = metricDefs.find((m) => m.key === metricKey) ?? metricDefs[0];
 
+  // the console's own proxy route sends back "content-security-policy:
+  // sandbox;" on anything that is not plain json, confirmed live, which
+  // blocks every inline script a navigated-to page tries to run, so a
+  // plain link straight to the proxy url renders the real clear_results.html
+  // as an empty shell, none of its own data ever shows up. fetching the
+  // text ourselves and handing it to an iframe's srcDoc sidesteps that
+  // entirely, srcDoc is not a navigation response so no csp header from
+  // the fetch applies to it, and the sandbox attribute set directly on
+  // the iframe below is this component's own choice, allow-scripts only,
+  // no allow-same-origin, the report needs no same origin access at all
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportHtml, setReportHtml] = useState<string | null>(null);
+  const [reportError, setReportError] = useState('');
+
+  const openReport = (reportUrl: string) => {
+    setReportOpen(true);
+    setReportHtml(null);
+    setReportError('');
+    // consoleFetchText only actually returns raw text when the response's
+    // content type is exactly text/plain, anything else (our html included)
+    // gets run through JSON.parse and blows up on the leading "<", confirmed
+    // live, that is why a plain browser fetch is used here instead, the
+    // console session cookie alone is enough to authenticate this same
+    // origin request, no console specific headers are needed for a GET
+    fetch(`${PROXY_PATH}${reportUrl}`, { credentials: 'include' })
+      .then((res) => {
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        return res.text();
+      })
+      .then((html) => setReportHtml(html))
+      .catch((err: Error) => setReportError(err.message));
+  };
+
   const segments = buildSegments(cycles, jobName, metric.key);
   const allPoints = segments.flat();
   const latest = allPoints[allPoints.length - 1];
@@ -348,12 +384,9 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
                   {latestBenchmark?.report_url && (
                     <FlexItem>
                       <Button
-                        component="a"
-                        href={`${PROXY_PATH}${latestBenchmark.report_url}`}
-                        target="_blank"
-                        rel="noreferrer"
                         variant="link"
                         isInline
+                        onClick={() => openReport(latestBenchmark.report_url as string)}
                       >
                         View full report
                       </Button>
@@ -377,6 +410,26 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
           </>
         )}
       </CardBody>
+      <Modal isOpen={reportOpen} onClose={() => setReportOpen(false)} variant="large" width="90vw">
+        <ModalHeader title={`${JOB_TITLES[jobName] ?? jobName} full report`} />
+        <ModalBody>
+          {reportError && (
+            <Content
+              component="small"
+              style={{ color: '#ff8787' }}
+            >{`Error: ${reportError}`}</Content>
+          )}
+          {!reportError && reportHtml === null && <Spinner size="lg" />}
+          {!reportError && reportHtml !== null && (
+            <iframe
+              title={`${JOB_TITLES[jobName] ?? jobName} full report`}
+              srcDoc={reportHtml}
+              sandbox="allow-scripts"
+              style={{ width: '100%', height: '78vh', border: 'none', background: '#fff' }}
+            />
+          )}
+        </ModalBody>
+      </Modal>
     </Card>
   );
 };

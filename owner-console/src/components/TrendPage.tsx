@@ -35,6 +35,7 @@ import {
   ChartThreshold,
   ChartVoronoiContainer,
 } from '@patternfly/react-charts/victory';
+import { CheckCircleIcon, ExclamationCircleIcon, MinusCircleIcon } from '@patternfly/react-icons';
 import { useEffect, useState } from 'react';
 
 const PROXY_PATH = '/api/proxy/plugin/phase1-ingestion-console/backend';
@@ -141,14 +142,22 @@ function benchmarkFor(cycle: Cycle, jobName: string): CycleBenchmark | undefined
 }
 
 // the most recent cycle that actually ran this job, independent of which
-// metric is selected in the dropdown, used for the details panel and the
-// report link below the chart
-function latestBenchmarkFor(cycles: Cycle[], jobName: string): CycleBenchmark | undefined {
+// metric is selected in the dropdown, used for the details panel, the
+// report link, and the status tiles at the top of the page, all three
+// read the exact same lookup rather than each doing their own search
+function latestCycleAndBenchmarkFor(
+  cycles: Cycle[],
+  jobName: string,
+): { cycle: Cycle; benchmark: CycleBenchmark } | undefined {
   for (let i = cycles.length - 1; i >= 0; i -= 1) {
     const bench = benchmarkFor(cycles[i], jobName);
-    if (bench) return bench;
+    if (bench) return { cycle: cycles[i], benchmark: bench };
   }
   return undefined;
+}
+
+function latestBenchmarkFor(cycles: Cycle[], jobName: string): CycleBenchmark | undefined {
+  return latestCycleAndBenchmarkFor(cycles, jobName)?.benchmark;
 }
 
 interface SeriesPoint {
@@ -189,6 +198,55 @@ function buildSegments(cycles: Cycle[], jobName: string, metricKey: string): Ser
   if (current.length) segments.push(current);
   return segments;
 }
+
+// a one glance status tile for a single job, reads the same latest
+// benchmark every trend card below already reads, this is not a separate
+// api call or a separate source of truth, just a compact summary of it
+const JobStatusTile = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) => {
+  const latest = latestCycleAndBenchmarkFor(cycles, jobName);
+  const passValue = latest?.benchmark.metrics.pass;
+  const hasPass = typeof passValue === 'number';
+
+  let icon = <MinusCircleIcon color="#8a8d90" />;
+  let statusText = 'No runs yet';
+  let statusColor = '#6b6f76';
+  if (hasPass) {
+    const passed = passValue === 1;
+    icon = passed ? <CheckCircleIcon color="#3e8635" /> : <ExclamationCircleIcon color="#c9190b" />;
+    statusText = passed ? 'Pass' : 'Fail';
+    statusColor = passed ? '#3e8635' : '#c9190b';
+  } else if (latest) {
+    statusText = 'No threshold';
+  }
+
+  return (
+    <Card isCompact>
+      <CardBody>
+        <Content component="small" style={{ color: '#6b6f76', display: 'block' }}>
+          {JOB_TITLES[jobName] ?? jobName}
+        </Content>
+        <Flex
+          alignItems={{ default: 'alignItemsCenter' }}
+          gap={{ default: 'gapSm' }}
+          style={{ marginTop: '0.25rem' }}
+        >
+          <FlexItem>{icon}</FlexItem>
+          <FlexItem>
+            <strong style={{ color: statusColor }}>{statusText}</strong>
+          </FlexItem>
+        </Flex>
+        {latest && (
+          <Content
+            component="small"
+            style={{ color: '#6b6f76', display: 'block', marginTop: '0.25rem' }}
+          >
+            last run: {formatCycleLabel(latest.cycle)}
+          </Content>
+        )}
+      </CardBody>
+    </Card>
+  );
+};
 
 const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) => {
   const metricDefs = METRICS_BY_JOB[jobName];
@@ -499,13 +557,22 @@ export default function TrendPage() {
           <Content component="small">No eval cycles have run yet.</Content>
         )}
         {!error && cycles !== null && cycles.length > 0 && (
-          <Flex direction={{ default: 'column' }} gap={{ default: 'gapLg' }}>
-            {Object.keys(METRICS_BY_JOB).map((jobName) => (
-              <FlexItem key={jobName}>
-                <TrendCard jobName={jobName} cycles={cycles} />
-              </FlexItem>
-            ))}
-          </Flex>
+          <>
+            <Flex gap={{ default: 'gapMd' }} style={{ marginBottom: '1rem' }}>
+              {Object.keys(METRICS_BY_JOB).map((jobName) => (
+                <FlexItem key={jobName} flex={{ default: 'flex_1' }}>
+                  <JobStatusTile jobName={jobName} cycles={cycles} />
+                </FlexItem>
+              ))}
+            </Flex>
+            <Flex direction={{ default: 'column' }} gap={{ default: 'gapLg' }}>
+              {Object.keys(METRICS_BY_JOB).map((jobName) => (
+                <FlexItem key={jobName}>
+                  <TrendCard jobName={jobName} cycles={cycles} />
+                </FlexItem>
+              ))}
+            </Flex>
+          </>
         )}
       </PageSection>
     </>

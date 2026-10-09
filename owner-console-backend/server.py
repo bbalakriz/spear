@@ -60,6 +60,12 @@ def _env_list(name, default_csv):
 # rag-phase1 to spear-pipelines, see manifests/spear-pipelines/03-mlflow.yaml
 WORKSPACE = os.environ.get("RAG_WORKSPACE", "spear-pipelines")
 INGESTION_EXPERIMENT_NAME = os.environ.get("INGESTION_EXPERIMENT_NAME", "phase1-ingestion")
+# the real experiment scripts/11-submit-evalhub-jobs.sh writes every real
+# eval cycle's results into, see create_eval_cycle_run.py and
+# log_eval_to_mlflow.py, same workspace WORKSPACE above already points at
+EVAL_RESULTS_EXPERIMENT_NAME = os.environ.get(
+    "EVAL_RESULTS_EXPERIMENT_NAME", "spear-shield-evalhub-results"
+)
 
 INGESTION_PIPELINE_NAME = os.environ.get("INGESTION_PIPELINE_NAME", "phase1-ingestion-pipeline")
 INGESTION_KFP_EXPERIMENT_NAME = os.environ.get("INGESTION_KFP_EXPERIMENT_NAME", "phase1-ingestion")
@@ -287,6 +293,90 @@ def ingestion_report(run_id=None):
     for entry in report.get("guardrails", {}).get("audit", []):
         entry["minio_url"] = minio_object_link(AUTORAG_RAW_BUCKET, f"raw-intake/{entry['filename']}")
     return report
+
+
+# ---- eval cycle trend, reading the real runs 11-submit-evalhub-jobs.sh's
+# own create_eval_cycle_run.py/log_eval_to_mlflow.py already write, nothing
+# new logged, just read back and shaped for a chart. field names below are
+# not guessed, confirmed live against this project's own real mlflow runs
+# after chasing and fixing the wait_for_job timeout bug that used to drop
+# ragas and ibm-clear from the two most recent cycles, see PHASE3_PLAN.md
+# section 7's own "a real regression found while building a trend view"
+# note for the full story. ----
+
+def find_eval_results_experiment():
+    experiments = mlflow_post("/api/2.0/mlflow/experiments/search", {"max_results": 100})
+    return next(
+        (e for e in experiments.get("experiments", []) if e["name"] == EVAL_RESULTS_EXPERIMENT_NAME),
+        None,
+    )
+
+
+def recent_eval_cycles(max_results=10):
+    # one entry per real cycle 11-submit-evalhub-jobs.sh ran, oldest first
+    # so a trend chart reads left to right. each cycle's own benchmarks
+    # list is read back the same way mlflow's own run list already groups
+    # them, by the real mlflow.parentRunId tag every child run carries.
+    exp = find_eval_results_experiment()
+    if exp is None:
+        return []
+
+    parents = mlflow_post(
+        "/api/2.0/mlflow/runs/search",
+        {
+            "experiment_ids": [exp["experiment_id"]],
+            "filter": "tags.`evalhub.cycle` = 'true'",
+            "max_results": max_results,
+            "order_by": ["attributes.start_time DESC"],
+        },
+    ).get("runs", [])
+
+    cycles = []
+    for parent in parents:
+        parent_id = parent["info"]["run_id"]
+        children = mlflow_post(
+            "/api/2.0/mlflow/runs/search",
+            {
+                "experiment_ids": [exp["experiment_id"]],
+                "filter": f"tags.`mlflow.parentRunId` = '{parent_id}'",
+                "max_results": 20,
+            },
+        ).get("runs", [])
+
+        benchmarks = []
+        for child in children:
+            data = child.get("data", {})
+            tags = {t["key"]: t["value"] for t in data.get("tags", [])}
+            metrics = {m["key"]: float(m["value"]) for m in data.get("metrics", [])}
+            benchmarks.append(
+                {
+                    "run_id": child["info"]["run_id"],
+                    # job_name is the one label every benchmark type
+                    # reliably carries: ibm-clear's own native run (the
+                    # provider's own save path, this script only tags it,
+                    # never logs its metrics) never gets the
+                    # provider_id/benchmark_id pair the other three do,
+                    # confirmed live, so job_name is what a chart legend
+                    # should key off, not provider_id
+                    "job_name": tags.get("evalhub.job_name", ""),
+                    "provider_id": tags.get("evalhub.provider_id", ""),
+                    "benchmark_id": tags.get("evalhub.benchmark_id", ""),
+                    "metrics": metrics,
+                }
+            )
+
+        cycles.append(
+            {
+                "run_id": parent_id,
+                "run_name": parent["info"].get("run_name"),
+                "start_time": parent["info"].get("start_time"),
+                "mlflow_url": mlflow_run_link(exp["experiment_id"], parent_id),
+                "benchmarks": benchmarks,
+            }
+        )
+
+    cycles.reverse()
+    return cycles
 
 
 # ---- kfp pipeline server rest helpers, all authenticated with the caller's
@@ -1270,6 +1360,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, ingestion_source_config(self._user_token()))
             elif path == "/spear-shield/status":
                 self._json(200, spear_shield_status())
+            elif path == "/trend/eval-cycles":
+                self._json(200, {"cycles": recent_eval_cycles()})
             else:
                 self._json(404, {"error": "Not found"})
         except PermissionError as exc:

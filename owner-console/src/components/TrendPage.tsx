@@ -525,14 +525,13 @@ export default function TrendPage() {
 
   return (
     <>
-      <DocumentTitle>{t('Eval Trend')}</DocumentTitle>
-      <ListPageHeader title={t('Eval Trend')} />
+      <DocumentTitle>{t('Evaluation Trends')}</DocumentTitle>
+      <ListPageHeader title={t('Evaluation Trends')} />
       <PageSection>
         <Content component="small" style={{ display: 'block', marginBottom: '1rem' }}>
-          One real evaluation cycle per point. Every Ragas, IBM CLEAR, Garak and confidential data
-          leak scan job that scripts/11-submit-evalhub-jobs.sh has actually run against the real
-          coordinator agent, read straight back from the same MLflow runs that cycle logged, nothing
-          recomputed here.
+          Safety and quality evaluation history for the coordinator agent. Each point is one
+          completed evaluation cycle across answer quality, agentic workflow health, prompt attack
+          resistance, and confidential data protection, sourced directly from evaluation results.
         </Content>
 
         <Flex

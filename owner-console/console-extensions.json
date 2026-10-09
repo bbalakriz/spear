@@ -90,7 +90,7 @@
     "type": "console.navigation/href",
     "properties": {
       "id": "spear-shield-trend",
-      "name": "%plugin__phase1-ingestion-console~Eval Trend%",
+      "name": "%plugin__phase1-ingestion-console~Evaluation Trends%",
       "href": "/spear-shield-trend",
       "perspective": "admin",
       "section": "rag-phase1"

@@ -95,15 +95,5 @@
       "perspective": "admin",
       "section": "rag-phase1"
     }
-  },
-  {
-    "type": "console.navigation/href",
-    "properties": {
-      "id": "spear-shield-openshell-playground",
-      "name": "%plugin__phase1-ingestion-console~OpenShell Playground%",
-      "href": "/openshell/playground",
-      "perspective": "admin",
-      "section": "rag-phase1"
-    }
   }
 ]

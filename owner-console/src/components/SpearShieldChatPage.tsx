@@ -197,7 +197,7 @@ const RequestTrace = ({ trace }: { trace: TraceStep[] }) => {
   const blockedHop = trace.find((h) => h.ok === false);
   const [isExpanded, setIsExpanded] = useState(Boolean(blockedHop));
   const toggleText = isExpanded
-    ? 'hide agent activity'
+    ? 'Hide agent activity'
     : blockedHop
       ? `Show agent activity (blocked at "${blockedHop.step}")`
       : `Show agent activity (${trace.length} hops, a2a/mcp calls)`;

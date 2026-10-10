@@ -64,24 +64,6 @@
     "type": "console.page/route",
     "properties": {
       "exact": true,
-      "path": "/spear-shield-status",
-      "component": { "$codeRef": "ArchitectureStatusPage" }
-    }
-  },
-  {
-    "type": "console.navigation/href",
-    "properties": {
-      "id": "spear-shield-status",
-      "name": "%plugin__phase1-ingestion-console~Architecture Status%",
-      "href": "/spear-shield-status",
-      "perspective": "admin",
-      "section": "rag-phase1"
-    }
-  },
-  {
-    "type": "console.page/route",
-    "properties": {
-      "exact": true,
       "path": "/spear-shield-trend",
       "component": { "$codeRef": "TrendPage" }
     }
@@ -92,6 +74,24 @@
       "id": "spear-shield-trend",
       "name": "%plugin__phase1-ingestion-console~Evaluation Trends%",
       "href": "/spear-shield-trend",
+      "perspective": "admin",
+      "section": "rag-phase1"
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/spear-shield-status",
+      "component": { "$codeRef": "ArchitectureStatusPage" }
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "spear-shield-status",
+      "name": "%plugin__phase1-ingestion-console~Architecture Status%",
+      "href": "/spear-shield-status",
       "perspective": "admin",
       "section": "rag-phase1"
     }

@@ -23,6 +23,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -166,6 +167,12 @@ RETRIEVAL_A2A_INTERNAL_URL = os.environ.get(
 # back to, confirmed live by reading env inside a real running sandbox pod,
 # neither HTTPS_PROXY nor HTTP_PROXY is actually set there
 SANDBOX_PROXY_CURL = "curl -s -x http://127.0.0.1:3128"
+# the retrieval sandbox's own rag-query-relay endpoint, literal host:port
+# straight out of manifests/spear-shield-agents/openshell/policies/
+# retrieval-policy.yaml, an in cluster service name, no wildcard route to
+# resolve so no env var indirection needed here the way guardrails/mlflow
+# need one
+RAG_QUERY_RELAY_URL = "http://spear-shield-rag-query-relay.spear-data.svc.cluster.local:8080"
 
 
 def sa_token():
@@ -863,12 +870,16 @@ def k8s_core_v1():
     return _k8s_core_v1
 
 
-def k8s_exec(pod, command, timeout=25):
+def k8s_exec(pod, command, timeout=25, api=None):
     # runs a real shell command inside a real sandbox pod and returns its
     # combined stdout/stderr. container is always "agent", confirmed live,
-    # openshell's own sidecar containers never run this
+    # openshell's own sidecar containers never run this. api defaults to
+    # the shared singleton below for a lone call, callers running two of
+    # these concurrently must each pass their own client, see
+    # _fresh_core_v1's own comment for why that is not optional there
+    api = api or k8s_core_v1()
     return k8s_stream(
-        k8s_core_v1().connect_get_namespaced_pod_exec,
+        api.connect_get_namespaced_pod_exec,
         pod,
         SPEAR_SHIELD_NAMESPACE,
         container="agent",
@@ -880,6 +891,18 @@ def k8s_exec(pod, command, timeout=25):
         _preload_content=True,
         _request_timeout=timeout,
     ).strip()
+
+
+def _fresh_core_v1():
+    # confirmed live: two concurrent exec websockets sharing the one
+    # module level CoreV1Api's connection pool corrupt each other, the
+    # apiserver's own log calls it "unknown stream id, discarding
+    # message" and the client side sees a bogus "handshake status 200
+    # ok" instead of a real upgrade. harmless for one exec at a time, the
+    # coordinator/retrieval pair below is never one at a time, so each
+    # side of that pair gets its own client, never the shared singleton
+    k8s_config.load_incluster_config()
+    return k8s_client.CoreV1Api()
 
 
 def k8s_pod_status(pod):
@@ -1019,9 +1042,9 @@ def mcp_tool_call(name, arguments, caller_token):
     return json.loads(raw) if raw else {}
 
 
-# ---- the six security demo scenarios, PHASE2_PLAN.md section 8's second
-# pass: every one of these is the same live check already run by hand
-# against the real cluster earlier in that session, turned into a
+# ---- the under the hood demo scenarios, PHASE2_PLAN.md section 8's
+# second pass: every one of these is the same live check already run by
+# hand against the real cluster earlier in that session, turned into a
 # repeatable console button rather than a one off curl. scenarios 7 (abac
 # content scoping) and 8 (prompt injection refusal) from that session's own
 # proposal need no new code at all, the existing /spear-shield/ask endpoint
@@ -1029,7 +1052,11 @@ def mcp_tool_call(name, arguments, caller_token):
 # injection defense is deliberately left out, see that session's own
 # finding: it currently fails closed on every tool response, not only
 # malicious ones, the shared guardrails config was never tuned for
-# structured tool output shapes ----
+# structured tool output shapes. kata vs runc, network containment and
+# filesystem containment used to be three separate single sandbox
+# scenarios here, folded later into demo_sandbox_compare below: one real
+# call that runs the same probes against both sandboxes at once and lets
+# the console render them side by side instead of one terminal at a time ----
 
 
 def demo_identity_rejected():
@@ -1066,156 +1093,236 @@ def demo_identity_rejected():
     }
 
 
-def _memory_gi(raw):
-    # node capacity arrives as a kubernetes quantity string ("131888552Ki"),
-    # the sandboxes' own free -h reports Gi, so convert to Gi here to make
-    # the two views comparable in the same unit
-    value = float(raw[:-2]) if raw.endswith(("Ki", "Mi", "Gi")) else float(raw)
-    divisor = {"Ki": 1048576, "Mi": 1024, "Gi": 1}.get(raw[-2:], 1073741824)
-    return f"{value / divisor:.1f}Gi"
+def _exec_both(command, timeout=25):
+    # the identical command against both real sandboxes at once, not one
+    # after the other, the whole point of a side by side compare is that
+    # neither side waits on the other. each side gets its own api client,
+    # see _fresh_core_v1
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        c_future = pool.submit(k8s_exec, COORDINATOR_POD, command, timeout, _fresh_core_v1())
+        r_future = pool.submit(k8s_exec, RETRIEVAL_POD, command, timeout, _fresh_core_v1())
+        return c_future.result(), r_future.result()
 
 
-def _node_status(node_name):
-    # the real worker the sandbox actually landed on. a node has no shell,
-    # so the node level equivalent of the sandboxes' own nproc / free -h is
-    # its status.capacity cpu/memory, read via the kubernetes python client.
-    # cluster scoped read, see manifests/spear-console/03-backend-node-reader.yaml:
-    # node placement is dynamic, no resourceNames pin possible on a worker
-    # the scheduler has not chosen yet, read only get on nodes
-    n = k8s_core_v1().read_node(node_name)
+# marker printed right before each command in a batch, chosen to be
+# something real command output is never going to produce by accident
+_BATCH_MARK = "@@PROBE@@"
+
+
+def _exec_batch(pod, commands, timeout=40, api=None):
+    # every probe command against one pod inside a single real exec, not
+    # a separate kubectl exec round trip per probe, the six real probes
+    # below used to cost six api server round trips each sandbox, now it
+    # is one script with the marker printed ahead of every command so
+    # the combined output can still be split back apart per probe
+    script = "".join(f'echo "{_BATCH_MARK}{i}"\n{cmd}\n' for i, cmd in enumerate(commands))
+    raw = k8s_exec(pod, script, timeout, api=api)
+    outputs = [""] * len(commands)
+    for chunk in raw.split(_BATCH_MARK)[1:]:
+        index, _, output = chunk.partition("\n")
+        if index.strip().isdigit():
+            outputs[int(index)] = output.strip()
+    return outputs
+
+
+def _exec_both_batch(commands, timeout=40):
+    # same lockstep parallel pattern as _exec_both, just carrying every
+    # probe for a sandbox in one shot instead of one call per probe, each
+    # side still gets its own api client, see _fresh_core_v1
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        c_future = pool.submit(_exec_batch, COORDINATOR_POD, commands, timeout, _fresh_core_v1())
+        r_future = pool.submit(_exec_batch, RETRIEVAL_POD, commands, timeout, _fresh_core_v1())
+        return c_future.result(), r_future.result()
+
+
+def _reachable(curl_output):
+    # a real http_code came back at all, not a proxy level connection
+    # refusal (http_code=000 or no http_code token means the request
+    # never got a response, blocked or unreachable either way)
+    return "http_code=" in curl_output and "http_code=000" not in curl_output
+
+
+def _annotate_blocked(curl_output):
+    # curl's own placeholder for "no http response ever came back", not a
+    # real status code the destination returned. confirmed live: this
+    # always means this sandbox's own openshell sidecar proxy refused the
+    # connect outright because the destination is not on that sandbox's
+    # own egress allow list, surfaced plainly here so a 000 reads as a
+    # policy decision, not a mystery error
+    if "http_code=000" in curl_output:
+        return curl_output + "\nblocked before any response: destination is not on this sandbox's own egress allow list"
+    return curl_output
+
+
+def _egress_probe_cmd(url):
+    return (
+        SANDBOX_PROXY_CURL
+        + " --cacert /etc/openshell-tls/proxy/ca-bundle.pem"
+        + f' -o /dev/null -w "http_code=%{{http_code}}" "{url}"'
+    )
+
+
+def _probe_result(probe_id, label, command, c_output, r_output, signal_fn=lambda o: o):
     return {
-        "name": node_name,
-        "cpu": n.status.capacity.get("cpu", "?"),
-        "mem": _memory_gi(n.status.capacity.get("memory", "0Ki")),
+        "id": probe_id,
+        "label": label,
+        "command": command,
+        "coordinator_output": c_output,
+        "retrieval_output": r_output,
+        "verdict": "same" if signal_fn(c_output) == signal_fn(r_output) else "differs",
     }
 
 
-def demo_kata_vs_runc():
+def _group_runtime_isolation(coordinator, retrieval):
+    kernel_c, kernel_r = _exec_both("uname -r")
+    return {
+        "id": "runtime-isolation",
+        "label": "Runtime Isolation",
+        "probes": [
+            _probe_result(
+                "runtime-class",
+                "which runtime is this pod",
+                "oc get pod {pod} -o jsonpath='{.spec.runtimeClassName}'",
+                coordinator["runtime_class"],
+                retrieval["runtime_class"],
+            ),
+            _probe_result("uname", "uname -r", "uname -r", kernel_c, kernel_r),
+        ],
+    }
+
+
+def _group_resource_visibility(_coordinator, _retrieval):
+    # confirmed live: runc shares the host kernel so nproc/free report
+    # whatever the host itself has (32 cores, 125gi here), kata boots its
+    # own real micro vm with its own kernel so nproc/free report only what
+    # that vm was actually given (1 core, under 2gi), this is expected to
+    # differ, the point of this probe is showing that each runtime
+    # accounts cpu/memory at a different boundary, not that they match
+    footing_c, footing_r = _exec_both("echo cpus=$(nproc); free -h")
+    return {
+        "id": "resource-visibility",
+        "label": "Resource Visibility",
+        "probes": [_probe_result("cpu-mem", "nproc + free -h", "nproc; free -h", footing_c, footing_r)],
+    }
+
+
+def _group_common_containment(_coordinator, _retrieval):
+    # two real probes, one exec per pod rather than two, see
+    # _exec_batch's own header comment for why
+    commands = [
+        f'{SANDBOX_PROXY_CURL} -o /dev/null -w "http_code=%{{http_code}}" https://1.1.1.1',
+        "rm -f /usr/bin/ls /usr/bin/cat 2>&1; echo exit=$?",
+    ]
+    coordinator_out, retrieval_out = _exec_both_batch(commands)
+    host_c, rm_c = coordinator_out
+    host_r, rm_r = retrieval_out
+    return {
+        "id": "common-containment",
+        "label": "Common Containment",
+        "probes": [
+            _probe_result(
+                "arbitrary-host",
+                "curl an arbitrary internet host",
+                "curl -x 127.0.0.1:3128 https://1.1.1.1",
+                _annotate_blocked(host_c),
+                _annotate_blocked(host_r),
+                _reachable,
+            ),
+            _probe_result(
+                "delete-binaries",
+                "delete real system binaries",
+                "rm -f /usr/bin/ls /usr/bin/cat",
+                rm_c,
+                rm_r,
+                lambda o: "Permission denied" in o,
+            ),
+        ],
+    }
+
+
+def _group_least_privilege_egress(_coordinator, _retrieval):
+    commands = [
+        _egress_probe_cmd(f"{GUARDRAILS_ROUTE}/v1/chat/completions"),
+        _egress_probe_cmd(f"{RAG_QUERY_RELAY_URL}/healthz"),
+    ]
+    coordinator_out, retrieval_out = _exec_both_batch(commands)
+    guardrails_c, relay_c = coordinator_out
+    guardrails_r, relay_r = retrieval_out
+    return {
+        "id": "least-privilege-egress",
+        "label": "Least Privilege Egress",
+        "probes": [
+            _probe_result(
+                "curl-guardrails",
+                "curl the guardrails route",
+                f'curl -x 127.0.0.1:3128 "{GUARDRAILS_ROUTE}/v1/chat/completions"',
+                _annotate_blocked(guardrails_c),
+                _annotate_blocked(guardrails_r),
+                _reachable,
+            ),
+            _probe_result(
+                "curl-rag-relay",
+                "curl the rag-query-relay route",
+                f'curl -x 127.0.0.1:3128 "{RAG_QUERY_RELAY_URL}/healthz"',
+                _annotate_blocked(relay_c),
+                _annotate_blocked(relay_r),
+                _reachable,
+            ),
+        ],
+    }
+
+
+# declared in display order, a run all walks this same order so a single
+# group run and a run all land identically either way
+COMPARE_GROUP_IDS = ["runtime-isolation", "resource-visibility", "common-containment", "least-privilege-egress"]
+_COMPARE_GROUP_BUILDERS = {
+    "runtime-isolation": _group_runtime_isolation,
+    "resource-visibility": _group_resource_visibility,
+    "common-containment": _group_common_containment,
+    "least-privilege-egress": _group_least_privilege_egress,
+}
+
+
+def demo_sandbox_identity():
+    # just the two real pods' own identity, no exec involved, cheap
+    # enough to call the moment the page loads so both terminals show who
+    # they really are before anyone presses a single run button
     coordinator = k8s_pod_status(COORDINATOR_POD)
     retrieval = k8s_pod_status(RETRIEVAL_POD)
-    coordinator_res = k8s_exec(COORDINATOR_POD, "echo cpus=$(nproc); free -h")
-    retrieval_res = k8s_exec(RETRIEVAL_POD, "echo cpus=$(nproc); free -h")
-    # the worker(s) the two sandboxes landed on, fetched for real. same
-    # worker or different workers are both correct placements, the
-    # scheduler decides, neither is an unexpected result, so this never
-    # feeds the step's ok flag, it only makes the placement visible
-    same_node = coordinator["node"] == retrieval["node"]
-    # the node capacity step's output must be the real response the shown
-    # command returns, the page's own principle, every line is the actual
-    # command and its actual response, never a synthesized summary. nodes
-    # have no shell, so the honest node level equivalent of the sandboxes'
-    # nproc / free -h is `oc get node -o custom-columns=NAME,CPU,MEMORY`,
-    # and that exact shape is what gets printed, memory converted to Gi so
-    # the two views read in the same unit as the sandboxes' own free -h
-    node_cmd = (
-        "oc get node"
-        + (f" {coordinator['node']}" if same_node else f" {coordinator['node']} {retrieval['node']}")
-        + " -o custom-columns=NAME:.metadata.name,CPU:.status.capacity.cpu,MEMORY:.status.capacity.memory"
-    )
-    nodes = [_node_status(coordinator["node"])] + ([] if same_node else [_node_status(retrieval["node"])])
-    # header row included, the real custom-columns output carries one and
-    # this text must be byte shape identical to what the shown command prints
-    node_text = "NAME                     CPU   MEMORY\n" + "\n".join(
-        f"{n['name']}   {n['cpu']}   {n['mem']}" for n in nodes
-    )
-    if same_node:
-        node_text += "\n(both sandboxes landed on this one worker)"
     return {
-        "title": "kata micro vm vs plain runc, the worker each sandbox actually landed on",
-        "steps": [
-            {
-                "label": "where does each sandbox actually run",
-                "command": f"oc get pod {COORDINATOR_POD} {RETRIEVAL_POD} -o jsonpath=runtimeClassName,nodeName",
-                "output": (
-                    f"{COORDINATOR_POD}: runtimeClassName={coordinator['runtime_class']}, node={coordinator['node']}\n"
-                    f"{RETRIEVAL_POD}: runtimeClassName={retrieval['runtime_class']}, node={retrieval['node']}"
-                ),
-                # the only real failure here is a sandbox not running the
-                # runtime it is supposed to run, the workers they land on
-                # are the scheduler's call and are never a failure
-                "ok": "kata" in retrieval["runtime_class"] and "runc" in coordinator["runtime_class"],
-            },
-            {
-                "label": "the worker(s) each sandbox landed on, node level CPU/MEM capacity (a node has no shell, this is the node level equivalent of the sandboxes' nproc / free -h)",
-                "command": node_cmd,
-                "output": node_text,
-                "ok": True,
-            },
-            {
-                "label": f"nproc / free -h inside the coordinator sandbox, on node {coordinator['node']}, runc shares the node's own real view",
-                "command": f"oc exec {COORDINATOR_POD} -- sh -c \"nproc; free -h\"",
-                "output": coordinator_res,
-                "ok": True,
-            },
-            {
-                "label": f"nproc / free -h inside the retrieval sandbox, on node {retrieval['node']}, kata's own separate micro vm",
-                "command": f"oc exec {RETRIEVAL_POD} -- sh -c \"nproc; free -h\"",
-                "output": retrieval_res,
-                "ok": True,
-            },
-        ],
+        "namespace": SPEAR_SHIELD_NAMESPACE,
+        "coordinator": {"pod": COORDINATOR_POD, **coordinator},
+        "retrieval": {"pod": RETRIEVAL_POD, **retrieval},
     }
 
 
-def demo_network_containment():
-    blocked = k8s_exec(COORDINATOR_POD, f"{SANDBOX_PROXY_CURL} -v https://1.1.1.1 2>&1 | tail -6")
-    dns_fail = k8s_exec(COORDINATOR_POD, "getent hosts example.com; echo exit=$?")
-    allowlisted = k8s_exec(
-        COORDINATOR_POD,
-        SANDBOX_PROXY_CURL
-        # the supervisor's own ca, confirmed live at this exact path, not
-        # -k: this route's cert really does chain to it, no reason to skip
-        # verification just because it is not a public ca
-        + " --cacert /etc/openshell-tls/proxy/ca-bundle.pem"
-        + ' -o /dev/null -w "http_code=%{http_code}\\n" "$OGX_BASE_URL/v1/chat/completions"',
-    )
+def demo_sandbox_compare(group_id=None):
+    # the whole "two runtimes, side by side" page in one call when
+    # group_id is empty, or just the one group whose own run button was
+    # pressed instead of the top level run all. every probe below runs
+    # for real against both sandboxes, in parallel, and the verdict
+    # (same/differs) is computed live from the two real outputs, never a
+    # pre labeled assumption. a probe landing as "differs" is not
+    # automatically a problem, kata vs runc is supposed to differ, a
+    # policy asymmetry is supposed to differ, this just reports what
+    # actually happened on both sides
+    coordinator = k8s_pod_status(COORDINATOR_POD)
+    retrieval = k8s_pod_status(RETRIEVAL_POD)
+    group_ids = [group_id] if group_id else COMPARE_GROUP_IDS
+    groups = [_COMPARE_GROUP_BUILDERS[g](coordinator, retrieval) for g in group_ids]
     return {
-        "title": "network containment, the allowlist lives outside the sandbox's own kernel",
-        "steps": [
-            {
-                "label": "curl an arbitrary internet host from inside the sandbox",
-                "command": "curl -x 127.0.0.1:3128 https://1.1.1.1",
-                "output": blocked,
-                "ok": "403" in blocked or "CONNECT" in blocked,
-            },
-            {
-                "label": "resolve a disallowed hostname from inside the sandbox",
-                "command": "getent hosts example.com",
-                "output": dns_fail,
-                "ok": "exit=0" not in dns_fail,
-            },
-            {
-                "label": "reach the real, allowlisted guardrails route",
-                "command": "curl -x 127.0.0.1:3128 $OGX_BASE_URL/v1/chat/completions",
-                "output": allowlisted,
-                "ok": "http_code=" in allowlisted and "http_code=000" not in allowlisted,
-            },
-        ],
+        "namespace": SPEAR_SHIELD_NAMESPACE,
+        "coordinator": {"pod": COORDINATOR_POD, **coordinator},
+        "retrieval": {"pod": RETRIEVAL_POD, **retrieval},
+        "groups": groups,
     }
 
 
-def demo_filesystem_containment():
-    denied = k8s_exec(COORDINATOR_POD, "rm -f /usr/bin/ls /usr/bin/cat 2>&1; echo exit=$?")
-    sandbox_write = k8s_exec(
-        COORDINATOR_POD, "touch /sandbox/demo-write-test && rm /sandbox/demo-write-test && echo sandbox write ok"
-    )
-    return {
-        "title": "filesystem containment, only /sandbox is genuinely writable",
-        "steps": [
-            {
-                "label": "try to delete real system binaries",
-                "command": "rm -f /usr/bin/ls /usr/bin/cat",
-                "output": denied,
-                "ok": "Permission denied" in denied,
-            },
-            {
-                "label": "write and remove a file under /sandbox, its own separate ext4 volume",
-                "command": "touch /sandbox/demo-write-test && rm /sandbox/demo-write-test",
-                "output": sandbox_write,
-                "ok": "sandbox write ok" in sandbox_write,
-            },
-        ],
-    }
+def demo_exec_both_command(command):
+    # the free typed companion to the groups above, same two pods, same
+    # parallel exec, whatever is typed runs for real against both at once
+    c_output, r_output = _exec_both(command)
+    return {"command": command, "coordinator_output": c_output, "retrieval_output": r_output}
 
 
 def demo_workload_identity():
@@ -1327,20 +1434,10 @@ def demo_tool_scope_and_assignee():
 
 DEMO_SCENARIOS = {
     "identity-rejected": demo_identity_rejected,
-    "kata-vs-runc": demo_kata_vs_runc,
-    "network-containment": demo_network_containment,
-    "filesystem-containment": demo_filesystem_containment,
+    "sandbox-compare": demo_sandbox_compare,
     "workload-identity": demo_workload_identity,
     "tool-scope-and-assignee": demo_tool_scope_and_assignee,
 }
-
-
-def demo_exec_command(command):
-    # a free typed companion to the six scripted scenarios above, same
-    # pod, same k8s_exec, same bounded timeout. the whole point of this
-    # page is that this sandbox is safe to poke at, so whatever someone
-    # types here runs for real rather than against some fixed allowlist
-    return {"command": command, "output": k8s_exec(COORDINATOR_POD, command)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1400,6 +1497,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, ingestion_source_config(self._user_token()))
             elif path == "/spear-shield/status":
                 self._json(200, spear_shield_status())
+            elif path == "/spear-shield/sandbox-identity":
+                self._json(200, demo_sandbox_identity())
             elif path == "/trend/eval-cycles":
                 limit = int(query.get("limit", 10))
                 self._json(200, {"cycles": recent_eval_cycles(limit)})
@@ -1536,19 +1635,29 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 answer, trace = ask_spear_shield(message_text, self._user_token())
                 self._json(200, {"answer": answer, "trace": trace})
-            elif path == "/spear-shield/demo-exec":
+            elif path == "/spear-shield/demo-exec-both":
                 command = (body.get("command") or "").strip()
                 if not command:
                     self._json(400, {"error": "command is required"})
                     return
-                self._json(200, demo_exec_command(command))
+                self._json(200, demo_exec_both_command(command))
             elif path.startswith("/spear-shield/demo/"):
                 scenario_id = path[len("/spear-shield/demo/"):]
                 scenario_fn = DEMO_SCENARIOS.get(scenario_id)
                 if scenario_fn is None:
                     self._json(404, {"error": f"unknown demo scenario: {scenario_id!r}"})
                     return
-                self._json(200, scenario_fn())
+                if scenario_id == "sandbox-compare":
+                    # an empty group runs every group, same as always, a
+                    # named one runs just the group whose own button was
+                    # pressed instead of the top level run all
+                    group_id = (body.get("group") or "").strip() or None
+                    if group_id and group_id not in COMPARE_GROUP_IDS:
+                        self._json(404, {"error": f"unknown compare group: {group_id!r}"})
+                        return
+                    self._json(200, scenario_fn(group_id))
+                else:
+                    self._json(200, scenario_fn())
             else:
                 self._json(404, {"error": "Not found"})
         except PermissionError as exc:

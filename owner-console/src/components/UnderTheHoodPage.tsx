@@ -1,14 +1,68 @@
-import { DocumentTitle, ListPageHeader, consoleFetchJSON } from '@openshift-console/dynamic-plugin-sdk';
+import {
+  DocumentTitle,
+  ListPageHeader,
+  consoleFetchJSON,
+} from '@openshift-console/dynamic-plugin-sdk';
 import { useTranslation } from 'react-i18next';
-import { Button, Content, Flex, FlexItem, Icon, Label, PageSection, TextInput } from '@patternfly/react-core';
+import {
+  Button,
+  Content,
+  Flex,
+  FlexItem,
+  Grid,
+  GridItem,
+  Icon,
+  Label,
+  PageSection,
+  TextInput,
+} from '@patternfly/react-core';
 import { PaperPlaneIcon, PlayIcon, TerminalIcon } from '@patternfly/react-icons';
-import { useEffect, useRef, useState } from 'react';
+import { Dispatch, ReactNode, SetStateAction, useEffect, useRef, useState } from 'react';
 
 const PROXY_PATH = '/api/proxy/plugin/phase1-ingestion-console/backend';
 
-// how long each revealed step stays on screen before the next one appears,
-// just enough to read as it goes rather than a single instant text dump
-const REVEAL_STEP_MS = 650;
+// how long each revealed probe stays on screen before the next one
+// appears, both sandbox columns reveal the same probe at the same time,
+// that lockstep is the whole point of a side by side compare
+const REVEAL_STEP_MS = 700;
+
+interface SandboxInfo {
+  pod: string;
+  phase: string;
+  ready: boolean;
+  runtime_class: string;
+  node: string;
+}
+
+interface Probe {
+  id: string;
+  label: string;
+  command: string;
+  coordinator_output: string;
+  retrieval_output: string;
+  verdict: 'same' | 'differs';
+}
+
+interface ProbeGroup {
+  id: string;
+  label: string;
+  probes: Probe[];
+}
+
+interface CompareResult {
+  namespace: string;
+  coordinator: SandboxInfo;
+  retrieval: SandboxInfo;
+  groups: ProbeGroup[];
+}
+
+// one command a visitor typed themselves, run against both real sandboxes
+// at once, same pod pair the scripted probes above already use
+interface TypedBoth {
+  command: string;
+  coordinator_output: string;
+  retrieval_output: string;
+}
 
 interface DemoStep {
   label: string;
@@ -22,101 +76,50 @@ interface DemoResult {
   steps: DemoStep[];
 }
 
-// one line a visitor typed and ran themselves, same pod the six scripted
-// steps above already run against, just not one of the canned ones
-interface TypedExec {
-  command: string;
-  output: string;
-}
-
 interface Scenario {
   id: string;
+  title: string;
   intro: string;
-  // short one line tag naming the real component that produced this
-  // result, "thing that acted -> thing it acted on", kept terse so it
-  // fits on a single line instead of wrapping or spilling past the card
   enforcedBy: string;
 }
 
-// one entry per real, live checked scenario from the layered security demo
-// script. two of the eight originally proposed need no new page at all:
-// content scoping (abac filtered rag) and prompt injection refusal both
-// already happen live on the Ask SPEAR Shield chat page with the right
-// question, and the tool response injection defense is left out on
-// purpose, it currently fails closed on every tool response, not only
-// malicious ones, see PHASE2_PLAN.md section 5's own honest note
-const SCENARIOS: Scenario[] = [
+// display order for the compare groups, mirrors COMPARE_GROUP_IDS on the
+// backend, a run all walks this same order so it lands identically to
+// pressing every one of these buttons in order by hand
+const COMPARE_GROUPS: { id: string; label: string }[] = [
+  { id: 'runtime-isolation', label: 'Runtime Isolation' },
+  { id: 'resource-visibility', label: 'Resource Visibility' },
+  { id: 'common-containment', label: 'Common Containment' },
+  { id: 'least-privilege-egress', label: 'Least Privilege Egress' },
+];
+
+// the two scenarios below the compare grid test caller identity and tool
+// rbac across real human personas, not sandbox runtime isolation, folding
+// them into the two runtime diff above would misrepresent what they
+// actually check, so they keep their own single terminal card format
+const ACCESS_CONTROL_SCENARIOS: Scenario[] = [
   {
-    id: 'kata-vs-runc',
-    intro:
-      'the coordinator runs on plain runc, the retrieval agent runs under Kata. which worker each one lands on is the scheduler\'s call, the same worker or different workers are both correct. nproc and free -h inside each sandbox, plus the landed worker\'s own capacity, make the difference visible, not just a config flag.',
-    enforcedBy: 'kata RuntimeClass -> retrieval sandbox (coordinator stays runc)',
-  },
-  {
-    id: 'network-containment',
-    intro:
-      'from inside the sandbox: an arbitrary internet host is blocked, a disallowed hostname fails to resolve, and the one real allowlisted route is reached.',
-    enforcedBy: 'openshell network policy -> sandbox supervisor',
-  },
-  {
-    id: 'filesystem-containment',
-    intro:
-      'from inside the sandbox: deleting real system binaries is refused, only the sandbox\u2019s own separate volume is writable.',
-    enforcedBy: 'openshell landlock policy -> sandbox supervisor',
-  },
-  {
-    id: 'workload-identity',
-    intro:
-      'the identical call, made with no bearer token at all, is rejected from outside any sandbox but succeeds from the real coordinator process, proving a credential was transparently attached before the request ever left the pod.',
-    enforcedBy: 'openshell token_grant -> Authorino AuthPolicy spear-retrieval-a2a-auth',
+    id: 'identity-rejected',
+    title: 'SPEAR Shield Identity Rejected at the Gateway',
+    intro: 'A caller with no real identity is rejected before any agent logic ever runs.',
+    enforcedBy: 'Authorino AuthPolicy spear-retrieval-a2a-auth -> a2a gateway',
   },
   {
     id: 'tool-scope-and-assignee',
+    title: 'SPEAR Shield Tool Scope and Assignee Enforcement',
     intro:
-      'three real callers against the real work tracker: a caller lacking the role is blocked at the gateway, a caller holding the role is blocked by this project\u2019s own assignee check on someone else\u2019s item, and a caller acting on their own item succeeds.',
+      'Three real callers against the real work tracker: a caller lacking the role is blocked at the gateway, a caller holding the role is blocked by this project\u2019s own assignee check on someone else\u2019s item, and a caller acting on their own item succeeds.',
     enforcedBy: 'Authorino AuthPolicy spear-shield-gateway-tools-auth -> mcp gateway',
   },
-  {
-    id: 'identity-rejected',
-    intro: 'a caller with no real identity is rejected before any agent logic ever runs.',
-    enforcedBy: 'Authorino AuthPolicy spear-retrieval-a2a-auth -> a2a gateway',
-  },
 ];
-
-// proper case headings for each block, shown instead of the raw scenario
-// id pre-run and instead of the backend's lowercase prose title once run,
-// a block heading should read as a heading, not as a sentence fragment
-const SCENARIO_TITLES: Record<string, string> = {
-  'kata-vs-runc': 'SPEAR Shield Agent Sandboxes: Kata Micro VM vs Plain runc Isolation',
-  'network-containment': 'SPEAR Shield Agent Sandbox Network Containment',
-  'filesystem-containment': 'SPEAR Shield Agent Sandbox Filesystem Containment',
-  'workload-identity': 'SPEAR Shield Workload Identity Enforcement',
-  'tool-scope-and-assignee': 'SPEAR Shield Tool Scope and Assignee Enforcement',
-  'identity-rejected': 'SPEAR Shield Identity Rejected at the Gateway',
-};
-
-// proper case intro lines under each heading, same reason as the titles,
-// a paragraph under a heading reads as a sentence, not a fragment
-const SCENARIO_INTROS: Record<string, string> = {
-  'kata-vs-runc':
-    'The coordinator runs on plain runc, the retrieval agent runs under Kata. Which worker each one lands on is the scheduler\u2019s call, the same worker or different workers are both correct. nproc and free -h inside each sandbox, plus the landed worker\u2019s own capacity, make the difference visible, not just a config flag.',
-  'network-containment':
-    'From inside the sandbox: an arbitrary internet host is blocked, a disallowed hostname fails to resolve, and the one real allowlisted route is reached.',
-  'filesystem-containment':
-    'From inside the sandbox: deleting real system binaries is refused, only the sandbox\u2019s own separate volume is writable.',
-  'workload-identity':
-    'The identical call, made with no bearer token at all, is rejected from outside any sandbox but succeeds from the real coordinator process, proving a credential was transparently attached before the request ever left the pod.',
-  'tool-scope-and-assignee':
-    'Three real callers against the real work tracker: a caller lacking the role is blocked at the gateway, a caller holding the role is blocked by this project\u2019s own assignee check on someone else\u2019s item, and a caller acting on their own item succeeds.',
-  'identity-rejected':
-    'A caller with no real identity is rejected before any agent logic ever runs.',
-};
 
 // terminal chrome, three dots in the usual red/yellow/green, a fixed
 // monospace body with its own dark background regardless of the console's
 // own light/dark theme, a terminal should always look like a terminal
-const TerminalWindow = ({ title, children }: { title: string; children: React.ReactNode }) => (
-  <div style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid #000', marginTop: '0.75rem' }}>
+const TerminalWindow = ({ title, children }: { title: string; children: ReactNode }) => (
+  <div
+    style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid #000', height: '100%' }}
+  >
     <Flex
       alignItems={{ default: 'alignItemsCenter' }}
       gap={{ default: 'gapSm' }}
@@ -130,7 +133,10 @@ const TerminalWindow = ({ title, children }: { title: string; children: React.Re
         </span>
       </FlexItem>
       <FlexItem grow={{ default: 'grow' }}>
-        <Content component="small" style={{ color: '#9a9ea3', textAlign: 'center', display: 'block' }}>
+        <Content
+          component="small"
+          style={{ color: '#9a9ea3', textAlign: 'center', display: 'block' }}
+        >
           {title}
         </Content>
       </FlexItem>
@@ -140,10 +146,13 @@ const TerminalWindow = ({ title, children }: { title: string; children: React.Re
         background: '#1b1d21',
         color: '#e0e0e0',
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-        fontSize: '0.82rem',
+        fontSize: '0.8rem',
         padding: '0.85rem 1rem',
-        maxHeight: '28rem',
-        overflowY: 'auto',
+        // tall enough up front to hold all four groups side by side without
+        // its own scrollbar, the page itself scrolls instead, so a visitor
+        // comparing two columns never has to scroll one column out of sync
+        // with the other
+        minHeight: '56rem',
       }}
     >
       {children}
@@ -166,64 +175,7 @@ const PromptLine = ({ command }: { command: string }) => (
   </div>
 );
 
-// an editable prompt, the live companion to PromptLine above. enter runs
-// whatever is typed against the same sandbox pod the six scripted
-// scenarios already use, nothing canned about it
-const PromptInput = ({
-  value,
-  busy,
-  onChange,
-  onSubmit,
-}: {
-  value: string;
-  busy: boolean;
-  onChange: (next: string) => void;
-  onSubmit: () => void;
-}) => (
-  <Flex alignItems={{ default: 'alignItemsCenter' }} gap={{ default: 'gapSm' }} style={{ marginTop: '0.4rem' }}>
-    <FlexItem>
-      <span style={{ color: '#6ec1ff' }}>$</span>
-    </FlexItem>
-    <FlexItem grow={{ default: 'grow' }}>
-      <TextInput
-        value={value}
-        isDisabled={busy}
-        placeholder="type any command, it runs for real inside this same sandbox pod"
-        onChange={(_e, next) => onChange(next)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            onSubmit();
-          }
-        }}
-        style={{
-          background: 'transparent',
-          border: 'none',
-          boxShadow: 'none',
-          color: '#e0e0e0',
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-          fontSize: '0.82rem',
-          padding: 0,
-        }}
-      />
-    </FlexItem>
-    <FlexItem>
-      <Button
-        variant="plain"
-        isDisabled={busy || !value.trim()}
-        onClick={onSubmit}
-        icon={
-          <Icon>
-            <PaperPlaneIcon />
-          </Icon>
-        }
-        aria-label="run command"
-      />
-    </FlexItem>
-  </Flex>
-);
-
-const OutputLine = ({ output, ok }: { output: string; ok: boolean }) => (
+const OutputLine = ({ output, ok = true }: { output: string; ok?: boolean }) => (
   <div
     style={{
       whiteSpace: 'pre-wrap',
@@ -237,51 +189,244 @@ const OutputLine = ({ output, ok }: { output: string; ok: boolean }) => (
   </div>
 );
 
+// the group divider line that appears once per group inside both
+// terminals, reads as a section break in an otherwise continuous session
+const GroupDivider = ({ label }: { label: string }) => (
+  <Content
+    component="small"
+    style={{
+      display: 'block',
+      color: '#6b6f76',
+      textTransform: 'uppercase',
+      letterSpacing: '0.04em',
+      borderTop: '1px solid #33363b',
+      marginTop: '0.75rem',
+      paddingTop: '0.6rem',
+      marginBottom: '0.4rem',
+    }}
+  >
+    {label}
+  </Content>
+);
+
+// one probe block inside a terminal: the comment line carries the
+// probe's own verdict so each side stays self contained, same prompt and
+// output styling the rest of the page already uses
+const ProbeBlock = ({ probe, output }: { probe: Probe; output: string }) => (
+  <div>
+    <Flex
+      justifyContent={{ default: 'justifyContentSpaceBetween' }}
+      alignItems={{ default: 'alignItemsCenter' }}
+    >
+      <FlexItem>
+        <Content component="small" style={{ color: '#9a9ea3' }}>{`# ${probe.label}`}</Content>
+      </FlexItem>
+      <FlexItem>
+        <Label isCompact color={probe.verdict === 'differs' ? 'orange' : 'green'}>
+          {probe.verdict === 'differs' ? 'differs' : 'same'}
+        </Label>
+      </FlexItem>
+    </Flex>
+    <PromptLine command={probe.command} />
+    <OutputLine output={output} />
+  </div>
+);
+
+const RuntimeBadge = ({ runtimeClass }: { runtimeClass: string }) => {
+  const isKata = runtimeClass.toLowerCase().includes('kata');
+  return (
+    <Label isCompact color={isKata ? 'orange' : 'blue'}>
+      {isKata ? 'kata micro vm' : 'runc'}
+    </Label>
+  );
+};
+
+// a free, editable prompt shared by both sandbox columns, enter runs the
+// typed command against both real pods at once, nothing canned about it
+const DualPromptInput = ({
+  value,
+  busy,
+  onChange,
+  onSubmit,
+}: {
+  value: string;
+  busy: boolean;
+  onChange: Dispatch<SetStateAction<string>>;
+  onSubmit: () => void;
+}) => (
+  <Flex
+    alignItems={{ default: 'alignItemsCenter' }}
+    gap={{ default: 'gapSm' }}
+    style={{ marginTop: '0.75rem' }}
+  >
+    <FlexItem>
+      <Content component="small" style={{ color: '#9a9ea3' }}>
+        Both $
+      </Content>
+    </FlexItem>
+    <FlexItem grow={{ default: 'grow' }}>
+      <TextInput
+        value={value}
+        isDisabled={busy}
+        placeholder="Type any command to be run on both sandboxes at once"
+        onChange={(_e, next) => onChange(next)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onSubmit();
+          }
+        }}
+      />
+    </FlexItem>
+    <FlexItem>
+      <Button
+        variant="primary"
+        isDisabled={busy || !value.trim()}
+        isLoading={busy}
+        onClick={onSubmit}
+        icon={
+          <Icon>
+            <PaperPlaneIcon />
+          </Icon>
+        }
+      >
+        Run on both
+      </Button>
+    </FlexItem>
+  </Flex>
+);
+
 export default function UnderTheHoodPage() {
   const { t } = useTranslation('plugin__phase1-ingestion-console');
-  const [busyId, setBusyId] = useState<string | null>(null);
+
+  // pod identity for both terminals, fetched once on mount, no exec
+  // involved, so the two panels already show who they are before anyone
+  // presses a single run button
+  const [identity, setIdentity] = useState<Pick<
+    CompareResult,
+    'namespace' | 'coordinator' | 'retrieval'
+  > | null>(null);
+  const [identityError, setIdentityError] = useState('');
+
+  // one group's own result, keyed by group id, present only once that
+  // group's own button (or run all) has actually run it
+  const [groupResults, setGroupResults] = useState<Record<string, ProbeGroup>>({});
+  const [groupRevealed, setGroupRevealed] = useState<Record<string, number>>({});
+  const [compareError, setCompareError] = useState('');
+  const [runningGroup, setRunningGroup] = useState<string | null>(null);
+  const [runningAll, setRunningAll] = useState(false);
+
+  const [typedBoth, setTypedBoth] = useState<TypedBoth[]>([]);
+  const [typedBothInput, setTypedBothInput] = useState('');
+  const [typedBothBusy, setTypedBothBusy] = useState(false);
+  const timers = useRef<number[]>([]);
+
+  // the two access control scenarios below, same per scenario state shape
+  // this page already used before this redesign
   const [results, setResults] = useState<Record<string, DemoResult>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
-  // how many of this scenario's steps have been revealed so far, drives
-  // the step by step terminal reveal rather than dumping everything at once
-  const [revealed, setRevealed] = useState<Record<string, number>>({});
-  // commands a visitor typed themselves, kept per scenario so each
-  // terminal grows its own session instead of sharing one global history
-  const [typed, setTyped] = useState<Record<string, TypedExec[]>>({});
-  const [typedInput, setTypedInput] = useState<Record<string, string>>({});
-  const [typedBusyId, setTypedBusyId] = useState<string | null>(null);
-  const timers = useRef<number[]>([]);
+  const [scenarioRevealed, setScenarioRevealed] = useState<Record<string, number>>({});
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => () => timers.current.forEach((id) => window.clearTimeout(id)), []);
 
-  const runTyped = (id: string) => {
-    const command = (typedInput[id] ?? '').trim();
+  useEffect(() => {
+    consoleFetchJSON(`${PROXY_PATH}/spear-shield/sandbox-identity`)
+      .then((data: Pick<CompareResult, 'namespace' | 'coordinator' | 'retrieval'>) =>
+        setIdentity(data),
+      )
+      .catch((err: Error) => setIdentityError(err.message));
+  }, []);
+
+  // runs one group for real and resolves once its own reveal animation
+  // has finished, run all below just walks every group through this same
+  // function one at a time so a run all lands exactly like pressing
+  // every button in order by hand
+  const runGroup = (groupId: string): Promise<void> => {
+    setCompareError('');
+    setRunningGroup(groupId);
+    return consoleFetchJSON(`${PROXY_PATH}/spear-shield/demo/sandbox-compare`, 'POST', {
+      body: JSON.stringify({ group: groupId }),
+    })
+      .then((data: CompareResult) => {
+        setIdentity({
+          namespace: data.namespace,
+          coordinator: data.coordinator,
+          retrieval: data.retrieval,
+        });
+        const group = data.groups[0];
+        setGroupResults((prev) => ({ ...prev, [groupId]: group }));
+        setGroupRevealed((prev) => ({ ...prev, [groupId]: 0 }));
+        return new Promise<void>((resolve) => {
+          if (group.probes.length === 0) {
+            resolve();
+            return;
+          }
+          group.probes.forEach((_probe, i) => {
+            const timer = window.setTimeout(
+              () => {
+                setGroupRevealed((prev) => ({ ...prev, [groupId]: i + 1 }));
+                if (i === group.probes.length - 1) {
+                  resolve();
+                }
+              },
+              REVEAL_STEP_MS * (i + 1),
+            );
+            timers.current.push(timer);
+          });
+        });
+      })
+      .catch((err: Error) => setCompareError(err.message))
+      .finally(() => setRunningGroup(null));
+  };
+
+  const runAllGroups = async () => {
+    setRunningAll(true);
+    setTypedBoth([]);
+    for (const def of COMPARE_GROUPS) {
+      await runGroup(def.id);
+    }
+    setRunningAll(false);
+  };
+
+  const runTypedBoth = () => {
+    const command = typedBothInput.trim();
     if (!command) {
       return;
     }
-    setTypedBusyId(id);
-    setTypedInput((prev) => ({ ...prev, [id]: '' }));
-    consoleFetchJSON(`${PROXY_PATH}/spear-shield/demo-exec`, 'POST', { body: JSON.stringify({ command }) })
-      .then((data: TypedExec) => {
-        setTyped((prev) => ({ ...prev, [id]: [...(prev[id] ?? []), data] }));
-      })
-      .catch((err: Error) => {
-        setTyped((prev) => ({ ...prev, [id]: [...(prev[id] ?? []), { command, output: `error: ${err.message}` }] }));
-      })
-      .finally(() => setTypedBusyId(null));
+    setTypedBothBusy(true);
+    setTypedBothInput('');
+    consoleFetchJSON(`${PROXY_PATH}/spear-shield/demo-exec-both`, 'POST', {
+      body: JSON.stringify({ command }),
+    })
+      .then((data: TypedBoth) => setTypedBoth((prev) => [...prev, data]))
+      .catch((err: Error) =>
+        setTypedBoth((prev) => [
+          ...prev,
+          {
+            command,
+            coordinator_output: `error: ${err.message}`,
+            retrieval_output: `error: ${err.message}`,
+          },
+        ]),
+      )
+      .finally(() => setTypedBothBusy(false));
   };
 
-  const run = (id: string) => {
+  const runScenario = (id: string) => {
     setBusyId(id);
     setErrors((prev) => ({ ...prev, [id]: '' }));
-    setRevealed((prev) => ({ ...prev, [id]: 0 }));
+    setScenarioRevealed((prev) => ({ ...prev, [id]: 0 }));
     consoleFetchJSON(`${PROXY_PATH}/spear-shield/demo/${id}`, 'POST', { body: JSON.stringify({}) })
       .then((data: DemoResult) => {
         setResults((prev) => ({ ...prev, [id]: data }));
         data.steps.forEach((_step, i) => {
-          const timer = window.setTimeout(() => {
-            setRevealed((prev) => ({ ...prev, [id]: i + 1 }));
-          }, REVEAL_STEP_MS * (i + 1));
+          const timer = window.setTimeout(
+            () => {
+              setScenarioRevealed((prev) => ({ ...prev, [id]: i + 1 }));
+            },
+            REVEAL_STEP_MS * (i + 1),
+          );
           timers.current.push(timer);
         });
       })
@@ -289,26 +434,216 @@ export default function UnderTheHoodPage() {
       .finally(() => setBusyId(null));
   };
 
+  // canonical top to bottom order regardless of which button was
+  // actually clicked first, a lone group run lands in the same place a
+  // run all would have put it
+  const groupsToRender = COMPARE_GROUPS.map((def) => ({
+    group: groupResults[def.id],
+    visibleCount: groupRevealed[def.id] ?? 0,
+  })).filter((entry) => entry.group);
+
   return (
     <>
       <DocumentTitle>{t('Under the Hood')}</DocumentTitle>
       <ListPageHeader title={t('Under the Hood')} />
       <PageSection>
         <Flex direction={{ default: 'column' }} gap={{ default: 'gapLg' }}>
-          {SCENARIOS.map((scenario) => {
+          <FlexItem>
+            <Content component="h2" style={{ margin: 0 }}>
+              Agent security checks in action
+            </Content>
+            <Content component="small">
+              Probe both agent sandbox containers concurrently live for security checks.
+            </Content>
+          </FlexItem>
+
+          <FlexItem>
+            <Flex gap={{ default: 'gapSm' }} flexWrap={{ default: 'wrap' }}>
+              <FlexItem>
+                <Button
+                  variant="primary"
+                  icon={
+                    <Icon>
+                      <PlayIcon />
+                    </Icon>
+                  }
+                  isLoading={runningAll}
+                  isDisabled={runningAll || runningGroup !== null}
+                  onClick={runAllGroups}
+                >
+                  Run all
+                </Button>
+              </FlexItem>
+              {COMPARE_GROUPS.map((def) => (
+                <FlexItem key={def.id}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={
+                      <Icon>
+                        <PlayIcon />
+                      </Icon>
+                    }
+                    isLoading={runningGroup === def.id}
+                    isDisabled={runningAll || runningGroup !== null}
+                    onClick={() => {
+                      runGroup(def.id);
+                    }}
+                  >
+                    {def.label}
+                  </Button>
+                </FlexItem>
+              ))}
+            </Flex>
+          </FlexItem>
+
+          {identityError && (
+            <FlexItem>
+              <OutputLine output={`error: ${identityError}`} ok={false} />
+            </FlexItem>
+          )}
+          {compareError && (
+            <FlexItem>
+              <OutputLine output={`error: ${compareError}`} ok={false} />
+            </FlexItem>
+          )}
+
+          <FlexItem>
+            <Grid hasGutter>
+              <GridItem span={6}>
+                <Flex
+                  direction={{ default: 'column' }}
+                  gap={{ default: 'gapSm' }}
+                  style={{ marginBottom: '0.5rem' }}
+                >
+                  <Flex alignItems={{ default: 'alignItemsCenter' }} gap={{ default: 'gapSm' }}>
+                    <FlexItem>
+                      <Content component="h4" style={{ margin: 0 }}>
+                        Coordinator sandbox
+                      </Content>
+                    </FlexItem>
+                    {identity && (
+                      <FlexItem>
+                        <RuntimeBadge runtimeClass={identity.coordinator.runtime_class} />
+                      </FlexItem>
+                    )}
+                  </Flex>
+                </Flex>
+                <TerminalWindow title={`bash — ${identity?.coordinator.pod ?? 'coordinator'}`}>
+                  {groupsToRender.length === 0 && (
+                    <Content component="small" style={{ color: '#6b6f76' }}>
+                      press run all, or run a single check above, to execute it against the real
+                      cluster
+                    </Content>
+                  )}
+                  {groupsToRender.map(({ group, visibleCount }) =>
+                    visibleCount > 0 ? (
+                      <div key={group.id}>
+                        <GroupDivider label={group.label} />
+                        {group.probes.slice(0, visibleCount).map((probe) => (
+                          <ProbeBlock
+                            key={probe.id}
+                            probe={probe}
+                            output={probe.coordinator_output}
+                          />
+                        ))}
+                      </div>
+                    ) : null,
+                  )}
+                  {typedBoth.map((exec, i) => (
+                    <div key={`typed-c-${i}`}>
+                      <PromptLine command={exec.command} />
+                      <OutputLine output={exec.coordinator_output} />
+                    </div>
+                  ))}
+                </TerminalWindow>
+              </GridItem>
+
+              <GridItem span={6}>
+                <Flex
+                  direction={{ default: 'column' }}
+                  gap={{ default: 'gapSm' }}
+                  style={{ marginBottom: '0.5rem' }}
+                >
+                  <Flex alignItems={{ default: 'alignItemsCenter' }} gap={{ default: 'gapSm' }}>
+                    <FlexItem>
+                      <Content component="h4" style={{ margin: 0 }}>
+                        Retrieval sandbox
+                      </Content>
+                    </FlexItem>
+                    {identity && (
+                      <FlexItem>
+                        <RuntimeBadge runtimeClass={identity.retrieval.runtime_class} />
+                      </FlexItem>
+                    )}
+                  </Flex>
+                </Flex>
+                <TerminalWindow title={`bash — ${identity?.retrieval.pod ?? 'retrieval'}`}>
+                  {groupsToRender.length === 0 && (
+                    <Content component="small" style={{ color: '#6b6f76' }}>
+                      press run all, or run a single check above, to execute it against the real
+                      cluster
+                    </Content>
+                  )}
+                  {groupsToRender.map(({ group, visibleCount }) =>
+                    visibleCount > 0 ? (
+                      <div key={group.id}>
+                        <GroupDivider label={group.label} />
+                        {group.probes.slice(0, visibleCount).map((probe) => (
+                          <ProbeBlock
+                            key={probe.id}
+                            probe={probe}
+                            output={probe.retrieval_output}
+                          />
+                        ))}
+                      </div>
+                    ) : null,
+                  )}
+                  {typedBoth.map((exec, i) => (
+                    <div key={`typed-r-${i}`}>
+                      <PromptLine command={exec.command} />
+                      <OutputLine output={exec.retrieval_output} />
+                    </div>
+                  ))}
+                </TerminalWindow>
+              </GridItem>
+            </Grid>
+
+            <DualPromptInput
+              value={typedBothInput}
+              busy={typedBothBusy}
+              onChange={setTypedBothInput}
+              onSubmit={runTypedBoth}
+            />
+          </FlexItem>
+
+          <FlexItem>
+            <Content component="h3" style={{ marginBottom: '0.25rem' }}>
+              Identity and access control
+            </Content>
+            <Content component="small">
+              These two check real human caller identity and per tool rbac, not sandbox runtime
+              isolation, so they keep their own single terminal rather than a side by side diff.
+            </Content>
+          </FlexItem>
+
+          {ACCESS_CONTROL_SCENARIOS.map((scenario) => {
             const result = results[scenario.id];
             const error = errors[scenario.id];
-            const revealCount = revealed[scenario.id] ?? 0;
+            const revealed = scenarioRevealed[scenario.id] ?? 0;
             const isBusy = busyId === scenario.id;
-            const allRevealed = result ? revealCount >= result.steps.length : false;
+            const scenarioAllRevealed = result ? revealed >= result.steps.length : false;
             return (
               <FlexItem key={scenario.id}>
-                <Flex justifyContent={{ default: 'justifyContentSpaceBetween' }} alignItems={{ default: 'alignItemsFlexStart' }}>
+                <Flex
+                  justifyContent={{ default: 'justifyContentSpaceBetween' }}
+                  alignItems={{ default: 'alignItemsFlexStart' }}
+                >
                   <FlexItem grow={{ default: 'grow' }}>
-                    <Content component="h3" style={{ margin: 0 }}>
-                      {SCENARIO_TITLES[scenario.id] ?? result?.title ?? scenario.id}
+                    <Content component="h4" style={{ margin: 0 }}>
+                      {scenario.title}
                     </Content>
-                    <Content component="small">{SCENARIO_INTROS[scenario.id] ?? scenario.intro}</Content>
+                    <Content component="small">{scenario.intro}</Content>
                   </FlexItem>
                   <FlexItem>
                     <Button
@@ -320,54 +655,47 @@ export default function UnderTheHoodPage() {
                       }
                       isLoading={isBusy}
                       isDisabled={busyId !== null}
-                      onClick={() => run(scenario.id)}
+                      onClick={() => runScenario(scenario.id)}
                     >
                       Run
                     </Button>
                   </FlexItem>
                 </Flex>
 
-                <TerminalWindow title={`bash — ${scenario.id}`}>
-                  {!result && !error && (
-                    <Content component="small" style={{ color: '#6b6f76' }}>
-                      press run to execute this against the real cluster
-                    </Content>
-                  )}
-                  {error && <OutputLine output={`error: ${error}`} ok={false} />}
-                  {result &&
-                    result.steps.slice(0, revealCount).map((step, i) => (
-                      <div key={i}>
-                        <Content component="small" style={{ color: '#9a9ea3', display: 'block', marginBottom: '0.15rem' }}>
-                          {`# ${step.label}`}
-                        </Content>
-                        <PromptLine command={step.command} />
-                        <OutputLine output={step.output} ok={step.ok} />
-                      </div>
-                    ))}
-                  {result && allRevealed && (
-                    <>
-                      <PromptLine command="echo $?" />
-                      <OutputLine
-                        output={result.steps.every((s) => s.ok) ? '0' : '1'}
-                        ok={result.steps.every((s) => s.ok)}
-                      />
-                    </>
-                  )}
-                  {(typed[scenario.id] ?? []).map((exec, i) => (
-                    <div key={`typed-${i}`}>
-                      <PromptLine command={exec.command} />
-                      <OutputLine output={exec.output} ok />
-                    </div>
-                  ))}
-                  <PromptInput
-                    value={typedInput[scenario.id] ?? ''}
-                    busy={typedBusyId === scenario.id}
-                    onChange={(next) => setTypedInput((prev) => ({ ...prev, [scenario.id]: next }))}
-                    onSubmit={() => runTyped(scenario.id)}
-                  />
-                </TerminalWindow>
+                <div style={{ marginTop: '0.75rem' }}>
+                  <TerminalWindow title={`bash — ${scenario.id}`}>
+                    {!result && !error && (
+                      <Content component="small" style={{ color: '#6b6f76' }}>
+                        press run to execute this against the real cluster
+                      </Content>
+                    )}
+                    {error && <OutputLine output={`error: ${error}`} ok={false} />}
+                    {result &&
+                      result.steps.slice(0, revealed).map((step, i) => (
+                        <div key={i}>
+                          <Content
+                            component="small"
+                            style={{ color: '#9a9ea3', display: 'block', marginBottom: '0.15rem' }}
+                          >
+                            {`# ${step.label}`}
+                          </Content>
+                          <PromptLine command={step.command} />
+                          <OutputLine output={step.output} ok={step.ok} />
+                        </div>
+                      ))}
+                    {result && scenarioAllRevealed && (
+                      <>
+                        <PromptLine command="echo $?" />
+                        <OutputLine
+                          output={result.steps.every((s) => s.ok) ? '0' : '1'}
+                          ok={result.steps.every((s) => s.ok)}
+                        />
+                      </>
+                    )}
+                  </TerminalWindow>
+                </div>
 
-                {result && allRevealed && (
+                {result && scenarioAllRevealed && (
                   <Label
                     isCompact
                     icon={
@@ -376,7 +704,12 @@ export default function UnderTheHoodPage() {
                       </Icon>
                     }
                     color={result.steps.every((s) => s.ok) ? 'green' : 'red'}
-                    style={{ marginTop: '0.5rem', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                    style={{
+                      marginTop: '0.5rem',
+                      maxWidth: '100%',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
                   >
                     {result.steps.every((s) => s.ok)
                       ? scenario.enforcedBy

@@ -82,6 +82,19 @@ MCP_TOOL_PREFIX_MAP = {
     "search_work_packages": "openproject_search_work_packages",
     "update_work_package": "openproject_update_work_package",
 }
+# the real resource client id authorino's own tool-access-check predicate
+# keys resource_access off, straight out of 01-keycloak-realm.yaml's own
+# spear-openproject-mcp tool roles client, not re-typed as a guess, this
+# is the exact key a caller's own token carries its tool:<name> roles
+# under for this one mcp server
+MCP_SERVER_RESOURCE_KEY = "spear-worktracker/spear-openproject-mcp"
+# the exact prefixes mcp-servers/spear-shield-mcp-guard-proxy/server.py's
+# own blocked_result() writes, "tool call blocked by guardrails" for its
+# request side check, "tool response blocked by guardrails" for its
+# response side one, the one honest way from here to tell a guard proxy
+# block apart from spear-openproject-mcp's own assignee=self refusal,
+# both come back as a plain isError result, nothing else distinguishes them
+GUARD_PROXY_BLOCK_PREFIXES = ("tool call blocked by guardrails", "tool response blocked by guardrails")
 
 # rag-query-relay, not pgvector or ogx directly, see rag_query_server.py's
 # own module docstring: this cluster's openshell build does not
@@ -246,6 +259,47 @@ def run_work_tracker_tool(
     name: str, arguments: dict[str, Any], caller_token: str, trace: list[dict[str, Any]]
 ) -> str:
     started_at = time.monotonic()
+    # decoded once, up front, same helper rag_search already uses below,
+    # this is the one real fact every branch's own evidence line needs:
+    # what tool roles did the caller's own token actually carry. 'held'
+    # mirrors authorino's own tool-access-check predicate exactly, so it
+    # is a live computed answer, not a label chosen to match whichever
+    # branch the real call happened to land in
+    claims = decode_claims(caller_token)
+    roles = (claims.get("resource_access") or {}).get(MCP_SERVER_RESOURCE_KEY, {}).get("roles", [])
+    held = f"tool:{name}" in roles
+
+    def _line(label: str, value: str) -> str:
+        return f"\n{label:<21}{value}"
+
+    def _evidence(mcp_line: str) -> str:
+        rule_outcome = "allowed through the gateway" if held else "denied before the request ever left the gateway"
+        return (
+            _line("caller claims", f"resource_access[\"{MCP_SERVER_RESOURCE_KEY}\"].roles = {roles}")
+            + _line("authorino rule", f"tool-access-check \u00b7 'tool:{name}' in roles = {str(held).lower()} -> {rule_outcome}")
+            + _line("mcp server", mcp_line)
+        )
+
+    def _guardrails_evidence(stage: str, verdict_text: str) -> str:
+        # a response guard block, not a request guard one, see
+        # mcp-servers/spear-shield-mcp-guard-proxy/server.py: the real
+        # spear-openproject-mcp already ran and already returned the
+        # real, now malicious, work package text, the assignee=self
+        # check never even ran, there was nothing wrong with who asked.
+        # verdict_text looks like "blocked (regex check input)", that
+        # rail name is nemoguardrails' own name for it, describing the
+        # text it was handed, not which side of this proxy called it.
+        # the guard proxy line below already states the real side,
+        # response guard, so the rail name needs no extra caveat
+        status_word, _, rail_name = verdict_text.partition("(")
+        status_word = status_word.strip()
+        rail_name = rail_name.rstrip(")").strip()
+        return (
+            _line("mcp server", "returned the result, this never reached the assignee=self check at all")
+            + _line("guard proxy", f"{stage} guard, work-tracker-config \u00b7 status={status_word}")
+            + (_line("nemo rail", f"'{rail_name}'") if rail_name else "")
+            + _line("caught", "after spear-openproject-mcp returned the result, before the retrieval agent or the llm ever saw it")
+        )
 
     @mlflow_tracing.trace(name=f"mcp tool call: {name}", span_type=mlflow_tracing.SPAN_TYPE_TOOL)
     def _call(tool_name: str, tool_arguments: dict[str, Any]) -> dict[str, Any]:
@@ -281,19 +335,25 @@ def run_work_tracker_tool(
         # a refusal that reaches this point came back as a normal http 200,
         # spear-openproject-mcp's own assignee=self check for example, see
         # its server.py, "error" in the jsonrpc body or isError on the mcp
-        # result are both still a real block even with no exception at all
+        # result are both still a real block even with no exception at all.
+        # the gateway's own guard proxy writes this exact same isError
+        # shape for its own, entirely different, response guard block, see
+        # GUARD_PROXY_BLOCK_PREFIXES above for how this tells them apart
         blocked = "error" in response or bool(result.get("isError"))
+        category = "assignee-self"
+        if blocked and result.get("isError") and text.startswith(GUARD_PROXY_BLOCK_PREFIXES):
+            category = "guardrails"
         if span is not None:
             span.set_attribute("ok", not blocked)
             if blocked:
-                span.set_attribute("category", "assignee-self")
+                span.set_attribute("category", category)
             # the real mcp result, not just whether it was blocked, this
             # is what a reviewer or an eval judge actually needs to see
             span.set_outputs({"error": response["error"]} if "error" in response else result)
         if "error" in response:
             return {"kind": "assignee-self", "detail": response["error"]}
         if result.get("isError"):
-            return {"kind": "assignee-self", "detail": text}
+            return {"kind": category, "detail": text}
         return {"kind": "ok", "text": text}
 
     outcome = _call(name, arguments)
@@ -302,7 +362,8 @@ def run_work_tracker_tool(
         _trace_step(
             trace,
             f"mcp tool call: {name}",
-            f"blocked, mcp gateway's own tool rbac authpolicy returned {outcome['detail']}",
+            f"blocked, mcp gateway's own tool rbac authpolicy returned {outcome['detail']}"
+            + _evidence("never reached, this call did not get past authorino"),
             started_at,
             frm="retrieval-agent (kata sandbox)",
             to="mcp-gateway -> spear-openproject-mcp",
@@ -311,6 +372,9 @@ def run_work_tracker_tool(
         )
         return json.dumps({"error": outcome["detail"]})
     if kind == "hop-failure":
+        # a real infra failure, not a security decision, the claims and
+        # policy evidence above has nothing to say about a timeout or a
+        # dropped connection, so it stays out of this one branch only
         _trace_step(
             trace,
             f"mcp tool call: {name}",
@@ -322,11 +386,45 @@ def run_work_tracker_tool(
             ok=False,
         )
         return json.dumps({"error": outcome["detail"]})
+    if kind == "guardrails":
+        # the gateway's own guard proxy caught this on the way out, see
+        # _guardrails_evidence above for why this is a response guard
+        # block, not the tool-rbac or assignee-self evidence shape, a
+        # genuinely different mechanism fired here. outcome['detail'] is
+        # the guard proxy's own full sentence, "tool response blocked by
+        # guardrails, verdict: ...", the evidence line below only needs
+        # the verdict part, not that same sentence twice. the stage word
+        # is real too, GUARD_PROXY_BLOCK_PREFIXES's own two literal
+        # strings, "tool call ..." for the request guard, "tool
+        # response ..." for the response guard, this one is always the
+        # latter for a search/update refusal, call never gets this far
+        verdict_text = outcome["detail"].rsplit("verdict:", 1)[-1].strip()
+        stage = "response" if outcome["detail"].startswith("tool response") else "call"
+        _trace_step(
+            trace,
+            f"mcp tool call: {name}",
+            f"blocked: {outcome['detail']}" + _guardrails_evidence(stage, verdict_text),
+            started_at,
+            frm="retrieval-agent (kata sandbox)",
+            to="mcp-gateway -> spear-openproject-mcp",
+            protocol="mcp json-rpc tools/call",
+            ok=False,
+        )
+        return json.dumps({"error": outcome["detail"]})
     blocked = kind == "assignee-self"
+    if blocked:
+        headline = f"blocked: {outcome['detail']}"
+        mcp_line = "server.py:216, assignee_href != caller -> PermissionError"
+    elif name == "update_work_package":
+        headline = f"allowed, {claims.get('preferred_username')} holds tool:{name} and is the current assignee, status updated"
+        mcp_line = "server.py:216, assignee_href == caller -> PATCH proceeds"
+    else:
+        headline = f"allowed, {claims.get('preferred_username')} holds tool:{name}"
+        mcp_line = "no ownership check for this tool, the query itself is already scoped to the caller's own assignments"
     _trace_step(
         trace,
         f"mcp tool call: {name}",
-        "gateway tool rbac, then this project's own assignee=self check" if not blocked else f"blocked: {outcome['detail']}",
+        headline + _evidence(mcp_line),
         started_at,
         frm="retrieval-agent (kata sandbox)",
         to="mcp-gateway -> spear-openproject-mcp",

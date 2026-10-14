@@ -163,8 +163,17 @@ def guardrails_check(text: str) -> tuple[bool, str]:
     except (urllib.error.URLError, ValueError) as exc:
         # real network/parse failure, surfaced, not silently allowed
         return False, f"error: {exc}"
-    verdict = data.get("status", "error")
-    return verdict == "success", verdict
+    status = data.get("status", "error")
+    if status == "success":
+        return True, status
+    # which rail actually tripped, not just the bare status, the real
+    # nemo response carries this under guardrails_data.log, confirmed
+    # live against a crafted work package injection payload, regex
+    # check input for the work-tracker-config case
+    activated = data.get("guardrails_data", {}).get("log", {}).get("activated_rails") or []
+    if activated:
+        return False, f"{status} ({', '.join(activated)})"
+    return False, status
 
 
 def blocked_result(request_id: Any, stage: str, verdict: str) -> dict[str, Any]:

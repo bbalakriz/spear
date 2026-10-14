@@ -146,7 +146,17 @@ const TimelineHop = ({ hop, isLast }: { hop: TraceStep; isLast: boolean }) => {
         </Content>
         <Content
           component="small"
-          style={{ display: 'block', color: isBlocked ? dangerColor : undefined }}
+          style={{
+            display: 'block',
+            color: isBlocked ? dangerColor : undefined,
+            // detail now carries real multi line evidence for mcp tool call
+            // hops (caller claims, the authorino rule, the mcp server's own
+            // outcome), each on its own line, pre wrap keeps those line
+            // breaks and the mono font keeps the label columns aligned,
+            // a plain one line detail still renders exactly as before
+            whiteSpace: 'pre-wrap',
+            fontFamily: 'var(--pf-t--global--font--family--mono, monospace)',
+          }}
         >
           {hop.detail}
         </Content>

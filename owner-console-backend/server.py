@@ -931,17 +931,12 @@ def live_keycloak_client(client_id):
     return clients[0]
 
 
-def live_spire_agent_svid_log(coordinator_pod, spiffe_id):
-    # the one piece of this pathway that was still just a claim, not
-    # evidence: finds the real spire-agent daemonset pod running on the
-    # same node as the coordinator sandbox right now, reads its own log,
-    # and returns the most recent real "Creating X509-SVID" line for
-    # this exact spiffe id, with its own real timestamp. honest about
-    # what this is not: spire-agent logs X509-SVID issuance at info,
-    # the jwt-svid the token_grant provider actually fetches for the
-    # keycloak exchange is not logged at this verbosity, confirmed by
-    # grepping for "jwt" across this same log and finding nothing, not
-    # assumed
+def resolve_spire_agent_pod(coordinator_pod):
+    # one spire-agent daemonset pod per node, this cluster has 5 (confirmed
+    # live, oc get pods -n zero-trust-workload-identity-manager -l
+    # app.kubernetes.io/name=spire-agent -o wide), only the one sharing
+    # the coordinator sandbox's own node actually holds this identity's
+    # log, resolved by node name, not guessed
     node_name = k8s_core_v1().read_namespaced_pod(coordinator_pod, SPEAR_SHIELD_NAMESPACE).spec.node_name
     agents = k8s_core_v1().list_namespaced_pod(
         "zero-trust-workload-identity-manager", label_selector="app.kubernetes.io/name=spire-agent"
@@ -949,13 +944,33 @@ def live_spire_agent_svid_log(coordinator_pod, spiffe_id):
     agent_pod = next((p.metadata.name for p in agents.items if p.spec.node_name == node_name), None)
     if agent_pod is None:
         raise LookupError(f"no spire-agent pod found on node {node_name!r}")
+    return agent_pod
+
+
+def find_svid_log_line(agent_pod, spiffe_id):
+    # confirmed live this only ever says "Creating X509-SVID" once, the
+    # very first time spire issues this identity's cert, every renewal
+    # after that (every ~30 minutes here) logs "Renewing X509-SVID"
+    # instead, same meaning, spire is actively managing this exact
+    # spiffe id's credential right now, so both count as real evidence,
+    # matching only "Creating" was the actual bug: that one line almost
+    # always ages out of any bounded tail long before a renewal does.
+    # honest about what this still is not: spire-agent logs X509-SVID
+    # issuance at info, the jwt-svid the token_grant provider actually
+    # fetches for the keycloak exchange is not logged at this verbosity,
+    # confirmed by grepping for "jwt" across this same log and finding
+    # nothing, not assumed
     log_text = k8s_core_v1().read_namespaced_pod_log(
-        agent_pod, "zero-trust-workload-identity-manager", tail_lines=500
+        agent_pod, "zero-trust-workload-identity-manager", tail_lines=1000
     )
-    matches = [line for line in log_text.splitlines() if spiffe_id in line and "Creating X509-SVID" in line]
+    matches = [
+        line
+        for line in log_text.splitlines()
+        if spiffe_id in line and ("Creating X509-SVID" in line or "Renewing X509-SVID" in line)
+    ]
     if not matches:
         raise LookupError(f"no recent X509-SVID line for {spiffe_id!r} in {agent_pod!r}'s own log")
-    return agent_pod, matches[-1]
+    return matches[-1]
 
 
 def k8s_exec(pod, command, timeout=25, api=None):
@@ -1462,25 +1477,29 @@ def _workload_identity_pathway_steps():
     )
     coordinator_spiffe_id = f"spiffe://{trust_domain}/ns/{SPEAR_SHIELD_NAMESPACE}/sandbox/{coordinator_hash}"
 
+    # the real pod name has to be resolved first, before either branch
+    # below, so a no-match failure still shows the real pod this call
+    # actually checked rather than a templated placeholder, this cluster
+    # has 5 spire-agent pods, one per node, only one of them is right
     try:
-        agent_pod, svid_log_line = live_spire_agent_svid_log(COORDINATOR_POD, coordinator_spiffe_id)
-        steps.append(
-            {
-                "label": f"spire-agent's own log, real X509-SVID issuance for {coordinator_spiffe_id}",
-                "command": f"oc logs -n zero-trust-workload-identity-manager {agent_pod} --tail=500 | grep '{coordinator_spiffe_id}'",
-                "output": svid_log_line.strip(),
-                "ok": True,
-            }
-        )
+        agent_pod = resolve_spire_agent_pod(COORDINATOR_POD)
+        command = f"oc logs -n zero-trust-workload-identity-manager {agent_pod} --tail=1000 | grep '{coordinator_spiffe_id}'"
+        try:
+            svid_log_line = find_svid_log_line(agent_pod, coordinator_spiffe_id)
+            output, ok = svid_log_line.strip(), True
+        except Exception as exc:  # noqa: BLE001
+            output, ok = f"no match this call: {exc}", False
     except Exception as exc:  # noqa: BLE001
-        steps.append(
-            {
-                "label": f"spire-agent's own log, real X509-SVID issuance for {coordinator_spiffe_id}",
-                "command": "oc logs -n zero-trust-workload-identity-manager <spire-agent pod on the coordinator's node> --tail=500 | grep '<spiffe id>'",
-                "output": f"no match this call: {exc}",
-                "ok": False,
-            }
-        )
+        command = "oc get pods -n zero-trust-workload-identity-manager -l app.kubernetes.io/name=spire-agent -o wide"
+        output, ok = f"could not resolve the coordinator's own node's spire-agent pod: {exc}", False
+    steps.append(
+        {
+            "label": f"spire-agent's own log, real X509-SVID issuance for {coordinator_spiffe_id}",
+            "command": command,
+            "output": output,
+            "ok": ok,
+        }
+    )
     # honest gap, not hidden: spire-agent logs X509-SVID issuance at
     # info, not the jwt-svid the token grant below actually fetches,
     # confirmed by grepping this same log for "jwt" and finding nothing.
@@ -1490,9 +1509,24 @@ def _workload_identity_pathway_steps():
     kc_base = SPEAR_SHIELD_ISSUER_URL.rsplit("/realms/", 1)[0]
     realm = SPEAR_SHIELD_ISSUER_URL.rsplit("/", 1)[-1]
     client = live_keycloak_client("spear-coordinator-workload")
+    # this is a read only admin api inspection call this demo makes to
+    # show the client's own config, openshell never calls this endpoint
+    # at all. the real exchange openshell's own token_grant provider
+    # runs is a different call entirely, a POST to
+    # {kc_base}/realms/{realm}/protocol/openid-connect/token with
+    # grant_type=client_credentials and client_assertion_type=
+    # urn:ietf:params:oauth:client-assertion-type:jwt-spiffe, see
+    # openshell/providers/coordinator-a2a-token-grant.yaml's own
+    # token_grant block, not reproduced here since it needs the real
+    # spire issued svid as its client_assertion, a live admin credential
+    # cannot stand in for that
     steps.append(
         {
-            "label": "keycloak's own client, admin api, read only, the federated-jwt side of the token grant",
+            "label": (
+                "keycloak's own client config, admin api read only, this never mints a token, "
+                f"the real exchange is a separate POST to {realm}/protocol/openid-connect/token "
+                "with the spire svid as client_assertion, see coordinator-a2a-token-grant.yaml"
+            ),
             "command": f"curl -s '{kc_base}/admin/realms/{realm}/clients?clientId=spear-coordinator-workload' -H 'Authorization: Bearer <admin token>'",
             "output": json.dumps(
                 {

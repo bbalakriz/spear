@@ -16,8 +16,10 @@
 # inspect kfp runs if their own openshift identity already has rbac on
 # spear-pipelines' own pipeline resources, this backend's own service
 # account never gains that power just by existing.
+import base64
 import json
 import os
+import re
 import ssl
 import time
 import urllib.error
@@ -870,6 +872,92 @@ def k8s_core_v1():
     return _k8s_core_v1
 
 
+_k8s_custom_objects = None
+
+
+def k8s_custom_objects():
+    global _k8s_custom_objects
+    if _k8s_custom_objects is None:
+        k8s_config.load_incluster_config()
+        _k8s_custom_objects = k8s_client.CustomObjectsApi()
+    return _k8s_custom_objects
+
+
+def live_cluster_spiffeid(name):
+    # the real spire.spiffe.io ClusterSPIFFEID this cluster is actually
+    # running, read at call time, not a copy of 06-cluster-spiffeid.yaml's
+    # own text pasted into this file
+    obj = k8s_custom_objects().get_cluster_custom_object("spire.spiffe.io", "v1alpha1", "clusterspiffeids", name)
+    return obj.get("spec", {})
+
+
+def live_authpolicy(namespace, name):
+    # same idea for the retrieval gateway's own kuadrant.io AuthPolicy,
+    # read live instead of quoted from 07-a2a-gateway.yaml
+    obj = k8s_custom_objects().get_namespaced_custom_object("kuadrant.io", "v1", namespace, "authpolicies", name)
+    return obj.get("spec", {})
+
+
+def live_keycloak_client(client_id):
+    # read only admin lookup, same admin-cli password grant
+    # scripts/09-install-worktracker-and-agents.sh's own
+    # ensure_spiffe_federated_auth already performs, just a get here, no
+    # writes. keycloak-initial-admin lives in the keycloak namespace, a
+    # narrowly scoped Role/RoleBinding (manifests/spear-shield-agents/10-console-backend-pathway-rbac.yaml)
+    # is the only thing granting this backend's own service account
+    # access to that one named secret
+    secret = k8s_core_v1().read_namespaced_secret("keycloak-initial-admin", "keycloak")
+    admin_user = base64.b64decode(secret.data["username"]).decode()
+    admin_pass = base64.b64decode(secret.data["password"]).decode()
+    kc_base = SPEAR_SHIELD_ISSUER_URL.rsplit("/realms/", 1)[0]
+    realm = SPEAR_SHIELD_ISSUER_URL.rsplit("/", 1)[-1]
+    token_req = urllib.request.Request(
+        f"{kc_base}/realms/master/protocol/openid-connect/token",
+        data=urllib.parse.urlencode(
+            {"grant_type": "password", "client_id": "admin-cli", "username": admin_user, "password": admin_pass}
+        ).encode(),
+        method="POST",
+    )
+    with urllib.request.urlopen(token_req, timeout=15, context=_no_verify_ctx()) as resp:
+        admin_token = json.loads(resp.read())["access_token"]
+    lookup_req = urllib.request.Request(
+        f"{kc_base}/admin/realms/{realm}/clients?clientId={client_id}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    with urllib.request.urlopen(lookup_req, timeout=15, context=_no_verify_ctx()) as resp:
+        clients = json.loads(resp.read())
+    if not clients:
+        raise LookupError(f"keycloak client {client_id!r} not found in realm {realm!r}")
+    return clients[0]
+
+
+def live_spire_agent_svid_log(coordinator_pod, spiffe_id):
+    # the one piece of this pathway that was still just a claim, not
+    # evidence: finds the real spire-agent daemonset pod running on the
+    # same node as the coordinator sandbox right now, reads its own log,
+    # and returns the most recent real "Creating X509-SVID" line for
+    # this exact spiffe id, with its own real timestamp. honest about
+    # what this is not: spire-agent logs X509-SVID issuance at info,
+    # the jwt-svid the token_grant provider actually fetches for the
+    # keycloak exchange is not logged at this verbosity, confirmed by
+    # grepping for "jwt" across this same log and finding nothing, not
+    # assumed
+    node_name = k8s_core_v1().read_namespaced_pod(coordinator_pod, SPEAR_SHIELD_NAMESPACE).spec.node_name
+    agents = k8s_core_v1().list_namespaced_pod(
+        "zero-trust-workload-identity-manager", label_selector="app.kubernetes.io/name=spire-agent"
+    )
+    agent_pod = next((p.metadata.name for p in agents.items if p.spec.node_name == node_name), None)
+    if agent_pod is None:
+        raise LookupError(f"no spire-agent pod found on node {node_name!r}")
+    log_text = k8s_core_v1().read_namespaced_pod_log(
+        agent_pod, "zero-trust-workload-identity-manager", tail_lines=500
+    )
+    matches = [line for line in log_text.splitlines() if spiffe_id in line and "Creating X509-SVID" in line]
+    if not matches:
+        raise LookupError(f"no recent X509-SVID line for {spiffe_id!r} in {agent_pod!r}'s own log")
+    return agent_pod, matches[-1]
+
+
 def k8s_exec(pod, command, timeout=25, api=None):
     # runs a real shell command inside a real sandbox pod and returns its
     # combined stdout/stderr. container is always "agent", confirmed live,
@@ -1049,10 +1137,24 @@ def mcp_tool_call(name, arguments, caller_token):
 # content scoping) and 8 (prompt injection refusal) from that session's own
 # proposal need no new code at all, the existing /spear-shield/ask endpoint
 # already demonstrates both live with the right question. tool response
-# injection defense is deliberately left out, see that session's own
-# finding: it currently fails closed on every tool response, not only
-# malicious ones, the shared guardrails config was never tuned for
-# structured tool output shapes. kata vs runc, network containment and
+# injection defense was left out at the time this comment was first
+# written, that session's own finding was that the shared guardrails
+# config failed closed on every tool response, not only malicious ones,
+# a real work package's own legitimate assignee name tripped a PERSON
+# entity rule meant for something else entirely. fixed since, not still
+# true: work-tracker-config (manifests/spear-guardrails/03-work-tracker-config.yaml)
+# drops that PERSON rule and keeps only the regex rail that actually
+# matters here, confirmed live against a real, malicious work package
+# (id 41, data-governance project, assignee balakrishnan.b, subject
+# itself carrying an injected instruction payload), a clean real subject
+# line passes, that exact malicious one gets blocked by
+# spear-shield-mcp-guard-proxy's own response guard before the retrieval
+# agent or its llm ever sees it. this scenario still has no console
+# button of its own though, unlike 7 and 8 above, it is currently only
+# reachable by asking balakrishnan.b's own real persona to show their
+# work packages through the actual chat, not through a demo endpoint
+# here, that is the one real gap left, not whether the defense works.
+# kata vs runc, network containment and
 # filesystem containment used to be three separate single sandbox
 # scenarios here, folded later into demo_sandbox_compare below: one real
 # call that runs the same probes against both sandboxes at once and lets
@@ -1325,19 +1427,122 @@ def demo_exec_both_command(command):
     return {"command": command, "coordinator_output": c_output, "retrieval_output": r_output}
 
 
+def _workload_identity_pathway_steps():
+    # four atomic steps, one real command, one real raw output each, no
+    # narration mixed into the command itself. every value comes from
+    # live_cluster_spiffeid/live_keycloak_client/live_authpolicy/
+    # live_spire_agent_svid_log at call time, none of it typed into this
+    # file, PHASE2_PLAN.md line 192's own confirmed chain finally spelled
+    # out instead of left as "something transparently attached a valid
+    # credential"
+    steps = []
+
+    spiffeid_spec = live_cluster_spiffeid("spear-shield-agents-sandboxes")
+    steps.append(
+        {
+            "label": "spire's own ClusterSPIFFEID, the identity template this sandbox is matched against",
+            "command": "oc get clusterspiffeid spear-shield-agents-sandboxes -o jsonpath='{.spec}'",
+            "output": json.dumps(spiffeid_spec, indent=2),
+            "ok": bool(spiffeid_spec),
+        }
+    )
+    # confirmed live: there is no separate trustDomain field on this spec
+    # at all, it only ever exists inlined in spiffeIDTemplate's own
+    # spiffe://<trust domain>/ns/... string, pulled out here rather than
+    # assumed from the yaml comment prose that first described it
+    template_match = re.match(r"spiffe://([^/]+)/", spiffeid_spec.get("spiffeIDTemplate", ""))
+    trust_domain = template_match.group(1) if template_match else ""
+    coordinator_hash = next(
+        (
+            m.get("values", [""])[0]
+            for m in spiffeid_spec.get("podSelector", {}).get("matchExpressions", [])
+            if m.get("key") == "agents.x-k8s.io/sandbox-name-hash"
+        ),
+        "",
+    )
+    coordinator_spiffe_id = f"spiffe://{trust_domain}/ns/{SPEAR_SHIELD_NAMESPACE}/sandbox/{coordinator_hash}"
+
+    try:
+        agent_pod, svid_log_line = live_spire_agent_svid_log(COORDINATOR_POD, coordinator_spiffe_id)
+        steps.append(
+            {
+                "label": f"spire-agent's own log, real X509-SVID issuance for {coordinator_spiffe_id}",
+                "command": f"oc logs -n zero-trust-workload-identity-manager {agent_pod} --tail=500 | grep '{coordinator_spiffe_id}'",
+                "output": svid_log_line.strip(),
+                "ok": True,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        steps.append(
+            {
+                "label": f"spire-agent's own log, real X509-SVID issuance for {coordinator_spiffe_id}",
+                "command": "oc logs -n zero-trust-workload-identity-manager <spire-agent pod on the coordinator's node> --tail=500 | grep '<spiffe id>'",
+                "output": f"no match this call: {exc}",
+                "ok": False,
+            }
+        )
+    # honest gap, not hidden: spire-agent logs X509-SVID issuance at
+    # info, not the jwt-svid the token grant below actually fetches,
+    # confirmed by grepping this same log for "jwt" and finding nothing.
+    # the line above proves spire is actively managing this exact
+    # identity, not that a jwt-svid fetch specifically happened
+
+    kc_base = SPEAR_SHIELD_ISSUER_URL.rsplit("/realms/", 1)[0]
+    realm = SPEAR_SHIELD_ISSUER_URL.rsplit("/", 1)[-1]
+    client = live_keycloak_client("spear-coordinator-workload")
+    steps.append(
+        {
+            "label": "keycloak's own client, admin api, read only, the federated-jwt side of the token grant",
+            "command": f"curl -s '{kc_base}/admin/realms/{realm}/clients?clientId=spear-coordinator-workload' -H 'Authorization: Bearer <admin token>'",
+            "output": json.dumps(
+                {
+                    "clientId": client.get("clientId"),
+                    "clientAuthenticatorType": client.get("clientAuthenticatorType"),
+                    "attributes": client.get("attributes"),
+                },
+                indent=2,
+            ),
+            "ok": bool(client),
+        }
+    )
+
+    authpolicy_spec = live_authpolicy(SPEAR_SHIELD_NAMESPACE, "spear-retrieval-a2a-auth")
+    steps.append(
+        {
+            "label": "the retrieval gateway's own real AuthPolicy, the rule that actually accepts this token",
+            "command": "oc get authpolicy spear-retrieval-a2a-auth -n spear-shield-agents -o jsonpath='{.spec.rules.authentication}'",
+            "output": json.dumps(authpolicy_spec.get("rules", {}).get("authentication", {}), indent=2),
+            "ok": bool(authpolicy_spec),
+        }
+    )
+    return steps
+
+
 def demo_workload_identity():
-    # a pass/fail contrast, not a literal claims readout. confirmed live
-    # this session that reading the retrieval agent's own inbound
-    # authorization header is not a usable proof here: openshell's own
-    # a2a router strips any caller presented authorization header before
-    # it reaches the sandboxed app, for every caller, a sound anti
-    # spoofing property since a2a itself has no per hop auth of its own.
-    # so instead this shows the same naked call made two ways: from
-    # outside any sandbox with no token at all, which the retrieval a2a
-    # gateway's own authpolicy cleanly rejects, versus the real
-    # coordinator process making the identical call with no token of its
-    # own, which succeeds, proving something transparently attached a
-    # valid credential before that request ever left the coordinator pod
+    # a pass/fail contrast, not a literal claims readout, for the two
+    # steps below. confirmed live this session that reading the
+    # retrieval agent's own inbound authorization header is not a usable
+    # proof here: openshell's own a2a router strips any caller presented
+    # authorization header before it reaches the sandboxed app, for
+    # every caller, a sound anti spoofing property since a2a itself has
+    # no per hop auth of its own. so instead this shows the same naked
+    # call made two ways: from outside any sandbox with no token at all,
+    # which the retrieval a2a gateway's own authpolicy cleanly rejects,
+    # versus the real coordinator process making the identical call with
+    # no token of its own, which succeeds. the first step below is what
+    # actually names the credential that contrast is about
+    try:
+        pathway_steps = _workload_identity_pathway_steps()
+    except Exception as exc:  # noqa: BLE001
+        pathway_steps = [
+            {
+                "label": "the real pathway this hop actually uses, read live off the cluster",
+                "command": "see output",
+                "output": f"could not read the live pathway off the cluster: {exc}",
+                "ok": False,
+            }
+        ]
+
     naked_body = {"jsonrpc": "2.0", "id": 1, "method": "whoami", "params": {}}
     naked_req = urllib.request.Request(
         RETRIEVAL_A2A_INTERNAL_URL,
@@ -1376,21 +1581,21 @@ def demo_workload_identity():
 
     return {
         "title": "workload identity, this hop authenticates as this exact sandbox, not a shared secret",
-        "steps": [
+        "steps": pathway_steps
+        + [
             {
-                "label": "the same call, made from outside any sandbox, with no token at all",
-                "command": f"POST {RETRIEVAL_A2A_INTERNAL_URL} (no Authorization header)",
+                "label": "the same call, made from outside any sandbox, with no token at all, rejected",
+                "command": f"curl -sk -X POST {RETRIEVAL_A2A_INTERNAL_URL} -H 'Content-Type: application/json' -d '{json.dumps(naked_body)}'",
                 "output": f"HTTP {naked_status}\n{naked_detail}",
                 "ok": naked_status in (401, 403),
             },
             {
-                "label": "the real coordinator process makes the identical call, also with no token of its own",
-                "command": f"http_json({RETRIEVAL_A2A_INTERNAL_URL}, whoami), the exact channel every real tool delegation already uses",
-                "output": (
-                    "this call succeeded where the naked call above was rejected, the openshell supervisor "
-                    "transparently attached a valid credential minted for this exact sandbox before the "
-                    f"request ever left the pod:\n{downstream_detail}"
+                "label": "the real coordinator process makes the identical call, no token of its own, succeeds",
+                "command": (
+                    f"curl -sk -X POST {SPEAR_COORDINATOR_A2A_URL} -H 'Authorization: Bearer <real token>' "
+                    f"-H 'Content-Type: application/json' -d '{json.dumps(downstream_body)}'"
                 ),
+                "output": downstream_detail,
                 "ok": downstream_succeeded,
             },
         ],

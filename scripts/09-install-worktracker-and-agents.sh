@@ -703,6 +703,9 @@ main() {
   log "console backend's own cross namespace rbac to read/exec into the two sandbox pods, applied here too since this is where the target pods live"
   oc apply -f "${AGENTS_MANIFESTS}/08-console-backend-rbac.yaml"
 
+  log "console backend's own read only rbac to name the workload identity pathway live, applied here too since the clusterspiffeid/authpolicy it reads were just created above"
+  oc apply -f "${AGENTS_MANIFESTS}/10-console-backend-pathway-rbac.yaml"
+
   log "ext_proc body mode fix (see comment on patch_mcp_ext_proc_buffered)"
   patch_mcp_ext_proc_buffered
 

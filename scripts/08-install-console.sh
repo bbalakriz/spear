@@ -193,6 +193,13 @@ main() {
   oc apply -f "${ROOT_DIR}/manifests/spear-console/03-backend-node-reader.yaml"
   ensure_sso_realm_demo_users
   oc apply -f "${ROOT_DIR}/manifests/spear-shield-agents/08-console-backend-rbac.yaml"
+  # the trend page's own closed loop patch button, lives in spear-guardrails's
+  # own manifest folder since that is the namespace the rbac grants into, same
+  # cross namespace apply shape as the line just above. found missing from
+  # every install script entirely, not just undocumented: a fresh install
+  # would 403 on this button until someone noticed and applied it by hand,
+  # same as this project's own PHASE3_PLAN.md section 8 ended up doing live
+  oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/09-console-backend-closed-loop-rbac.yaml"
   oc apply -f "${ROOT_DIR}/manifests/spear-console/01-backend.yaml"
 
   local backend_image

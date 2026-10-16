@@ -1,10 +1,9 @@
 .secrets-backup/
 *.dockerconfigjson
 *.md
-# real project content, not a working note like the PHASE*_PLAN.md files
-# at the repo root, tracked despite the blanket *.md rule above
 !seed-data/raw-intake/*.md
 !scripts/PLATFORM_SETUP.md
+!DEPLOYMENT.md
 *.html
 *.rtf
 *.pptx
@@ -15,3 +14,5 @@ venv/
 __pycache__/
 *.pyc
 *.excalidraw
+mockups/
+archive/*

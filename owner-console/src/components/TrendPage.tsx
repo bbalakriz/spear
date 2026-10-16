@@ -5,6 +5,7 @@ import {
 } from '@openshift-console/dynamic-plugin-sdk';
 import { useTranslation } from 'react-i18next';
 import {
+  Alert,
   Button,
   Content,
   Card,
@@ -50,12 +51,18 @@ const COLOR_LOWER_BETTER = '#ec7a08';
 interface CycleBenchmark {
   run_id: string;
   job_name: string;
+  job_id: string;
   provider_id: string;
   benchmark_id: string;
   metrics: Record<string, number>;
   params: Record<string, string>;
   report_url: string | null;
 }
+
+// the one job this page can act on directly, not just chart. kept as a
+// constant rather than inlined below so the "is this that card" checks
+// read the same everywhere they appear
+const CONFIDENTIAL_LEAK_JOB = 'spear-shield-confidential-data-leak-scan';
 
 interface Cycle {
   run_id: string;
@@ -267,6 +274,30 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
   const [reportHtml, setReportHtml] = useState<string | null>(null);
   const [reportError, setReportError] = useState('');
 
+  // the closed loop button, confidential data leak card only: acts on
+  // this latest already completed scan's own job id, never triggers a
+  // fresh scan itself. owner-console-backend does the real read + patch
+  // in process against the real coordinator-agent-config configmap, see
+  // apply_closed_loop_patterns in owner-console-backend/server.py
+  const [closedLoopBusy, setClosedLoopBusy] = useState(false);
+  const [closedLoopResult, setClosedLoopResult] = useState<{
+    added: string[];
+    message: string;
+  } | null>(null);
+  const [closedLoopError, setClosedLoopError] = useState('');
+
+  const triggerClosedLoop = (jobId: string) => {
+    setClosedLoopBusy(true);
+    setClosedLoopResult(null);
+    setClosedLoopError('');
+    consoleFetchJSON(`${PROXY_PATH}/trigger/closed-loop`, 'POST', {
+      body: JSON.stringify({ job_id: jobId }),
+    })
+      .then((result: { added: string[]; message: string }) => setClosedLoopResult(result))
+      .catch((err: Error) => setClosedLoopError(err.message))
+      .finally(() => setClosedLoopBusy(false));
+  };
+
   const openReport = (reportUrl: string) => {
     setReportOpen(true);
     setReportHtml(null);
@@ -326,6 +357,42 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
         </Flex>
       </CardTitle>
       <CardBody>
+        {jobName === CONFIDENTIAL_LEAK_JOB &&
+          latestBenchmark &&
+          (latestBenchmark.metrics.confidential_leak_count ?? 0) > 0 && (
+            <div style={{ marginBottom: '0.75rem' }}>
+              <Button
+                variant="danger"
+                isLoading={closedLoopBusy}
+                isDisabled={closedLoopBusy || !latestBenchmark.job_id}
+                onClick={() => triggerClosedLoop(latestBenchmark.job_id)}
+              >
+                Tighten guardrails from this leak
+              </Button>
+              {!latestBenchmark.job_id && (
+                <Content component="small" style={{ color: '#6b6f76', marginLeft: '0.5rem' }}>
+                  this cycle predates the closed loop, no leak detail was recorded for it
+                </Content>
+              )}
+              {closedLoopResult && (
+                <Alert
+                  variant={closedLoopResult.added.length > 0 ? 'success' : 'info'}
+                  title={closedLoopResult.message}
+                  isInline
+                  style={{ marginTop: '0.5rem' }}
+                />
+              )}
+              {closedLoopError && (
+                <Alert
+                  variant="danger"
+                  title={`Could not tighten guardrails: ${closedLoopError}`}
+                  isInline
+                  style={{ marginTop: '0.5rem' }}
+                />
+              )}
+            </div>
+          )}
+
         {allPoints.length === 0 ? (
           <Content component="small" style={{ color: '#6b6f76' }}>
             No cycles have logged this metric yet.

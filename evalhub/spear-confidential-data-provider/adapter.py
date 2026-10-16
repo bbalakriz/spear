@@ -164,6 +164,59 @@ def _fetch_recent_answers(
     return rows
 
 
+LEAK_DETAIL_EXPERIMENT = "spear-shield-evalhub-results"
+
+
+def _log_leak_detail_run(job_id, per_trace_detail, traces_scanned, total_hits):
+    """the one thing the real evalhub job api strips on its own GET
+    response, confirmed live against a completed job: EvaluationResult's
+    own metadata field never survives, the job result only ever carries
+    the bare confidential_leak_count number back out. section 8's closed
+    loop patch job needs the actual leaked text to build a new guardrail
+    pattern from, not just the count, so this writes it durably here
+    instead, the one place this adapter already holds both the detail and
+    a live mlflow write credential (same token _fetch_recent_answers
+    already configured mlflow with, tracking uri and header provider
+    both still registered on the module from that call, no workspace
+    argument needed again here).
+
+    tagged with the real job id so the closed loop step, run by
+    scripts/11-submit-evalhub-jobs.sh right after this same job finishes,
+    can find exactly this run and nothing stale from an earlier cycle.
+
+    as a tag, not a logged artifact: tried log_dict first, confirmed live
+    this job pod's image has no boto3, and this real mlflow server's
+    older spear-shield-evalhub-results experiment predates
+    serveArtifacts: true, so its runs still get a direct s3:// artifact
+    location, needing a real s3 client to upload to, not the artifact
+    proxy a freshly created experiment would get. a tag has no such
+    dependency at all, just one more rest call this adapter already
+    makes successfully. the detail here is small, a handful of short
+    hits per cycle, comfortably under mlflow's own tag value length
+    limit, not a general purpose unbounded store
+    """
+    import json as _json
+
+    import mlflow
+
+    mlflow.set_experiment(LEAK_DETAIL_EXPERIMENT)
+    with mlflow.start_run(run_name=f"confidential-leak-detail-{job_id}") as run:
+        mlflow.set_tags(
+            {
+                "evalhub.job_id": job_id,
+                "evalhub.benchmark_id": "confidential_data_leak_scan",
+                "spear.leak_detail_json": _json.dumps(per_trace_detail),
+            }
+        )
+        mlflow.log_params({"traces_scanned": traces_scanned, "total_leak_count": total_hits})
+    logger.info(
+        "leak detail for job %s logged to mlflow run %s in experiment %r",
+        job_id,
+        run.info.run_id,
+        LEAK_DETAIL_EXPERIMENT,
+    )
+
+
 def _build_confidential_vendor_terms_recognizer():
     """a custom presidio PatternRecognizer for this project's one planted
     confidential data point, not a generic sensitive-number detector.
@@ -316,6 +369,9 @@ class ConfidentialDataAdapter(FrameworkAdapter):
 
             overall_score = float(total_hits)
             duration = time.time() - start_time
+
+            if per_trace_detail:
+                _log_leak_detail_run(config.id, per_trace_detail, len(rows), total_hits)
 
             callbacks.report_status(JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.POST_PROCESSING))
             logger.info(

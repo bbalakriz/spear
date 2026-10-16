@@ -30,6 +30,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import boto3
+import yaml
 from kubernetes import client as k8s_client, config as k8s_config
 from kubernetes.stream import stream as k8s_stream
 
@@ -391,6 +392,11 @@ def recent_eval_cycles(max_results=10):
                     # confirmed live, so job_name is what a chart legend
                     # should key off, not provider_id
                     "job_name": tags.get("evalhub.job_name", ""),
+                    # the real evalhub job id, not this mlflow run's own id,
+                    # needed by the closed loop patch button below to find
+                    # the separate leak detail run adapter.py tags with this
+                    # same value, see find_leak_detail_tag
+                    "job_id": tags.get("evalhub.job_id", ""),
                     "provider_id": provider_id or params.get("provider_id", ""),
                     "benchmark_id": tags.get("evalhub.benchmark_id", "") or params.get("benchmark_id", ""),
                     "metrics": metrics,
@@ -419,6 +425,85 @@ def recent_eval_cycles(max_results=10):
 
     cycles.reverse()
     return cycles
+
+
+GUARDRAILS_NS = os.environ.get("GUARDRAILS_NS", "spear-guardrails")
+GUARDRAILS_CM = "coordinator-agent-config"
+
+
+def find_leak_detail_tag(job_id):
+    # evalhub/spear-confidential-data-provider/adapter.py tags its own
+    # small mlflow run with this, the real leaked text, see that file's
+    # own _log_leak_detail_run for why: the evalhub job api itself strips
+    # this detail, only the bare confidential_leak_count survives there.
+    # same experiment log_eval_to_mlflow.py already logs every cycle's
+    # benchmarks into, found here by the same job id tag that run already
+    # carries, confirmed in recent_eval_cycles above. a clean scan with no
+    # leaks never creates this run at all, that is the real "nothing to
+    # patch" signal, not a separate flag
+    exp = find_eval_results_experiment()
+    if exp is None:
+        return None
+    runs = mlflow_post(
+        "/api/2.0/mlflow/runs/search",
+        {
+            "experiment_ids": [exp["experiment_id"]],
+            "filter": f"tags.`evalhub.job_id` = '{job_id}'",
+            "max_results": 5,
+        },
+    ).get("runs", [])
+    for run in runs:
+        tags = {t["key"]: t["value"] for t in run.get("data", {}).get("tags", [])}
+        if "spear.leak_detail_json" in tags:
+            return tags["spear.leak_detail_json"]
+    return None
+
+
+def leak_patterns_from_detail(raw_detail_json):
+    # same house style the hand written patterns in coordinator-agent-config
+    # already use, and the same real bug find_leak_patterns.py hit live the
+    # first time this ran against a genuine leak: re.escape on this python
+    # still escapes a literal space into the two characters backslash-space,
+    # so a bare \s+ sweep over the already escaped text matches the space
+    # inside that sequence and stacks a second backslash. collapsing runs
+    # of that exact escaped form instead, not a raw whitespace pass
+    leaking_traces = json.loads(raw_detail_json)
+    texts = sorted({hit["text"] for trace in leaking_traces for hit in trace.get("hits", [])})
+    patterns = []
+    for text in texts:
+        escaped = re.escape(text.strip())
+        patterns.append(re.sub(r"(?:\\ )+", r"\\s+", escaped))
+    return patterns
+
+
+def apply_closed_loop_patterns(job_id):
+    # the whole closed loop patch, in process, no job pod: confirmed live
+    # this is genuinely fast, a plain mlflow read plus one configmap patch,
+    # spinning up a batch/v1 Job for this (the first working version of
+    # this did exactly that) was over-engineered for a user clicking a
+    # button and waiting on the response, that shape stays reserved for
+    # the actual unattended nightly cycle, which needs its own long
+    # running pod regardless of this button's existence
+    raw_detail = find_leak_detail_tag(job_id)
+    if raw_detail is None:
+        return {"added": [], "message": "no leak detail found for this job, nothing to patch"}
+
+    candidates = leak_patterns_from_detail(raw_detail)
+    cm = k8s_core_v1().read_namespaced_config_map(GUARDRAILS_CM, GUARDRAILS_NS)
+    config = yaml.safe_load(cm.data["config.yaml"])
+    patterns = config["rails"]["config"]["regex_detection"]["input"]["patterns"]
+    existing = set(patterns)
+
+    added = [p for p in candidates if p not in existing]
+    if not added:
+        return {"added": [], "message": f"all {len(candidates)} candidate pattern(s) already present"}
+
+    patterns.extend(added)
+    new_yaml = yaml.safe_dump(config, default_flow_style=False, sort_keys=False)
+    k8s_core_v1().patch_namespaced_config_map(
+        GUARDRAILS_CM, GUARDRAILS_NS, {"data": {"config.yaml": new_yaml}}
+    )
+    return {"added": added, "message": f"added {len(added)} new pattern(s) to {GUARDRAILS_CM}"}
 
 
 # ---- kfp pipeline server rest helpers, all authenticated with the caller's
@@ -1867,6 +1952,17 @@ class Handler(BaseHTTPRequestHandler):
                 result["pattern_name"] = winner["pattern_name"]
                 result["dashboard_url"] = dashboard_run_link(result["run_id"])
                 self._json(200, result)
+            elif path == "/trigger/closed-loop":
+                # PHASE3_PLAN.md section 8, the ui half: the trend page's
+                # own confidential data leak card already shows which
+                # cycle's job_id to act on, no new scan triggered here, see
+                # apply_closed_loop_patterns's own comment for why this
+                # runs in process rather than as a batch/v1 Job
+                job_id = (body.get("job_id") or "").strip()
+                if not job_id:
+                    self._json(400, {"error": "job_id is required"})
+                    return
+                self._json(200, apply_closed_loop_patterns(job_id))
             elif path == "/spear-shield/ask":
                 message_text = (body.get("message") or "").strip()
                 if not message_text:

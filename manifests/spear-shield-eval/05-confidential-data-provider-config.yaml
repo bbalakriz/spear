@@ -41,7 +41,7 @@ data:
     # prints the current one
     runtime:
       k8s:
-        image: image-registry.openshift-image-registry.svc:5000/spear-shield-eval/spear-confidential-data-provider@sha256:d30ff4784dfc1f6a2bc070b03b2995fb7328bdd46db681aa9cb43b6058e63367
+        image: image-registry.openshift-image-registry.svc:5000/spear-shield-eval/spear-confidential-data-provider@sha256:380a2e8b392804b53be1ff4792bfc47b40b6fcb9d9b0c72bcec82d80e6d259b8
         entrypoint:
           - python3
           - main.py

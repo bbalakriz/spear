@@ -14,5 +14,6 @@ venv/
 __pycache__/
 *.pyc
 *.excalidraw
+!spear-shield-e2e-slide.excalidraw
 mockups/
 archive/*

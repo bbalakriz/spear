@@ -17,3 +17,5 @@ __pycache__/
 !spear-shield-e2e-slide.excalidraw
 mockups/
 archive/*
+*.drawio
+*.excalidraw

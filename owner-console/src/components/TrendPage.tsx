@@ -11,15 +11,13 @@ import {
   Card,
   CardBody,
   CardTitle,
-  DescriptionList,
-  DescriptionListDescription,
-  DescriptionListGroup,
-  DescriptionListTerm,
   Flex,
   FlexItem,
   FormGroup,
   FormSelect,
   FormSelectOption,
+  Grid,
+  GridItem,
   Label,
   Modal,
   ModalBody,
@@ -47,6 +45,11 @@ const PROXY_PATH = '/api/proxy/plugin/phase1-ingestion-console/backend';
 // same color instead of victory's own per child color cycling
 const COLOR_HIGHER_BETTER = '#06c';
 const COLOR_LOWER_BETTER = '#ec7a08';
+// off white rather than pure white, the status tile title sits on the
+// console's own card background in both light and dark theme, pure
+// white (#fff) blows out against that background, this reads as a
+// clean near white title without the glare
+const COLOR_TILE_TITLE = '#f0f0f0';
 
 interface CycleBenchmark {
   run_id: string;
@@ -229,7 +232,7 @@ const JobStatusTile = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }
   return (
     <Card isCompact style={{ height: '100%' }}>
       <CardBody>
-        <Content component="small" style={{ color: '#6b6f76', display: 'block' }}>
+        <Content component="small" style={{ color: COLOR_TILE_TITLE, display: 'block' }}>
           {JOB_TITLES[jobName] ?? jobName}
         </Content>
         <Flex
@@ -334,7 +337,12 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
   const hasThreshold = !Number.isNaN(thresholdValue);
 
   return (
-    <Card>
+    // height 100% so every card in the same grid row bottoms out flush
+    // with its neighbor, a grid row stretches the item wrapper to the
+    // tallest card's height on its own, but the card itself still needs
+    // telling to actually fill that wrapper rather than sizing to its
+    // own, shorter, content
+    <Card style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <CardTitle>
         <Flex
           justifyContent={{ default: 'justifyContentSpaceBetween' }}
@@ -356,7 +364,12 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
           )}
         </Flex>
       </CardTitle>
-      <CardBody>
+      {/* flex column, flex 1 so this fills whatever extra height the
+          card picked up from height 100% above, the bottom action row
+          below gets marginTop auto so it docks to this same bottom edge
+          on every card in the row instead of floating wherever its own
+          content happens to end */}
+      <CardBody style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {jobName === CONFIDENTIAL_LEAK_JOB &&
           latestBenchmark &&
           (latestBenchmark.metrics.confidential_leak_count ?? 0) > 0 && (
@@ -399,7 +412,7 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
           </Content>
         ) : (
           <>
-            <div style={{ height: '220px' }}>
+            <div style={{ height: '170px' }}>
               <Chart
                 ariaDesc={metric.label}
                 containerComponent={
@@ -418,25 +431,19 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
                     }}
                   />
                 }
-                height={220}
-                padding={{ top: 20, bottom: 60, left: 60, right: 20 }}
+                height={170}
+                padding={{ top: 16, bottom: 50, left: 55, right: 16 }}
                 themeColor={metric.lowerIsBetter ? ChartThemeColor.orange : ChartThemeColor.blue}
               >
                 <ChartAxis
-                  label="Eval cycle"
                   tickValues={cycles.map((_c, i) => i + 1)}
                   tickFormat={(x: number) => formatCycleLabel(cycles[x - 1])}
                   style={{
-                    tickLabels: { angle: -30, textAnchor: 'end', fontSize: 9 },
-                    axisLabel: { padding: 48 },
+                    tickLabels: { angle: -30, textAnchor: 'end', fontSize: 8 },
                   }}
                   fixLabelOverlap
                 />
-                <ChartAxis
-                  dependentAxis
-                  label={metric.label}
-                  style={{ axisLabel: { padding: 45 } }}
-                />
+                <ChartAxis dependentAxis style={{ tickLabels: { fontSize: 9 } }} />
                 {hasThreshold && (
                   <ChartThreshold
                     data={[
@@ -456,45 +463,28 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
               </Chart>
             </div>
 
+            {/* one compact line instead of a description list grid, a
+                narrower 2 up card has no room to spare for a term/value
+                pair taking its own row per field */}
             {latestBenchmark && (
-              <DescriptionList isCompact isHorizontal style={{ marginTop: '0.5rem' }}>
-                <DescriptionListGroup>
-                  <DescriptionListTerm>Model</DescriptionListTerm>
-                  <DescriptionListDescription>
-                    {shortModelName(
-                      latestBenchmark.params.model ?? latestBenchmark.params.model_name,
-                    )}
-                  </DescriptionListDescription>
-                </DescriptionListGroup>
-                <DescriptionListGroup>
-                  <DescriptionListTerm>Provider</DescriptionListTerm>
-                  <DescriptionListDescription>
-                    {latestBenchmark.provider_id || 'n/a'}
-                  </DescriptionListDescription>
-                </DescriptionListGroup>
-                {latestBenchmark.params.num_examples_evaluated && (
-                  <DescriptionListGroup>
-                    <DescriptionListTerm>Examples evaluated</DescriptionListTerm>
-                    <DescriptionListDescription>
-                      {latestBenchmark.params.num_examples_evaluated}
-                    </DescriptionListDescription>
-                  </DescriptionListGroup>
-                )}
-                {latestBenchmark.params.duration_seconds && (
-                  <DescriptionListGroup>
-                    <DescriptionListTerm>Duration</DescriptionListTerm>
-                    <DescriptionListDescription>
-                      {Number(latestBenchmark.params.duration_seconds).toFixed(1)}s
-                    </DescriptionListDescription>
-                  </DescriptionListGroup>
-                )}
-              </DescriptionList>
+              <Content
+                component="small"
+                style={{ color: '#6b6f76', display: 'block', marginTop: '0.5rem' }}
+              >
+                {shortModelName(latestBenchmark.params.model ?? latestBenchmark.params.model_name)}
+                {' · '}
+                {latestBenchmark.provider_id || 'n/a'}
+                {latestBenchmark.params.num_examples_evaluated &&
+                  ` · ${latestBenchmark.params.num_examples_evaluated} examples`}
+                {latestBenchmark.params.duration_seconds &&
+                  ` · ${Number(latestBenchmark.params.duration_seconds).toFixed(1)}s`}
+              </Content>
             )}
 
             <Flex
               justifyContent={{ default: 'justifyContentSpaceBetween' }}
               alignItems={{ default: 'alignItemsCenter' }}
-              style={{ marginTop: '0.5rem' }}
+              style={{ marginTop: 'auto', paddingTop: '0.5rem' }}
             >
               <FlexItem>
                 <Content component="small">
@@ -642,13 +632,16 @@ export default function TrendPage() {
                 </FlexItem>
               ))}
             </Flex>
-            <Flex direction={{ default: 'column' }} gap={{ default: 'gapLg' }}>
+            {/* 2 x 2 so all four cards are visible together on one page,
+                a single scrolling column of four full width charts was
+                the thing actually forcing the long scroll */}
+            <Grid hasGutter>
               {Object.keys(METRICS_BY_JOB).map((jobName) => (
-                <FlexItem key={jobName}>
+                <GridItem key={jobName} span={6}>
                   <TrendCard jobName={jobName} cycles={cycles} />
-                </FlexItem>
+                </GridItem>
               ))}
-            </Flex>
+            </Grid>
           </>
         )}
       </PageSection>

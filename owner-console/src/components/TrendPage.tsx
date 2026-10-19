@@ -219,7 +219,7 @@ const JobStatusTile = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }
 
   let icon = <MinusCircleIcon color="#8a8d90" />;
   let statusText = 'No runs yet';
-  let statusColor = '#6b6f76';
+  let statusColor = COLOR_TILE_TITLE;
   if (hasPass) {
     const passed = passValue === 1;
     icon = passed ? <CheckCircleIcon color="#3e8635" /> : <ExclamationCircleIcon color="#c9190b" />;
@@ -248,7 +248,7 @@ const JobStatusTile = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }
         {latest && (
           <Content
             component="small"
-            style={{ color: '#6b6f76', display: 'block', marginTop: '0.25rem' }}
+            style={{ color: COLOR_TILE_TITLE, display: 'block', marginTop: '0.25rem' }}
           >
             last run: {formatCycleLabel(latest.cycle)}
           </Content>

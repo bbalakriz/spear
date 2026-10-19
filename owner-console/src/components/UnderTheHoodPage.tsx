@@ -102,7 +102,7 @@ const ACCESS_CONTROL_SCENARIOS: Scenario[] = [
     id: 'workload-identity',
     title: 'SPEAR Shield Workload Identity, Coordinator to Retrieval',
     intro:
-      'The coordinator sandbox calls the retrieval agent with no token of its own, yet something still attaches a valid credential before the request leaves the pod. This names that credential live off the real cluster: a spire issued jwt-svid, exchanged with keycloak for a real access token, injected on the outbound call.',
+      'The coordinator agent calls the retrieval agent with no token of its own, OpenShell injects a valid credential into outbound calls by exchanging a SPIRE issued JWT SVID with Keycloak (Federated JWT) for a real access token',
     enforcedBy: 'spire ClusterSPIFFEID -> keycloak federated-jwt client_credentials grant -> AuthPolicy spear-retrieval-a2a-auth',
   },
   {
@@ -473,7 +473,7 @@ export default function UnderTheHoodPage() {
         <Flex direction={{ default: 'column' }} gap={{ default: 'gapLg' }}>
           <FlexItem>
             <Content component="h2" style={{ margin: 0 }}>
-              Checl Agent security controls
+              Check agent security and verify compliance
             </Content>
             <Content component="small">
               Probe both agent sandbox containers concurrently live for security checks.
@@ -555,8 +555,7 @@ export default function UnderTheHoodPage() {
                 <TerminalWindow title={`bash — ${identity?.coordinator.pod ?? 'coordinator'}`}>
                   {groupsToRender.length === 0 && (
                     <Content component="small" style={{ color: '#6b6f76' }}>
-                      press run all, or run a single check above, to execute it against the real
-                      cluster
+                      Press run all, or run a single check above, to execute the checks against the agents in the cluster
                     </Content>
                   )}
                   {groupsToRender.map(({ group, visibleCount }) =>
@@ -605,8 +604,7 @@ export default function UnderTheHoodPage() {
                 <TerminalWindow title={`bash — ${identity?.retrieval.pod ?? 'retrieval'}`}>
                   {groupsToRender.length === 0 && (
                     <Content component="small" style={{ color: '#6b6f76' }}>
-                      press run all, or run a single check above, to execute it against the real
-                      cluster
+                      Press run all, or run a single check above, to execute the checks against the agents in the cluster
                     </Content>
                   )}
                   {groupsToRender.map(({ group, visibleCount }) =>
@@ -692,7 +690,7 @@ export default function UnderTheHoodPage() {
                   <TerminalWindow title={`bash — ${scenario.id}`}>
                     {!result && !error && (
                       <Content component="small" style={{ color: '#6b6f76' }}>
-                        press run to execute this against the real cluster
+                        Press run to execute the workload identity check against the agents in the cluster
                       </Content>
                     )}
                     {error && <OutputLine output={`error: ${error}`} ok={false} />}

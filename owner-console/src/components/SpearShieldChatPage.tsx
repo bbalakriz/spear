@@ -272,11 +272,7 @@ export default function SpearShieldChatPage() {
       <ListPageHeader title={t('Ask SPEAR Shield')} />
       <PageSection>
         <Content component="p">
-          SPEAR Shield is this environment{'\u2019'}s governed entry point into the organization
-          {'\u2019'}s knowledge base and work tracker. Every answer below is generated as you, the
-          signed in console user, through the same identity, isolation and guardrails controls the
-          rest of this platform enforces for every other agent to agent and agent to tool call,
-          nothing on this page is a separate or relaxed path.
+          SPEAR Shield is the governed gateway to the organization{'\u2019'}s knowledge base and OpenProject work tracker. All responses execute as the signed in user, subject to the same identity, isolation and security controls enforced across all agent to agent and agent to tool interactions. No exceptions or alternate trust paths.
         </Content>
 
         <Card style={{ marginTop: '1rem' }}>

@@ -585,10 +585,8 @@ export default function TrendPage() {
       <DocumentTitle>{t('Evaluation Trends')}</DocumentTitle>
       <ListPageHeader title={t('Evaluation Trends')} />
       <PageSection>
-        <Content component="small" style={{ display: 'block', marginBottom: '1rem' }}>
-          Safety and quality evaluation history for the coordinator agent. Each point is one
-          completed evaluation cycle across answer quality, agentic workflow health, prompt attack
-          resistance, and confidential data protection, sourced directly from evaluation results.
+        <Content component="p" >
+          Agent safety and quality evaluation history. Each data point represents a completed evaluation cycle, covering response quality, workflow integrity, prompt injection resilience and confidential data protection, based on recorded evaluation results.
         </Content>
 
         <Flex

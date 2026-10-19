@@ -100,20 +100,20 @@ const COMPARE_GROUPS: { id: string; label: string }[] = [
 const ACCESS_CONTROL_SCENARIOS: Scenario[] = [
   {
     id: 'workload-identity',
-    title: 'SPEAR Shield workload identity check',
+    title: 'Agent workload identity check',
     intro:
       'The coordinator agent calls the retrieval agent with no token of its own, OpenShell injects a valid credential into outbound calls by exchanging a SPIRE issued JWT SVID with Keycloak (Federated JWT) for a real access token',
     enforcedBy: 'spire ClusterSPIFFEID -> keycloak federated-jwt client_credentials grant -> AuthPolicy spear-retrieval-a2a-auth',
   },
   {
     id: 'identity-rejected',
-    title: 'SPEAR Shield Identity Rejected at the Gateway',
+    title: 'Identity rejected at the MCP gateway',
     intro: 'A caller with no real identity is rejected before any agent logic ever runs.',
     enforcedBy: 'Authorino AuthPolicy spear-retrieval-a2a-auth -> a2a gateway',
   },
   {
     id: 'tool-scope-and-assignee',
-    title: 'SPEAR Shield Tool Scope and Assignee Enforcement',
+    title: 'Tool scope and assignee enforcement',
     intro:
       'Three real callers against the OpenProject work tracker: a caller lacking the role is blocked at the gateway, a caller holding the role is blocked by this project\u2019s own assignee check on someone else\u2019s item and a caller acting on their own item succeeds.',
     enforcedBy: 'Authorino AuthPolicy spear-shield-gateway-tools-auth -> mcp gateway',
@@ -690,7 +690,7 @@ export default function UnderTheHoodPage() {
                   <TerminalWindow title={`bash — ${scenario.id}`}>
                     {!result && !error && (
                       <Content component="small" style={{ color: '#6b6f76' }}>
-                        Press run to execute the workload identity check against the agents in the cluster
+                        Press run to execute this check against the agents in the cluster
                       </Content>
                     )}
                     {error && <OutputLine output={`error: ${error}`} ok={false} />}

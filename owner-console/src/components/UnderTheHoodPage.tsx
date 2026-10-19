@@ -99,17 +99,17 @@ const COMPARE_GROUPS: { id: string; label: string }[] = [
 // actually check, so they keep their own single terminal card format
 const ACCESS_CONTROL_SCENARIOS: Scenario[] = [
   {
-    id: 'identity-rejected',
-    title: 'SPEAR Shield Identity Rejected at the Gateway',
-    intro: 'A caller with no real identity is rejected before any agent logic ever runs.',
-    enforcedBy: 'Authorino AuthPolicy spear-retrieval-a2a-auth -> a2a gateway',
-  },
-  {
     id: 'workload-identity',
     title: 'SPEAR Shield Workload Identity, Coordinator to Retrieval',
     intro:
       'The coordinator sandbox calls the retrieval agent with no token of its own, yet something still attaches a valid credential before the request leaves the pod. This names that credential live off the real cluster: a spire issued jwt-svid, exchanged with keycloak for a real access token, injected on the outbound call.',
     enforcedBy: 'spire ClusterSPIFFEID -> keycloak federated-jwt client_credentials grant -> AuthPolicy spear-retrieval-a2a-auth',
+  },
+  {
+    id: 'identity-rejected',
+    title: 'SPEAR Shield Identity Rejected at the Gateway',
+    intro: 'A caller with no real identity is rejected before any agent logic ever runs.',
+    enforcedBy: 'Authorino AuthPolicy spear-retrieval-a2a-auth -> a2a gateway',
   },
   {
     id: 'tool-scope-and-assignee',
@@ -218,8 +218,24 @@ const GroupDivider = ({ label }: { label: string }) => (
 
 // one probe block inside a terminal: the comment line carries the
 // probe's own verdict so each side stays self contained, same prompt and
-// output styling the rest of the page already uses
-const ProbeBlock = ({ probe, output }: { probe: Probe; output: string }) => (
+// output styling the rest of the page already uses.
+//
+// a couple of probe commands (runtime-class) are written backend side
+// with a literal {pod} placeholder rather than one pod's own real name
+// baked in, since the same probe object backs both columns and the two
+// columns have two different real pod names. podName, when given, is
+// this column's own real name from the identity call that already ran
+// on mount, substituted here so the terminal never shows a raw
+// placeholder a visitor could not actually run themselves.
+const ProbeBlock = ({
+  probe,
+  output,
+  podName,
+}: {
+  probe: Probe;
+  output: string;
+  podName?: string;
+}) => (
   <div>
     <Flex
       justifyContent={{ default: 'justifyContentSpaceBetween' }}
@@ -234,7 +250,7 @@ const ProbeBlock = ({ probe, output }: { probe: Probe; output: string }) => (
         </Label>
       </FlexItem>
     </Flex>
-    <PromptLine command={probe.command} />
+    <PromptLine command={podName ? probe.command.replace('{pod}', podName) : probe.command} />
     <OutputLine output={output} />
   </div>
 );
@@ -457,7 +473,7 @@ export default function UnderTheHoodPage() {
         <Flex direction={{ default: 'column' }} gap={{ default: 'gapLg' }}>
           <FlexItem>
             <Content component="h2" style={{ margin: 0 }}>
-              Agent security checks in action
+              Checl Agent security controls
             </Content>
             <Content component="small">
               Probe both agent sandbox containers concurrently live for security checks.
@@ -552,6 +568,7 @@ export default function UnderTheHoodPage() {
                             key={probe.id}
                             probe={probe}
                             output={probe.coordinator_output}
+                            podName={identity?.coordinator.pod}
                           />
                         ))}
                       </div>
@@ -601,6 +618,7 @@ export default function UnderTheHoodPage() {
                             key={probe.id}
                             probe={probe}
                             output={probe.retrieval_output}
+                            podName={identity?.retrieval.pod}
                           />
                         ))}
                       </div>
@@ -624,7 +642,7 @@ export default function UnderTheHoodPage() {
             />
           </FlexItem>
 
-          <FlexItem>
+          {/* <FlexItem>
             <Content component="h3" style={{ marginBottom: '0.25rem' }}>
               Identity and access control
             </Content>
@@ -633,7 +651,7 @@ export default function UnderTheHoodPage() {
               workload credential, and per tool rbac, not sandbox runtime isolation, so they each
               keep their own single terminal rather than a side by side diff.
             </Content>
-          </FlexItem>
+          </FlexItem> */}
 
           {ACCESS_CONTROL_SCENARIOS.map((scenario) => {
             const result = results[scenario.id];

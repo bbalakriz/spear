@@ -506,8 +506,8 @@ export default function KnowledgeBasePage() {
 
   return (
     <>
-      <DocumentTitle>{t('Knowledge Base')}</DocumentTitle>
-      <ListPageHeader title={t('Knowledge Base')} />
+      <DocumentTitle>{t('Sanitize Knowledge Base')}</DocumentTitle>
+      <ListPageHeader title={t('Sanitize Knowledge Base')} />
       <PageSection>
         <Card>
           <CardTitle>Knowledge pipeline</CardTitle>

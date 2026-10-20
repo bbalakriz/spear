@@ -1,10 +1,10 @@
 # SPEAR Shield Deployment Guide
 
-Enterprises have been deploying AI at a fast pace for the past two years. Out in the field the same pattern keeps showing up, security gets addressed after the deployment, never before.
+Enterprises have been deploying AI at a fast pace. Out in the field the same pattern keeps showing up, security gets addressed after the deployment, never before.
 
-CISO teams keep asking the same three questions. Who exactly can this AI see data for? What happens if someone tries to manipulate it through the documents or tools it uses? If something goes wrong, can we actually prove what it accessed and why?
+CISO teams keep asking the same questions. Who exactly can this AI see data for? What happens if someone tries to manipulate it through the documents or tools it uses? If something goes wrong, can we actually prove what it accessed and why?
 
-SPEAR is an answer to closing that gap, a secure permission aware agentic runner designed to solve the OWASP failure modes we see repeatedly in enterprise AI deployments, with one real control for each one. It is implemented end to end on Red Hat OpenShift AI 3.5.1: two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a Kuadrant/Authorino MCP gateway with per-tool RBAC, identified by Keycloak caller tokens and SPIRE workload identity, with an OpenShift console dynamic plugin as the operator's console, a KFP ingestion plus AutoRAG pipeline chain building the knowledge base and an EvalHub evaluation cycle (ragas, IBM CLEAR, garak and a custom confidential data leak scanner) feeding MLflow.
+SPEAR is our answer to closing that gap, a secure permission aware agentic runner designed to solve the OWASP failure modes we see repeatedly in enterprise AI deployments, with one real control for each one. It is implemented end to end on Red Hat OpenShift AI : two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a Kuadrant/Authorino MCP gateway with per-tool RBAC, identified by Keycloak caller tokens and SPIRE workload identity, with an OpenShift console dynamic plugin as the operator's console, a KFP ingestion plus AutoRAG pipeline chain building the knowledge base and an EvalHub evaluation cycle (ragas, IBM CLEAR, garak and a custom confidential data leak scanner) feeding MLflow.
 
 First install the project chain and an optional evaluation cycle. Every command below is literal, every hostname is resolved live from the cluster by the script that needs it and every script is idempotent, safe to rerun.
 

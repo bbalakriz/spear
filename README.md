@@ -1,8 +1,12 @@
 # SPEAR Shield Deployment Guide
 
-SPEAR Shield is a permission aware agentic security reference architecture, implemented end to end on Red Hat OpenShift AI 3.5.1: two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a Kuadrant/Authorino MCP gateway with per-tool RBAC, identified by Keycloak caller tokens and SPIRE workload identity, with an OpenShift console dynamic plugin as the operator's console, a KFP ingestion plus AutoRAG pipeline chain building the knowledge base and an EvalHub evaluation cycle (ragas, IBM CLEAR, garak and a custom confidential data leak scanner) feeding MLflow.
+Enterprises have been deploying AI at a fast pace for the past two years. Out in the field the same pattern keeps showing up, security gets addressed after the deployment, never before.
 
-First install, start to finish: about 1.5 to 2.5 hours across platform prerequisites, the project chain and an optional evaluation cycle. Every command below is literal, every hostname is resolved live from the cluster by the script that needs it and every script is idempotent, safe to rerun.
+CISO teams keep asking the same three questions. Who exactly can this AI see data for? What happens if someone tries to manipulate it through the documents or tools it uses? If something goes wrong, can we actually prove what it accessed and why?
+
+SPEAR is an answer to closing that gap, a secure permission aware agentic runner designed to solve the OWASP failure modes we see repeatedly in enterprise AI deployments, with one real control for each one. It is implemented end to end on Red Hat OpenShift AI 3.5.1: two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a Kuadrant/Authorino MCP gateway with per-tool RBAC, identified by Keycloak caller tokens and SPIRE workload identity, with an OpenShift console dynamic plugin as the operator's console, a KFP ingestion plus AutoRAG pipeline chain building the knowledge base and an EvalHub evaluation cycle (ragas, IBM CLEAR, garak and a custom confidential data leak scanner) feeding MLflow.
+
+First install the project chain and an optional evaluation cycle. Every command below is literal, every hostname is resolved live from the cluster by the script that needs it and every script is idempotent, safe to rerun.
 
 ## Architecture at a glance
 
@@ -10,9 +14,11 @@ First install, start to finish: about 1.5 to 2.5 hours across platform prerequis
 
 Three sandboxed layers. The console plugin is the only user facing door, no client supplied identity anywhere. The coordinator sandbox (runc) holds the model reasoning loop behind NeMo Guardrails. The retrieval sandbox (Kata when available) is the only place that ever touches a real row of `rag_chunks` or a real work package, gated by ABAC on the way into Postgres and by per-tool RBAC on the way into the MCP gateway.
 
+The same diagram's data path runs independently of any live question. Every uploaded document passes through ABAC quarantine and NeMo Guardrails sanitization before anything is indexed, a document that fails stays quarantined rather than reaching the eval dataset. AutoRAG then sweeps chunk size, overlap and embedding model combinations against that real eval dataset and only the winning pattern is ever applied, the one step that actually chunks, embeds and writes documents into `rag_chunks`, ABAC tagged from that point on. The same mlflow instance that traces every live agent question also carries the ingestion audit trail and the continuous evaluation cycle, EvalHub's four providers (ragas, IBM CLEAR, garak and the confidential data scanner) score real agent traces on a schedule, not a one time report, feeding results back into the same experiments an operator watches from the Evaluation Trends page.
+
 ![Control flow path](images/control-flow-path.png)
 
-One question traverses six enforcement layers end to end: sandbox isolation, openshell egress policy, guardrails, gateway auth, per-tool RBAC and ABAC row filtering. `final-architecture.md` is the deep dive, every hop in that drawing cited against the exact file and line that proves it, this guide stays the install and operate reference.
+One question traverses six enforcement layers end to end: sandbox isolation, openshell egress policy, guardrails, gateway auth, per-tool RBAC and ABAC row filtering. `Detailed-architecture.md` is the deep dive, every hop in that drawing cited against the exact file and line that proves it, this guide stays the install and operate reference.
 
 ## Prerequisites
 

@@ -3,6 +3,7 @@
 *.md
 !seed-data/raw-intake/*.md
 !scripts/PLATFORM_SETUP.md
+!Detailed-architecture.md
 !README.md
 *.html
 *.rtf

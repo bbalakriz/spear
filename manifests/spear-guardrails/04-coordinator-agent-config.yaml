@@ -49,6 +49,11 @@ data:
               - EMAIL_ADDRESS
               - CREDIT_CARD
               - US_SSN
+          output:
+            entities:
+              - EMAIL_ADDRESS
+              - CREDIT_CARD
+              - US_SSN
         regex_detection:
           input:
             patterns:
@@ -60,9 +65,19 @@ data:
               - "share\\s+(the\\s+)?full\\s+(customer\\s+)?database"
               - "\\[\\s*system\\s*[:\\]]"
             case_insensitive: true
+          # output side is what closed loop actually needs: the leak scanner
+          # scores model answers, not user prompts, so tighten must land here
+          # for a re ask of the same natural question to get blocked
+          output:
+            patterns: []
+            case_insensitive: true
       input:
         flows:
           - detect sensitive data on input
           - regex check input
+      output:
+        flows:
+          - detect sensitive data on output
+          - regex check output
   rails.co: |
     # built in rails only, same shape as work-tracker-config

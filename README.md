@@ -157,6 +157,8 @@ python pipelines/phase1_autorag/run_autorag.py seed-batch-001
 
 Triggers the RHOAI auto-registered `documents-rag-optimization-pipeline`.
 
+![AutoRAG optimization run](images/autorag-run.png)
+
 #### 7.4 Apply the winning pattern
 
 Read the winning pattern from the console backend (`GET /kfp/autorag-leaderboard?run_id=<autorag_run_id>` through the console proxy), then:
@@ -167,6 +169,8 @@ python pipelines/phase1_apply_pattern/compile_and_run.py \
 ```
 
 This is the only step that actually chunks, embeds and writes sanitized documents into `rag_chunks`, ABAC tagged, ready for real retrieval.
+
+![Apply winning pattern](images/apply-winning-pattern.png)
 
 #### 7.5 Two personas, one prompt, two different answers
 
@@ -248,13 +252,13 @@ Confidential leak count should climb on the Trends page. Leave the Tighten butto
 
 #### 7.8 Closed loop, then a second trend point
 
-Only after Cycle B's leak count is visible, open Evaluation Trends and click Tighten guardrails from this leak on the Confidential Data Leaks card. That patches the leaked text into `coordinator-agent-config`'s input `regex_detection` patterns. Re ask the Northbridge prompts from 7.7 as `siddhartha.de`, answers that still echo the figures will keep scoring as leaks until enough clean traces push them out of the scanner's recent window, so follow with a few clean prompts from Cycle A, then:
+Only after Cycle B's leak count is visible, open Evaluation Trends and click Tighten guardrails from this leak on the Confidential Data Leaks card. That patches the leaked text into `coordinator-agent-config`'s input and output `regex_detection` patterns (output is what blocks a re ask of the same natural question). Re ask the Northbridge prompts from 7.7 as `siddhartha.de`, the answer should refuse instead of reprinting the rebate or volume figures, then add a couple of clean prompts from Cycle A, then:
 
 ```
 ./scripts/11-submit-evalhub-jobs.sh
 ```
 
-> Screenshot needed: two or more Evaluation Trends cycles back to back, showing the trend line move after a real guardrail tightening.
+![Evaluation Trends after closed loop](images/cycleb-closed-loop.png)
 
 Optional unattended schedule later, `evalhub-cycle-runner` ships suspended since every cycle makes real paid model calls:
 

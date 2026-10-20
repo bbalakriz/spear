@@ -136,7 +136,7 @@ The seed corpus at `seed-data/raw-intake/` includes one real, deliberately plant
 
 After step 7.2 runs, this document is blocked by sanitization rather than copied to `sanitized/`. The Knowledge Base page's sanitization run card shows the same outcome.
 
-#### 7.2 Real ingestion pipeline run
+#### 7.2 Ingestion pipeline run
 
 Needs `.venv-kfp`:
 
@@ -147,7 +147,7 @@ python pipelines/phase1_ingestion/compile_and_run.py
 
 Every document is sent through the guardrails `/v1/guardrail/checks` call, the vendor submission from 7.1 is blocked, every other document passes and moves on to real eval question generation over the sanitized set. Nothing is chunked or written to `rag_chunks` yet. Run id lands in MLflow experiment `phase1-ingestion`, workspace `spear-pipelines`, using your own `oc whoami -t` token.
 
-#### 7.3 Real AutoRAG optimization run
+#### 7.3 AutoRAG optimization run
 
 Needs 7.2's eval dataset:
 

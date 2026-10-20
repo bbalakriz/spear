@@ -1,9 +1,5 @@
 # SPEAR Shield - End-to-End Flow Diagram
 
-Source of truth for every edge here: `DEPLOYMENT.md` (deployment guide) and the
-scripts/manifests in this repo. Every hop below was verified against code or manifest,
-not assumed - key files cited per segment.
-
 One question ("show my work packages" / "summarize the retention policy") traverses six
 enforcement layers: sandbox isolation (runc / Kata), openshell egress policy, guardrails
 (input, response, per-config), gateway auth (dual-issuer JWT), per-tool RBAC, and ABAC
@@ -245,7 +241,7 @@ the leak scanner is what checks what the model actually says back.
 | 4 | retrieval -> gateway -> guard proxy -> openproject | per-tool RBAC, request + response guardrails, assignee=self |
 | 5 | evalhub providers -> ogx/mlflow/minio, closed loop | eval cycle, leak scan -> guardrail patch |
 
-Not shown (documented elsewhere, not request-flow): build/deploy chain (DEPLOYMENT.md
-Quick Start), pipeline ingestion + AutoRAG (DEPLOYMENT.md Post-Deployment Steps), platform
-operators layer (`scripts/PLATFORM_SETUP.md`), the openshell external CLI route (zero
-consumers - developer convenience only).
+Not shown (documented elsewhere, not request-flow): build/deploy chain ([Readme.md](Readme.md)
+steps 4 to 7), pipeline ingestion + AutoRAG (Readme.md step 7), platform operators
+layer (Readme.md step 4), the openshell external CLI route (zero consumers,
+developer convenience only).

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SPEAR Shield — Agentic Security Reference Architecture (RHOAI 3.5.1)</title>
+  <title>SPEAR Shield - Agentic Security Reference Architecture (RHOAI 3.5.1)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -159,7 +159,7 @@
             <span className="text-3xl font-black tracking-tight text-white">SPEAR Shield</span>
             <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-400">RHOAI 3.5.1</span>
           </div>
-          <p className="text-slate-400 text-sm font-medium">Permission-aware agentic security reference architecture — implemented end to end on Red Hat OpenShift AI</p>
+          <p className="text-slate-400 text-sm font-medium">Permission-aware agentic security reference architecture - implemented end to end on Red Hat OpenShift AI</p>
           <p className="text-slate-500 text-xs mt-2 max-w-3xl leading-relaxed">
             Two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a
             Kuadrant/Authorino MCP gateway with per-tool RBAC, identified by Keycloak caller tokens and SPIRE workload identity,
@@ -217,7 +217,7 @@
       <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 mb-6">
         <div className="flex items-baseline justify-between gap-3 mb-4 flex-wrap">
           <span className="font-mono text-xs font-bold text-slate-300 tracking-widest uppercase">One question, six enforcement layers</span>
-          <span className="font-mono text-[10px] text-slate-600">every hop verified against the exact file that implements it — see Detailed architecture.md</span>
+          <span className="font-mono text-[10px] text-slate-600">every hop verified against the exact file that implements it - see Detailed architecture.md</span>
         </div>
 
         {/* CONTROL PLANE */}
@@ -230,7 +230,7 @@
               ]} />
             <Card title="Identity resolution" subtitle="apiserver self-lookup, then a Keycloak password grant" color="blue" wide
               items={[
-                <span>GET users/~ with the forwarded console token — identity is never trusted from the request <Ref>(openshift_username)</Ref></span>,
+                <span>GET users/~ with the forwarded console token - identity is never trusted from the request <Ref>(openshift_username)</Ref></span>,
                 <span>realm JWT minted per real persona, sub = that user <Ref>(mint_spear_shield_token)</Ref></span>,
               ]} />
             <Card title="spear-shield-a2a-gateway" subtitle="AuthPolicy (Kuadrant/Authorino) · dual issuer · fail-closed 401" color="amber" tag="enforcement" wide highlighted
@@ -248,7 +248,7 @@
           <div className="flex gap-3">
             <SandboxedAgents
               title="spear-coordinator-agent" tag="runc pod" runtime="model reasoning loop"
-              sandboxNote="coordinator runs runc, never Kata — its supervisor opens a CSI SPIFFE socket a virtiofs mount inside a Kata guest cannot proxy"
+              sandboxNote="coordinator runs runc, never Kata - its supervisor opens a CSI SPIFFE socket a virtiofs mount inside a Kata guest cannot proxy"
               items={[
                 <span>model call rides the guardrails route (input + output rails run there), glm-53-flash <Ref>(coordinator-policy.yaml egress)</Ref></span>,
                 <span>delegates tool calls to retrieval over a2a; outbound Authorization = workload identity, injected by the supervisor's token_grant provider <Ref>(main.py:19-29)</Ref></span>,
@@ -263,7 +263,7 @@
               sandboxNote="Kata when a kata-oc node has /dev/kvm; every egress is a pinned openshell network policy (relay :8080 rest, gateway :8080 rest, mlflow :443)"
               items={[
                 <span>reads the caller's JWT from the a2a body only <Ref>(caller_token_from_message, a2a_server.py:104)</Ref></span>,
-                <span>decodes clearance/dept/team claims — the same JWT scopes both retrieval paths below</span>,
+                <span>decodes clearance/dept/team claims - the same JWT scopes both retrieval paths below</span>,
               ]} />
           </div>
         </Layer>
@@ -279,7 +279,7 @@
               <span className="font-mono text-[10px] text-slate-600">clearance + dept, never clearance alone</span>
             </div>
             <div className="flex flex-col gap-2">
-              <Card title="rag-query-relay" subtitle="unsandboxed runner in spear-data — the sandbox has no raw postgres egress" color="blue"
+              <Card title="rag-query-relay" subtitle="unsandboxed runner in spear-data - the sandbox has no raw postgres egress" color="blue"
                 items={[
                   <span>POST /search with caller_clearance / caller_dept / caller_team <Ref>(rag_query_server.py)</Ref></span>,
                   <span>embeds via OGX /v1/embeddings (nomic-embed-text-v1.5, 768 dims)</span>,
@@ -288,14 +288,14 @@
                 <div className="gate-bar w-1 h-7 shrink-0" />
                 <Card title="pgvector · rag_chunks" subtitle="ABAC filter + row-level security BEFORE vector distance" color="blue" tag="enforcement" highlighted compact wide
                   items={[
-                    <span>SELECT as rag_reader — the raguser superuser carries BYPASSRLS and would silently ignore the policy <Ref>(rag_query.py:61)</Ref></span>,
+                    <span>SELECT as rag_reader - the raguser superuser carries BYPASSRLS and would silently ignore the policy <Ref>(rag_query.py:61)</Ref></span>,
                   ]} />
               </div>
               <div className="rounded-lg border border-blue-700/40 bg-blue-950/40 p-2.5">
                 <p className="font-mono text-[10px] text-blue-300 mb-1">verified live, real rows</p>
                 <Tag ok>balakrishnan.b (general / engineering) → general docs only</Tag><br/>
                 <Tag ok>siddhartha.de (restricted / data-governance) → general + restricted rows</Tag><br/>
-                <Tag fail>POLICY-DG-042 is general but dept-gated — clearance alone would over-grant</Tag>
+                <Tag fail>POLICY-DG-042 is general but dept-gated - clearance alone would over-grant</Tag>
               </div>
             </div>
           </div>
@@ -311,7 +311,7 @@
                 <div className="gate-bar w-1 h-9 shrink-0" />
                 <Card title="spear-shield-gateway · mcps listener" subtitle="per-tool RBAC AuthPolicy" color="cyan" tag="enforcement" highlighted compact wide
                   items={[
-                    <span>('tool:' + x-mcp-toolname) in resource_access[x-mcp-servername].roles — 401/403 fail-closed <Ref>(03-auth-policies.yaml)</Ref></span>,
+                    <span>('tool:' + x-mcp-toolname) in resource_access[x-mcp-servername].roles - 401/403 fail-closed <Ref>(03-auth-policies.yaml)</Ref></span>,
                     <span>the caller JWT's signature is finally verified here</span>,
                   ]} />
               </div>
@@ -320,7 +320,7 @@
                   <span>request rail: /v1/guardrail/checks on the tool arguments before the backend sees them <Ref>(server.py:274-285)</Ref></span>,
                   <span>response rail: /v1/guardrail/checks on the result before any model sees it <Ref>(server.py:316-326)</Ref></span>,
                   <span>fail-closed: a guardrails call failure blocks, never allows <Ref>(server.py:163-165)</Ref></span>,
-                  <span>upstream derived per request from x-mcp-servername — onboarding a new server is a one-line backendRef change</span>,
+                  <span>upstream derived per request from x-mcp-servername - onboarding a new server is a one-line backendRef change</span>,
                 ]} />
               <Card title="spear-openproject-mcp → OpenProject" subtitle="MCPServer CR (spear-worktracker ns) · assignee=self" color="cyan" compact
                 items={[
@@ -330,7 +330,7 @@
           </div>
         </div>
 
-        <FlowDown label="response flows back through the same rails, then the same gateways — trace[] carries every hop back to the console chat" />
+        <FlowDown label="response flows back through the same rails, then the same gateways - trace[] carries every hop back to the console chat" />
       </div>
     );
 
@@ -348,7 +348,7 @@
             { t:'1 · console OAuth token', w:'plugin → backend, never leaves the backend',
               d:'identity resolved by a live apiserver self-lookup (users/~), never a client-supplied username' },
             { t:'2 · Keycloak realm JWT', w:'the end-user identity, end to end',
-              d:'minted by password grant (sub = the real persona); Authorization at the a2a gateway hop 1, then params.callerToken inside the body (the openshell relay strips the header), finally Bearer at the MCP gateway per-tool RBAC — the only token that reaches OpenProject' },
+              d:'minted by password grant (sub = the real persona); Authorization at the a2a gateway hop 1, then params.callerToken inside the body (the openshell relay strips the header), finally Bearer at the MCP gateway per-tool RBAC - the only token that reaches OpenProject' },
             { t:'3 · workload access token', w:'the machine identity on the coordinator→retrieval hop',
               d:'SPIRE jwt-svid asserted to Keycloak via the openshell token_grant provider, supervisor-injected as outbound Authorization; accepted by the same dual-issuer AuthPolicy' },
           ].map(({ t, w, d }) => (
@@ -405,9 +405,9 @@
         </div>
         <div className="grid grid-cols-3 gap-3">
           {[
-            { t:'openshell Sandbox CRs', d:'both agents run as Sandbox CRs (agents.x-k8s.io/v1beta1) — supervisor sidecar, workspace seeding, service expose; reachable only through the openshell relay' },
-            { t:'runc vs Kata', d:'coordinator on runc (CSI SPIFFE socket), retrieval on Kata micro-VM with hardware virtualization when a kata-oc node has /dev/kvm — runc fallback otherwise' },
-            { t:'egress allowlists', d:'every outbound destination is a pinned openshell network policy: relay :8080 rest, gateway :8080 rest, guardrails :443, mlflow :443 — nothing else leaves the sandbox' },
+            { t:'openshell Sandbox CRs', d:'both agents run as Sandbox CRs (agents.x-k8s.io/v1beta1) - supervisor sidecar, workspace seeding, service expose; reachable only through the openshell relay' },
+            { t:'runc vs Kata', d:'coordinator on runc (CSI SPIFFE socket), retrieval on Kata micro-VM with hardware virtualization when a kata-oc node has /dev/kvm - runc fallback otherwise' },
+            { t:'egress allowlists', d:'every outbound destination is a pinned openshell network policy: relay :8080 rest, gateway :8080 rest, guardrails :443, mlflow :443 - nothing else leaves the sandbox' },
           ].map(({ t, d }) => (
             <div key={t} className="rounded-xl border border-amber-800/50 bg-slate-950/50 p-3">
               <span className="font-mono text-xs font-bold text-amber-200">{t}</span>
@@ -427,15 +427,15 @@
           <div className="flex-1 min-w-[300px]">
             <p className="font-mono text-xs font-bold text-slate-400 tracking-widest uppercase mb-2">Verification story</p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs text-slate-400">
-              <div>› <span className="font-mono">90-verify.sh</span> — 39 read-only checks, pass/fail summary</div>
-              <div>› in-script smoke tests — guardrails verdicts, model probes</div>
-              <div>› six live security demos — console "Under the Hood"</div>
-              <div>› live component probes — console Architecture Status</div>
-              <div>› persona ABAC + RBAC denials — visible in the chat's own trace</div>
+              <div>› <span className="font-mono">90-verify.sh</span> - 39 read-only checks, pass/fail summary</div>
+              <div>› in-script smoke tests - guardrails verdicts, model probes</div>
+              <div>› six live security demos - console "Under the Hood"</div>
+              <div>› live component probes - console Architecture Status</div>
+              <div>› persona ABAC + RBAC denials - visible in the chat's own trace</div>
               <div>› every hop in this page cited in <span className="font-mono">Detailed architecture.md</span></div>
             </div>
             <p className="text-[11px] text-slate-600 mt-3 leading-relaxed">
-              No test suite exists in the repo by design — the health check plus the in-script smoke tests are the whole
+              No test suite exists in the repo by design - the health check plus the in-script smoke tests are the whole
               verification story, and every claim on this page maps to a file in the repo that implements it.
             </p>
           </div>

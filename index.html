@@ -156,19 +156,13 @@
       <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 flex items-start justify-between mb-6 gap-6">
         <div>
           <div className="flex items-center gap-3 mb-1">
-            <span className="text-3xl font-black tracking-tight text-white">SPEAR Shield</span>
-            <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-400">RHOAI 3.5.1</span>
+            <span className="text-3xl font-black tracking-tight text-white">SPEAR - A secure permission aware agentic runner</span>
           </div>
           <p className="text-slate-300 text-base font-semibold mt-2">
-            Every agent question passes six enforcement layers before a single document row or tool result comes back.
+            Every AI agent's question passes six enforcement layers before a single document row or tool result comes back.
           </p>
-          <p className="text-slate-400 text-sm mt-2 max-w-3xl leading-relaxed">
-            SPEAR Shield closes the gap enterprise deployments keep leaving open: security bolted on after the AI went live.
-            Two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a
-            Kuadrant/Authorino MCP gateway with per-tool RBAC. Keycloak caller tokens and SPIRE workload identity say who is
-            asking; row-level ABAC, guardrails on every tool call, and fail-closed gateway policies say what comes back.
-            An OpenShift console dynamic plugin puts the whole story - probes, per-hop traces, live security demos - in front
-            of the operator.
+          <p className="text-slate-400 text-sm mt-3 leading-relaxed">
+            SPEAR closes the gap enterprise deployments keep leaving open: security bolted on after the AI went live. Two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a Kuadrant/Authorino MCP gateway with per-tool RBAC. Keycloak caller tokens and SPIRE workload identity say who is asking; row-level ABAC, guardrails on every tool call and fail-closed gateway policies say what comes back. An OpenShift console dynamic plugin puts the whole story - probes, per-hop traces, live security demos - in front of the operator. And the same controls run before any question is asked: a KFP ingestion pipeline sends every uploaded document through ABAC metadata checks and guardrails sanitization, anything that fails stays quarantined and never reaches the index and AutoRAG sweeps chunk size, overlap and embedding model combinations against a real eval dataset so only the winning pattern ever writes ABAC-tagged rows into the knowledge base.
           </p>
         </div>
       </div>
@@ -181,7 +175,7 @@
       <div className="rounded-2xl border border-red-900/40 bg-red-950/10 p-5 mb-6">
         <p className="font-mono text-xs font-bold text-red-400 tracking-widest uppercase mb-1">The enterprise question, five times</p>
         <p className="font-mono text-sm text-red-200/80 italic mb-4">
-          "Who can this AI see data for, what can it be tricked into doing, and can we prove what it did?"
+          "Who can this AI see data for, what can it be tricked into doing and can we prove what it did?"
         </p>
         <div className="grid grid-cols-5 gap-3">
           {[

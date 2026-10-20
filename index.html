@@ -159,20 +159,17 @@
             <span className="text-3xl font-black tracking-tight text-white">SPEAR Shield</span>
             <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-400">RHOAI 3.5.1</span>
           </div>
-          <p className="text-slate-400 text-sm font-medium">Permission-aware agentic security reference architecture - implemented end to end on Red Hat OpenShift AI</p>
-          <p className="text-slate-500 text-xs mt-2 max-w-3xl leading-relaxed">
-            Two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a
-            Kuadrant/Authorino MCP gateway with per-tool RBAC, identified by Keycloak caller tokens and SPIRE workload identity,
-            with an OpenShift console dynamic plugin as the operator's console.
+          <p className="text-slate-300 text-base font-semibold mt-2">
+            Every agent question passes six enforcement layers before a single document row or tool result comes back.
           </p>
-        </div>
-        <div className="flex flex-col gap-2 text-right shrink-0">
-          <span className="text-xs text-slate-500">Docs</span>
-          <div className="flex flex-col gap-1.5">
-            <span className="font-mono text-[11px] text-slate-400">install &amp; operate → Readme.md</span>
-            <span className="font-mono text-[11px] text-slate-400">hop-by-hop proof → Detailed architecture.md</span>
-            <span className="font-mono text-[11px] text-slate-400">this page → the 3-minute visual</span>
-          </div>
+          <p className="text-slate-400 text-sm mt-2 max-w-3xl leading-relaxed">
+            SPEAR Shield closes the gap enterprise deployments keep leaving open: security bolted on after the AI went live.
+            Two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a
+            Kuadrant/Authorino MCP gateway with per-tool RBAC. Keycloak caller tokens and SPIRE workload identity say who is
+            asking; row-level ABAC, guardrails on every tool call, and fail-closed gateway policies say what comes back.
+            An OpenShift console dynamic plugin puts the whole story - probes, per-hop traces, live security demos - in front
+            of the operator.
+          </p>
         </div>
       </div>
     );
@@ -217,7 +214,6 @@
       <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 mb-6">
         <div className="flex items-baseline justify-between gap-3 mb-4 flex-wrap">
           <span className="font-mono text-xs font-bold text-slate-300 tracking-widest uppercase">One question, six enforcement layers</span>
-          <span className="font-mono text-[10px] text-slate-600">every hop verified against the exact file that implements it - see Detailed architecture.md</span>
         </div>
 
         {/* CONTROL PLANE */}
@@ -341,7 +337,6 @@
       <div className="rounded-2xl border border-violet-800/40 bg-violet-950/20 p-5 mb-6 glow-violet">
         <div className="flex items-baseline justify-between gap-3 mb-4 flex-wrap">
           <span className="font-mono text-xs font-bold text-violet-300 tracking-widest uppercase">Three tokens, two different proofs</span>
-          <span className="font-mono text-[10px] text-slate-600">verified against server.py, main.py, a2a_server.py and the a2a gateway AuthPolicy</span>
         </div>
         <div className="grid grid-cols-3 gap-3">
           {[
@@ -401,7 +396,6 @@
       <div className="rounded-2xl border border-amber-800/50 bg-amber-950/20 p-5 mb-6 glow-amber">
         <div className="flex items-baseline justify-between gap-3 mb-4 flex-wrap">
           <span className="font-mono text-xs font-bold text-amber-400 tracking-widest uppercase">Runtime isolation</span>
-          <span className="font-mono text-[10px] text-slate-600">verified live: live component probes + runtimeClass per sandbox on the console's Architecture Status page</span>
         </div>
         <div className="grid grid-cols-3 gap-3">
           {[
@@ -432,12 +426,7 @@
               <div>› six live security demos - console "Under the Hood"</div>
               <div>› live component probes - console Architecture Status</div>
               <div>› persona ABAC + RBAC denials - visible in the chat's own trace</div>
-              <div>› every hop in this page cited in <span className="font-mono">Detailed architecture.md</span></div>
             </div>
-            <p className="text-[11px] text-slate-600 mt-3 leading-relaxed">
-              No test suite exists in the repo by design - the health check plus the in-script smoke tests are the whole
-              verification story, and every claim on this page maps to a file in the repo that implements it.
-            </p>
           </div>
           <div className="shrink-0 text-right">
             <div className="flex flex-wrap gap-1.5 justify-end max-w-[420px]">
@@ -477,7 +466,6 @@
               </div>
             ))}
           </div>
-          <span className="font-mono text-xs text-slate-700">solution guide · every claim maps to repo code</span>
         </div>
       </div>
     );

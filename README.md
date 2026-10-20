@@ -18,7 +18,7 @@ The same diagram's data path runs independently of any live question. Every uplo
 
 ![Control flow path](images/control-flow-path.png)
 
-One question traverses six enforcement layers end to end: sandbox isolation, openshell egress policy, guardrails, gateway auth, per-tool RBAC and ABAC row filtering. `Detailed-architecture.md` is the deep dive, every hop in that drawing cited against the exact file and line that proves it, this guide stays the install and operate reference.
+One question traverses six enforcement layers end to end: sandbox isolation, openshell egress policy, guardrails, gateway auth, per-tool RBAC and ABAC row filtering. [Detailed architecture](Detailed-architecture.md) is the deep dive, every hop in that drawing cited against the exact file and line that proves it, this guide stays the install and operate reference.
 
 ## Prerequisites
 

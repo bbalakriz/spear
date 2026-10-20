@@ -5,6 +5,7 @@
 !Detailed architecture.md
 !Readme.md
 *.html
+!spear-shield-solution-guide.html
 *.rtf
 *.pptx
 .venv-kfp/

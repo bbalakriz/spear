@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SPEAR Shield — Agentic Security Reference Architecture (RHOAI 3.5.1)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background: #030712;
+      background-image:
+        linear-gradient(rgba(99,102,241,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99,102,241,0.03) 1px, transparent 1px);
+      background-size: 32px 32px;
+      font-family: 'Inter', sans-serif;
+    }
+    .font-mono { font-family: 'JetBrains Mono', monospace !important; }
+    .glow-violet  { box-shadow: 0 0 24px rgba(139,92,246,0.15); }
+    .glow-rose    { box-shadow: 0 0 24px rgba(244,63,94,0.15); }
+    .glow-amber   { box-shadow: 0 0 24px rgba(245,158,11,0.12); }
+    .glow-emerald { box-shadow: 0 0 24px rgba(16,185,129,0.15); }
+    .connector-line { width: 2px; background: linear-gradient(to bottom, #334155, #1e293b); margin: 0 auto; }
+    .arrowhead { width:0; height:0; border-left:5px solid transparent; border-right:5px solid transparent; border-top:7px solid #475569; margin:0 auto; }
+    .gate-bar { background: linear-gradient(to bottom, rgba(245,158,11,0.85), rgba(245,158,11,0.35)); border-radius: 2px; }
+  </style>
+</head>
+<body class="text-white min-h-screen py-8 px-4">
+  <div id="root"></div>
+  <script type="text/babel">
+
+    /* ── primitives ─────────────────────────────────────────── */
+
+    const Tag = ({ children, ok, fail }) => {
+      if (ok)   return <span className="font-mono text-xs text-green-400">✓ {children}</span>;
+      if (fail) return <span className="font-mono text-xs text-red-400">✗ {children}</span>;
+      return <span className="font-mono text-xs text-slate-400">{children}</span>;
+    };
+
+    const FlowDown = ({ label }) => (
+      <div className="flex flex-col items-center my-1">
+        <div className="connector-line h-5" />
+        {label && <span className="my-0.5 rounded-full border border-slate-700 bg-slate-900 px-3 py-0.5 font-mono text-xs text-slate-500">{label}</span>}
+        <div className="arrowhead" />
+      </div>
+    );
+
+    const GateBar = () => (
+      <div className="flex flex-col items-center">
+        <div className="connector-line h-3" />
+        <div className="gate-bar w-1 h-8" />
+        <div className="connector-line h-3" />
+        <div className="arrowhead" />
+      </div>
+    );
+
+    const Ref = ({ children }) => (
+      <span className="font-mono text-[10px] text-slate-600">{children}</span>
+    );
+
+    const Card = ({ title, subtitle, items=[], color='slate', tag, wide, compact, highlighted, danger }) => {
+      const b = {
+        slate:   'border-slate-700 bg-slate-800/70',
+        violet:  'border-violet-800 bg-violet-950/70',
+        amber:   'border-amber-800 bg-amber-950/70',
+        blue:    'border-blue-800 bg-blue-950/70',
+        cyan:    'border-cyan-800 bg-cyan-950/70',
+        emerald: 'border-emerald-800 bg-emerald-950/70',
+        red:     'border-red-700 bg-red-950/70',
+      }[color] || 'border-slate-700 bg-slate-800/70';
+      return (
+        <div className={`rounded-xl border p-3 flex flex-col gap-1.5 ${b}
+          ${highlighted ? 'ring-1 ring-amber-500/40' : ''} ${danger ? 'ring-1 ring-red-500/40' : ''}
+          ${compact ? 'py-2' : ''} ${wide ? 'flex-1' : ''}`}>
+          <div className="flex items-start justify-between gap-2">
+            <span className="font-mono text-xs font-bold text-white leading-snug">{title}</span>
+            {tag && <span className="shrink-0 rounded border border-slate-700 bg-slate-900/80 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">{tag}</span>}
+          </div>
+          {subtitle && <p className="text-xs text-slate-400 leading-snug">{subtitle}</p>}
+          {items.map((item, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-xs text-slate-300 leading-snug">
+              <span className="shrink-0 mt-0.5 text-slate-600">›</span>
+              <span>{item}</span>
+            </div>
+          ))}
+        </div>
+      );
+    };
+
+    const Layer = ({ label, color, note, children }) => {
+      const t = {
+        slate:   { wrap:'border-slate-800 bg-slate-900/40',        lbl:'text-slate-500' },
+        violet:  { wrap:'border-violet-800/50 bg-violet-950/25',   lbl:'text-violet-400' },
+        amber:   { wrap:'border-amber-800/50 bg-amber-950/25',     lbl:'text-amber-400' },
+        rose:    { wrap:'border-rose-800/50 bg-rose-950/30',       lbl:'text-rose-400' },
+        blue:    { wrap:'border-blue-800/50 bg-blue-950/25',       lbl:'text-blue-400' },
+        cyan:    { wrap:'border-cyan-800/50 bg-cyan-950/25',       lbl:'text-cyan-400' },
+        emerald: { wrap:'border-emerald-800/50 bg-emerald-950/25', lbl:'text-emerald-400' },
+      }[color] || { wrap:'border-slate-800 bg-slate-900/40', lbl:'text-slate-500' };
+      return (
+        <div className={`rounded-2xl border p-4 ${t.wrap}`}>
+          <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
+            <span className={`font-mono text-xs font-bold tracking-widest uppercase ${t.lbl}`}>{label}</span>
+            {note && <span className="font-mono text-[10px] text-slate-600">{note}</span>}
+          </div>
+          {children}
+        </div>
+      );
+    };
+
+    const HorizFlow = ({ items }) => (
+      <div className="flex items-stretch gap-2">
+        {items.map((item, i) => (
+          <React.Fragment key={i}>
+            <div className="flex-1 flex items-center">{item}</div>
+            {i < items.length-1 && (
+              <div className="flex flex-col items-center justify-center shrink-0 px-0.5">
+                <span className="text-slate-600 text-xs">▶</span>
+              </div>
+            )}
+          </React.Fragment>
+        ))}
+      </div>
+    );
+
+    const SandboxedAgents = ({ title, tag, runtime, items, sandboxNote }) => (
+      <div className="rounded-xl border border-violet-700/50 bg-violet-950/20 p-3 flex flex-col gap-2 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-mono text-xs font-bold text-white">{title}</span>
+          <span className="shrink-0 rounded border border-violet-700 bg-violet-900/60 px-1.5 py-0.5 font-mono text-[10px] text-violet-300">{tag}</span>
+        </div>
+        <div className="rounded-lg border border-violet-800/60 bg-slate-950/60 p-2.5 flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-mono text-[10px] text-violet-300/80">openshell supervisor sidecar + nftables egress gate</span>
+            <span className="font-mono text-[10px] text-slate-500">{runtime}</span>
+          </div>
+          {items.map((item, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-xs text-slate-300 leading-snug">
+              <span className="shrink-0 mt-0.5 text-slate-600">›</span>
+              <span>{item}</span>
+            </div>
+          ))}
+        </div>
+        <p className="font-mono text-[10px] text-slate-600">{sandboxNote}</p>
+      </div>
+    );
+
+    /* ══════════════════════════════════════════════════════════
+       HEADER
+    ══════════════════════════════════════════════════════════ */
+    const Header = () => (
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 flex items-start justify-between mb-6 gap-6">
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <span className="text-3xl font-black tracking-tight text-white">SPEAR Shield</span>
+            <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-400">RHOAI 3.5.1</span>
+          </div>
+          <p className="text-slate-400 text-sm font-medium">Permission-aware agentic security reference architecture — implemented end to end on Red Hat OpenShift AI</p>
+          <p className="text-slate-500 text-xs mt-2 max-w-3xl leading-relaxed">
+            Two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a
+            Kuadrant/Authorino MCP gateway with per-tool RBAC, identified by Keycloak caller tokens and SPIRE workload identity,
+            with an OpenShift console dynamic plugin as the operator's console.
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 text-right shrink-0">
+          <span className="text-xs text-slate-500">Docs</span>
+          <div className="flex flex-col gap-1.5">
+            <span className="font-mono text-[11px] text-slate-400">install &amp; operate → Readme.md</span>
+            <span className="font-mono text-[11px] text-slate-400">hop-by-hop proof → Detailed architecture.md</span>
+            <span className="font-mono text-[11px] text-slate-400">this page → the 3-minute visual</span>
+          </div>
+        </div>
+      </div>
+    );
+
+    /* ══════════════════════════════════════════════════════════
+       FAILURE MODES -> CONTROLS
+    ══════════════════════════════════════════════════════════ */
+    const FailureModes = () => (
+      <div className="rounded-2xl border border-red-900/40 bg-red-950/10 p-5 mb-6">
+        <p className="font-mono text-xs font-bold text-red-400 tracking-widest uppercase mb-1">The enterprise question, five times</p>
+        <p className="font-mono text-sm text-red-200/80 italic mb-4">
+          "Who can this AI see data for, what can it be tricked into doing, and can we prove what it did?"
+        </p>
+        <div className="grid grid-cols-5 gap-3">
+          {[
+            { n:1, t:'Unauthorized Access',      d:'A user retrieves documents they were never meant to see',                       c:'Pre-retrieval ABAC + row-level security in Postgres (clearance + dept, connected as rag_reader, never a BYPASSRLS superuser)', ph:'spear-data ns' },
+            { n:2, t:'Weaponized Knowledge Base',d:'A malicious document instructs the agent on every future query',                c:'NeMo Guardrails /v1/guardrail/checks per document at ingestion; a document that fails stays quarantined, never indexed',        ph:'spear-guardrails ns' },
+            { n:3, t:'Tool-Response Injection',  d:'A tool returns live data carrying injected instructions',                       c:'guard proxy request + response rails on every tools/call (Nemo /v1/guardrail/checks both directions, fail-closed)',              ph:'spear-shield-agents ns' },
+            { n:4, t:'Privilege Escalation',     d:'A user talks the agent into calling tools they hold no role for',               c:'Per-tool RBAC AuthPolicy at the gateway (tool:<name> in the JWT resource_access claim, 401/403 fail-closed) + assignee=self check', ph:'spear-shield-agents ns' },
+            { n:5, t:'No Audit Trail',           d:'"Prove what it accessed and why" is unanswerable',                              c:'Every hop traced (per-hop trace[] + MLflow), EvalHub cycle scores real traces, closed loop tightens guardrails from findings',   ph:'cluster shared' },
+          ].map(({ n, t, d, c, ph }) => (
+            <div key={n} className="rounded-xl border border-red-900/40 bg-red-950/20 p-3 flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-red-500/20 border border-red-500/40 flex items-center justify-center font-mono text-xs font-bold text-red-300 shrink-0">{n}</span>
+                <span className="font-mono text-xs font-bold text-red-200 leading-tight">{t}</span>
+              </div>
+              <p className="text-xs text-slate-500 leading-snug">{d}</p>
+              <div className="mt-auto pt-1.5 border-t border-red-900/30">
+                <p className="font-mono text-[11px] text-green-400/90 leading-snug">✓ {c}</p>
+                <p className="font-mono text-[10px] text-slate-600 mt-0.5">{ph}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+
+    /* ══════════════════════════════════════════════════════════
+       ONE REQUEST, SIX ENFORCEMENT LAYERS
+    ══════════════════════════════════════════════════════════ */
+    const RequestPath = () => (
+      <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 mb-6">
+        <div className="flex items-baseline justify-between gap-3 mb-4 flex-wrap">
+          <span className="font-mono text-xs font-bold text-slate-300 tracking-widest uppercase">One question, six enforcement layers</span>
+          <span className="font-mono text-[10px] text-slate-600">every hop verified against the exact file that implements it — see Detailed architecture.md</span>
+        </div>
+
+        {/* CONTROL PLANE */}
+        <Layer label="Control plane · identity in, before any agent runs" color="slate" note="owner-console-backend (spear-console ns)">
+          <div className="flex gap-3 flex-wrap">
+            <Card title="Console plugin" subtitle="the only user-facing door" color="blue" wide
+              items={[
+                'no client-supplied username anywhere',
+                <span>console proxy injects the signed-in user's OAuth token <Ref>(server.py)</Ref></span>,
+              ]} />
+            <Card title="Identity resolution" subtitle="apiserver self-lookup, then a Keycloak password grant" color="blue" wide
+              items={[
+                <span>GET users/~ with the forwarded console token — identity is never trusted from the request <Ref>(openshift_username)</Ref></span>,
+                <span>realm JWT minted per real persona, sub = that user <Ref>(mint_spear_shield_token)</Ref></span>,
+              ]} />
+            <Card title="spear-shield-a2a-gateway" subtitle="AuthPolicy (Kuadrant/Authorino) · dual issuer · fail-closed 401" color="amber" tag="enforcement" wide highlighted
+              items={[
+                'accepts a keycloak realm JWT OR a SPIRE jwt-svid',
+                <span>host rewrite → openshell relay, the sandbox's only door <Ref>(07-a2a-gateway.yaml)</Ref></span>,
+              ]} />
+          </div>
+        </Layer>
+
+        <FlowDown label="message/send · Authorization: Bearer <realm jwt> + params.callerToken (the relay strips the header; the body copy is what the coordinator reads)" />
+
+        {/* AGENT PLANE */}
+        <Layer label="Agent plane · two sandboxes, one delegation" color="violet" note="openshell Sandbox CRs (spear-shield-agents ns)">
+          <div className="flex gap-3">
+            <SandboxedAgents
+              title="spear-coordinator-agent" tag="runc pod" runtime="model reasoning loop"
+              sandboxNote="coordinator runs runc, never Kata — its supervisor opens a CSI SPIFFE socket a virtiofs mount inside a Kata guest cannot proxy"
+              items={[
+                <span>model call rides the guardrails route (input + output rails run there), glm-53-flash <Ref>(coordinator-policy.yaml egress)</Ref></span>,
+                <span>delegates tool calls to retrieval over a2a; outbound Authorization = workload identity, injected by the supervisor's token_grant provider <Ref>(main.py:19-29)</Ref></span>,
+              ]} />
+            <div className="flex flex-col items-center justify-center shrink-0 px-1">
+              <span className="font-mono text-[10px] text-slate-500">a2a delegate</span>
+              <span className="font-mono text-[10px] text-slate-600">params.callerToken</span>
+              <span className="text-slate-600 text-xs mt-1">▶</span>
+            </div>
+            <SandboxedAgents
+              title="spear-retrieval-agent" tag="Kata micro-VM (runc fallback)" runtime="tool executor"
+              sandboxNote="Kata when a kata-oc node has /dev/kvm; every egress is a pinned openshell network policy (relay :8080 rest, gateway :8080 rest, mlflow :443)"
+              items={[
+                <span>reads the caller's JWT from the a2a body only <Ref>(caller_token_from_message, a2a_server.py:104)</Ref></span>,
+                <span>decodes clearance/dept/team claims — the same JWT scopes both retrieval paths below</span>,
+              ]} />
+          </div>
+        </Layer>
+
+        <FlowDown label="per tool call, two paths out of the retrieval sandbox" />
+
+        {/* RAG + MCP PATHS */}
+        <div className="flex gap-4">
+          {/* RAG PATH */}
+          <div className="flex-1 rounded-2xl border border-blue-800/60 bg-blue-950/25 p-4">
+            <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+              <span className="font-mono text-xs font-bold text-blue-400 tracking-widest uppercase">RAG path · knowledge base</span>
+              <span className="font-mono text-[10px] text-slate-600">clearance + dept, never clearance alone</span>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Card title="rag-query-relay" subtitle="unsandboxed runner in spear-data — the sandbox has no raw postgres egress" color="blue"
+                items={[
+                  <span>POST /search with caller_clearance / caller_dept / caller_team <Ref>(rag_query_server.py)</Ref></span>,
+                  <span>embeds via OGX /v1/embeddings (nomic-embed-text-v1.5, 768 dims)</span>,
+                ]} />
+              <div className="flex items-center gap-2">
+                <div className="gate-bar w-1 h-7 shrink-0" />
+                <Card title="pgvector · rag_chunks" subtitle="ABAC filter + row-level security BEFORE vector distance" color="blue" tag="enforcement" highlighted compact wide
+                  items={[
+                    <span>SELECT as rag_reader — the raguser superuser carries BYPASSRLS and would silently ignore the policy <Ref>(rag_query.py:61)</Ref></span>,
+                  ]} />
+              </div>
+              <div className="rounded-lg border border-blue-700/40 bg-blue-950/40 p-2.5">
+                <p className="font-mono text-[10px] text-blue-300 mb-1">verified live, real rows</p>
+                <Tag ok>balakrishnan.b (general / engineering) → general docs only</Tag><br/>
+                <Tag ok>siddhartha.de (restricted / data-governance) → general + restricted rows</Tag><br/>
+                <Tag fail>POLICY-DG-042 is general but dept-gated — clearance alone would over-grant</Tag>
+              </div>
+            </div>
+          </div>
+
+          {/* MCP PATH */}
+          <div className="flex-1 rounded-2xl border border-cyan-800/60 bg-cyan-950/25 p-4">
+            <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+              <span className="font-mono text-xs font-bold text-cyan-400 tracking-widest uppercase">MCP tool path · work tracker</span>
+              <span className="font-mono text-[10px] text-slate-600">every tools/call railed both directions</span>
+            </div>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <div className="gate-bar w-1 h-9 shrink-0" />
+                <Card title="spear-shield-gateway · mcps listener" subtitle="per-tool RBAC AuthPolicy" color="cyan" tag="enforcement" highlighted compact wide
+                  items={[
+                    <span>('tool:' + x-mcp-toolname) in resource_access[x-mcp-servername].roles — 401/403 fail-closed <Ref>(03-auth-policies.yaml)</Ref></span>,
+                    <span>the caller JWT's signature is finally verified here</span>,
+                  ]} />
+              </div>
+              <Card title="spear-shield-mcp-guard-proxy" subtitle="one shared deployment fronting every MCP server" color="cyan"
+                items={[
+                  <span>request rail: /v1/guardrail/checks on the tool arguments before the backend sees them <Ref>(server.py:274-285)</Ref></span>,
+                  <span>response rail: /v1/guardrail/checks on the result before any model sees it <Ref>(server.py:316-326)</Ref></span>,
+                  <span>fail-closed: a guardrails call failure blocks, never allows <Ref>(server.py:163-165)</Ref></span>,
+                  <span>upstream derived per request from x-mcp-servername — onboarding a new server is a one-line backendRef change</span>,
+                ]} />
+              <Card title="spear-openproject-mcp → OpenProject" subtitle="MCPServer CR (spear-worktracker ns) · assignee=self" color="cyan" compact
+                items={[
+                  <span>REST call with Bearer = the caller's own JWT; updates refused unless the caller is the assignee</span>,
+                ]} />
+            </div>
+          </div>
+        </div>
+
+        <FlowDown label="response flows back through the same rails, then the same gateways — trace[] carries every hop back to the console chat" />
+      </div>
+    );
+
+    /* ══════════════════════════════════════════════════════════
+       IDENTITY STRIP
+    ══════════════════════════════════════════════════════════ */
+    const IdentityStrip = () => (
+      <div className="rounded-2xl border border-violet-800/40 bg-violet-950/20 p-5 mb-6 glow-violet">
+        <div className="flex items-baseline justify-between gap-3 mb-4 flex-wrap">
+          <span className="font-mono text-xs font-bold text-violet-300 tracking-widest uppercase">Three tokens, two different proofs</span>
+          <span className="font-mono text-[10px] text-slate-600">verified against server.py, main.py, a2a_server.py and the a2a gateway AuthPolicy</span>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { t:'1 · console OAuth token', w:'plugin → backend, never leaves the backend',
+              d:'identity resolved by a live apiserver self-lookup (users/~), never a client-supplied username' },
+            { t:'2 · Keycloak realm JWT', w:'the end-user identity, end to end',
+              d:'minted by password grant (sub = the real persona); Authorization at the a2a gateway hop 1, then params.callerToken inside the body (the openshell relay strips the header), finally Bearer at the MCP gateway per-tool RBAC — the only token that reaches OpenProject' },
+            { t:'3 · workload access token', w:'the machine identity on the coordinator→retrieval hop',
+              d:'SPIRE jwt-svid asserted to Keycloak via the openshell token_grant provider, supervisor-injected as outbound Authorization; accepted by the same dual-issuer AuthPolicy' },
+          ].map(({ t, w, d }) => (
+            <div key={t} className="rounded-xl border border-violet-800/50 bg-slate-950/50 p-3 flex flex-col gap-1.5">
+              <span className="font-mono text-xs font-bold text-violet-200">{t}</span>
+              <span className="font-mono text-[10px] text-violet-400/80">{w}</span>
+              <p className="text-xs text-slate-400 leading-snug">{d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+
+    /* ══════════════════════════════════════════════════════════
+       DATA PIPELINE + EVAL LOOP
+    ══════════════════════════════════════════════════════════ */
+    const PipelineAndEval = () => (
+      <div className="flex gap-4 mb-6">
+        {/* design-time */}
+        <Layer label="Design time · the knowledge base" color="violet" note="runs before any live question">
+          <HorizFlow items={[
+            <Card title="MinIO raw-intake" subtitle="corpus + ABAC manifest" color="slate" compact wide
+              items={[<span>one deliberately planted vendor DPA carries a real injection payload</span>]} />,
+            <Card title="Guardrails at ingestion" subtitle="per-document /v1/guardrail/checks" color="violet" tag="enforcement" highlighted compact wide
+              items={[<span>blocked documents stay quarantined, never indexed</span>]} />,
+            <Card title="AutoRAG" subtitle="chunk/overlap/embedding sweep" color="violet" compact wide
+              items={[<span>only the winning pattern is ever applied to rag_chunks</span>]} />,
+          ]} />
+        </Layer>
+
+        {/* governance loop */}
+        <Layer label="Governance loop · async, zero added latency" color="emerald" note="EvalHub (bundled in RHOAI) + MLflow">
+          <HorizFlow items={[
+            <Card title="EvalHub cycle" subtitle="four providers, one parent MLflow run" color="emerald" compact wide
+              items={[<span>ragas · IBM CLEAR · garak · presidio leak scanner over real recorded traces</span>]} />,
+            <div className="flex items-center gap-2 w-full">
+              <div className="gate-bar w-1 h-7 shrink-0" />
+              <Card title="Closed loop" subtitle="leak → tighten guardrails" color="emerald" tag="enforcement" highlighted compact wide
+                items={[<span>leaked text becomes regex_detection patterns in coordinator-agent-config; the next ask refuses instead of reprinting <Ref>(apply_closed_loop_patterns)</Ref></span>]} />
+            </div>,
+          ]} />
+        </Layer>
+      </div>
+    );
+
+    /* ══════════════════════════════════════════════════════════
+       ISOLATION
+    ══════════════════════════════════════════════════════════ */
+    const Isolation = () => (
+      <div className="rounded-2xl border border-amber-800/50 bg-amber-950/20 p-5 mb-6 glow-amber">
+        <div className="flex items-baseline justify-between gap-3 mb-4 flex-wrap">
+          <span className="font-mono text-xs font-bold text-amber-400 tracking-widest uppercase">Runtime isolation</span>
+          <span className="font-mono text-[10px] text-slate-600">verified live: live component probes + runtimeClass per sandbox on the console's Architecture Status page</span>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { t:'openshell Sandbox CRs', d:'both agents run as Sandbox CRs (agents.x-k8s.io/v1beta1) — supervisor sidecar, workspace seeding, service expose; reachable only through the openshell relay' },
+            { t:'runc vs Kata', d:'coordinator on runc (CSI SPIFFE socket), retrieval on Kata micro-VM with hardware virtualization when a kata-oc node has /dev/kvm — runc fallback otherwise' },
+            { t:'egress allowlists', d:'every outbound destination is a pinned openshell network policy: relay :8080 rest, gateway :8080 rest, guardrails :443, mlflow :443 — nothing else leaves the sandbox' },
+          ].map(({ t, d }) => (
+            <div key={t} className="rounded-xl border border-amber-800/50 bg-slate-950/50 p-3">
+              <span className="font-mono text-xs font-bold text-amber-200">{t}</span>
+              <p className="text-xs text-slate-400 leading-snug mt-1.5">{d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+
+    /* ══════════════════════════════════════════════════════════
+       FOOTER
+    ══════════════════════════════════════════════════════════ */
+    const Footer = () => (
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+        <div className="flex items-start justify-between gap-6 flex-wrap">
+          <div className="flex-1 min-w-[300px]">
+            <p className="font-mono text-xs font-bold text-slate-400 tracking-widest uppercase mb-2">Verification story</p>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs text-slate-400">
+              <div>› <span className="font-mono">90-verify.sh</span> — 39 read-only checks, pass/fail summary</div>
+              <div>› in-script smoke tests — guardrails verdicts, model probes</div>
+              <div>› six live security demos — console "Under the Hood"</div>
+              <div>› live component probes — console Architecture Status</div>
+              <div>› persona ABAC + RBAC denials — visible in the chat's own trace</div>
+              <div>› every hop in this page cited in <span className="font-mono">Detailed architecture.md</span></div>
+            </div>
+            <p className="text-[11px] text-slate-600 mt-3 leading-relaxed">
+              No test suite exists in the repo by design — the health check plus the in-script smoke tests are the whole
+              verification story, and every claim on this page maps to a file in the repo that implements it.
+            </p>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className="flex flex-wrap gap-1.5 justify-end max-w-[420px]">
+              {['OpenShell','NeMo Guardrails','Kuadrant/Authorino','MCP gateway','Keycloak','SPIRE/ZTWIM','Kata','KFP + AutoRAG','EvalHub','MLflow'].map(t => (
+                <span key={t} className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-400">{t}</span>
+              ))}
+            </div>
+            <p className="font-mono text-[10px] text-slate-600 mt-3">SPEAR Shield · Red Hat OpenShift AI 3.5.1</p>
+          </div>
+        </div>
+      </div>
+    );
+
+    /* ── ROOT ───────────────────────────────────────────────── */
+    const App = () => (
+      <div className="max-w-7xl mx-auto">
+        <Header />
+        <FailureModes />
+        <RequestPath />
+        <IdentityStrip />
+        <PipelineAndEval />
+        <Isolation />
+        <Footer />
+        <div className="mt-3 flex items-center justify-between flex-wrap gap-3">
+          <div className="flex gap-3 flex-wrap">
+            {[
+              { c:'bg-red-600',    l:'failure mode' },
+              { c:'bg-amber-500',  l:'enforcement point' },
+              { c:'bg-violet-600', l:'agent plane / identity' },
+              { c:'bg-blue-600',   l:'RAG path' },
+              { c:'bg-cyan-600',   l:'MCP tool path' },
+              { c:'bg-emerald-600',l:'governance loop' },
+            ].map(({ c, l }) => (
+              <div key={l} className="flex items-center gap-2">
+                <div className={`w-2.5 h-2.5 rounded-sm ${c} shrink-0`} />
+                <span className="text-xs text-slate-500">{l}</span>
+              </div>
+            ))}
+          </div>
+          <span className="font-mono text-xs text-slate-700">solution guide · every claim maps to repo code</span>
+        </div>
+      </div>
+    );
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

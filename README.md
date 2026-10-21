@@ -1,4 +1,4 @@
-# SPEAR Shield Deployment Guide
+# SPEAR Deployment Guide
 
 Enterprises have been deploying AI at a fast pace. Out in the field the same pattern keeps showing up, security gets addressed after the deployment, never before.
 
@@ -6,28 +6,28 @@ CISO teams keep asking the same questions. Who exactly can this AI see data for?
 
 SPEAR is our answer to closing that gap, a secure permission aware agentic runner designed to solve the OWASP failure modes we see repeatedly in enterprise AI deployments, with one real control for each one. It is implemented end to end on Red Hat OpenShift AI : two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a Kuadrant/Authorino MCP gateway with per-tool RBAC, identified by Keycloak caller tokens and SPIRE workload identity, with an OpenShift console dynamic plugin as the operator's console, a KFP ingestion plus AutoRAG pipeline chain building the knowledge base and an EvalHub evaluation cycle (ragas, IBM CLEAR, garak and a custom confidential data leak scanner) feeding MLflow.
 
-First install the project chain and an optional evaluation cycle. Every command below is literal, every hostname is resolved live from the cluster by the script that needs it and every script is idempotent, safe to rerun.
-
 ## Architecture at a glance
 
 ![Solution overview](images/solution-overview.png)
 
-Three sandboxed layers. The console plugin is the only user facing door, no client supplied identity anywhere. The coordinator sandbox (runc) holds the model reasoning loop behind NeMo Guardrails. The retrieval sandbox (Kata when available) is the only place that ever touches a real row of `rag_chunks` or a real work package, gated by ABAC on the way into Postgres and by per-tool RBAC on the way into the MCP gateway.
+Every uploaded document passes through ABAC quarantine and NeMo Guardrails sanitization before anything is indexed, a document that fails stays quarantined rather than reaching the eval dataset. AutoRAG then sweeps chunk size, overlap and embedding model combinations against that real eval dataset and only the winning pattern is ever applied, the one step that actually chunks, embeds and writes documents into `rag_chunks`, ABAC tagged from that point on. The same mlflow instance that traces every live agent question also carries the ingestion audit trail and the continuous evaluation cycle, EvalHub's four providers (ragas, IBM CLEAR, garak and the confidential data scanner) score real agent traces on a schedule, not a one time report, feeding results back into the same experiments an operator watches from the Evaluation Trends page.
 
-The same diagram's data path runs independently of any live question. Every uploaded document passes through ABAC quarantine and NeMo Guardrails sanitization before anything is indexed, a document that fails stays quarantined rather than reaching the eval dataset. AutoRAG then sweeps chunk size, overlap and embedding model combinations against that real eval dataset and only the winning pattern is ever applied, the one step that actually chunks, embeds and writes documents into `rag_chunks`, ABAC tagged from that point on. The same mlflow instance that traces every live agent question also carries the ingestion audit trail and the continuous evaluation cycle, EvalHub's four providers (ragas, IBM CLEAR, garak and the confidential data scanner) score real agent traces on a schedule, not a one time report, feeding results back into the same experiments an operator watches from the Evaluation Trends page.
+One question traverses six enforcement layers end to end: sandbox isolation, openshell egress policy, guardrails, gateway auth, per-tool RBAC and ABAC row filtering. The data path runs independently of any live question.
 
 ![Control flow path](images/control-flow-path.png)
 
-One question traverses six enforcement layers end to end: sandbox isolation, openshell egress policy, guardrails, gateway auth, per-tool RBAC and ABAC row filtering. [Detailed architecture](Detailed architecture.md) is the deep dive, every hop in that drawing cited against the exact file and line that proves it, this guide stays the install and operate reference.
+Three sandboxed layers. The console plugin is the only user facing door, no client supplied identity anywhere. The coordinator sandbox (runc) holds the model reasoning loop behind NeMo Guardrails. The retrieval sandbox (Kata when available) is the only place that ever touches a real row of `rag_chunks` or a real work package, gated by ABAC on the way into Postgres and by per-tool RBAC on the way into the MCP gateway.
 
-## Prerequisites
+Refer [Detailed architecture](Detailed%20architecture.md) for a deep dive on the implementation.
+
+## Installation prerequisites
 
 ### 1. Get a cluster
 
 - OpenShift with the apps domain reachable, routes resolve as `<name>.<apps-domain>`
-- logged in as cluster-admin, the install chain creates operators, MachineConfigs, SCC grants and cluster scoped RBAC
+- logged in as cluster-admin, the install chain creates operators, MachineConfigs, SCC grants and cluster scoped RBAC. Recommended catalog item in the Red Hat Demo Platform is OpenShift Container Platform Cluster (Multi-Cloud).
 - RHOAI 3.5.1 is installed by the platform layer if absent, left untouched if already present
-- Kata is optional, `INSTALL_KATA=false` skips the node reboot, retrieval falls back to runc automatically if no usable Kata node exists
+- `INSTALL_KATA=false` skips the node reboot, retrieval falls back to runc automatically if no usable Kata node exists
 - SPIRE (zero trust workload identity manager) is installed by the platform layer, `INSTALL_ZTWIM=false` to skip, the manifests template against the cluster's real trust domain, never a hardcoded one
 
 ### 2. Workstation tools
@@ -42,7 +42,7 @@ python3.12 -m venv .venv-kfp && source .venv-kfp/bin/activate
 pip install kfp kfp-kubernetes boto3 psycopg2-binary requests
 ```
 
-### 3. The one manual step, OGX keys
+### 3. LLM API keys (MaaS)
 
 Three model API key secrets, created by you so raw keys never land in a script log or chat transcript. Script 05 fails with the exact create commands if any are missing.
 
@@ -62,7 +62,7 @@ oc label secret ogx-embedding-key -n spear-inference ogx.io/watch=true
 
 litemaas scopes keys per model server side, reusing the chat key for embedding returns 401, so the two gateway keys are genuinely separate. The embedding key is a placeholder by design, the self hosted TEI server has no auth of its own. Every other credential in the system (minio, pgvector, Keycloak, OpenProject, persona logins) is generated once in cluster and never regenerated on rerun.
 
-## Install
+## Installation
 
 ### 4. Platform layer
 
@@ -99,7 +99,7 @@ Every one of the 9 scripts is independently safe to rerun in this same numeric o
 
 A per script breakdown of what each one installs is in the [Appendix](#appendix-what-each-script-installs).
 
-## Verify
+## Verification
 
 ### 6. Health check
 
@@ -186,7 +186,7 @@ The ABAC filter on `rag_chunks` means `balakrishnan.b` and `siddhartha.de` get g
 
 ![Two personas, different tool access](images/2-personas-b-diff-tools.png)
 
-#### 7.6 Optional, the malicious response injection demo
+#### 7.6 The malicious MCP tool response injection 
 
 ```
 ./scripts/09-demo-tool-response-injection.sh
@@ -267,7 +267,7 @@ oc patch cronjob evalhub-cycle-runner -n spear-shield-eval --type merge \
   -p '{"spec":{"suspend":false}}'
 ```
 
-## Use it
+## SPEAR in use
 
 ### 8. Persona login
 
@@ -285,7 +285,7 @@ oc get secret spear-shield-console-creds -n spear-console \
 
 The console never sends a username anywhere, the backend resolves identity by a live apiserver self lookup on your own OAuth token, then mints a Keycloak realm token for that exact username. That token rides twice into the coordinator sandbox, once as a header the openshell relay strips, once in the a2a body the coordinator's own code actually reads. `balakrishnan.b` sees `general` docs only, `siddhartha.de` sees `general` and `restricted` data governance docs and may update work packages, but only his own, the assignee-self check resolves the caller from that same token.
 
-### 9. Under the hood demos
+### 9. Using the agent security controls
 
 Console navigation, under the SpearShield section:
 
@@ -340,7 +340,7 @@ Deployment state versus Git: never assume running pods match HEAD, every code ch
 
 Deletes the eight namespaces created by the base chain in dependency order, sandboxes and gateways first, pgvector and minio last, plus the `spear-shield-agents` Keycloak realm import.
 
-> Warning: `spear-shield-eval`, the optional evaluation layer's own namespace, is not touched by this script and is left standing if script 10 was ever run. Delete it by hand (`oc delete namespace spear-shield-eval`) for a full teardown.
+> Warning: `spear-shield-eval`, the evaluation layer's own namespace, is not touched by this script and is left standing if script 10 was ever run. Delete it by hand (`oc delete namespace spear-shield-eval`) for a full teardown.
 
 Deliberately left alone otherwise: RHOAI itself, the DSC/DSCI, the odh-dashboard-config CR, the shared MLflow instance and all platform layer operators. Operator uninstall is a manual, cluster owner decision.
 

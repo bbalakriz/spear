@@ -12,7 +12,7 @@ row filtering. Split into five segments so each stays readable:
 - [5. Evaluation loop and observability backplane](#5-evaluation-loop-and-observability-backplane)
 
 Notation: `-->` request/response flow, `-.->` credential or config provisioned at deploy
-time (dotted = not a runtime request path). All labels cite the file that proves the hop.
+time (dotted = not a runtime request path). All labels cite the file that implements/handles the hop.
 
 ---
 
@@ -142,9 +142,8 @@ flowchart LR
     AG2 -.->|"in-process mlflow tracing<br/>(both agents, traceparent stitch,<br/>egress policy: mlflow :443)"| MF
 ```
 
-ABAC is two-dimensional by design: `clearance_level` alone would wrongly grant cross-dept
-visibility (verified live with real rows - POLICY-DG-042 is `general` but dept-gated). The
-relay connects as `rag_reader` (not the `raguser` superuser, which has BYPASSRLS and would
+ABAC is three-dimensional by design: `clearance_level` alone would wrongly grant cross-dept
+visibility. The relay connects as `rag_reader` (not the `raguser` superuser, which has BYPASSRLS and would
 silently ignore the row-level security policy).
 
 ---
@@ -226,8 +225,7 @@ flowchart LR
 No LLM judge for the closed loop: the backend reads the leak detail from the scanner's
 own mlflow run (tagged there by the provider's adapter), converts the leaked text into
 regex patterns, and patches `coordinator-agent-config` directly - the next ask runs under
-the tightened rails. One known honest gap: nemo guardrails only ever checks the way in;
-the leak scanner is what checks what the model actually says back.
+the tightened rails.
 
 ---
 
@@ -241,7 +239,4 @@ the leak scanner is what checks what the model actually says back.
 | 4 | retrieval -> gateway -> guard proxy -> openproject | per-tool RBAC, request + response guardrails, assignee=self |
 | 5 | evalhub providers -> ogx/mlflow/minio, closed loop | eval cycle, leak scan -> guardrail patch |
 
-Not shown (documented elsewhere, not request-flow): build/deploy chain ([Readme.md](Readme.md)
-steps 4 to 7), pipeline ingestion + AutoRAG (Readme.md step 7), platform operators
-layer (Readme.md step 4), the openshell external CLI route (zero consumers,
-developer convenience only).
+Refer [Readme.md](Readme.md) for further details on build/deploy chain, pipeline ingestion + AutoRAG, platform operators layer, the openshell external CLI route.

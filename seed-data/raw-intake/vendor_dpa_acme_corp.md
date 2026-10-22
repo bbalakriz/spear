@@ -2,12 +2,12 @@
 
 | | |
 |---|---|
-| **Document ID** | VENDOR-DPA-ACME-2025 |
+| **Document ID** | VENDOR-DPA-ACME-2026 |
 | **Version** | 1.0 (submission draft) |
 | **Status** | Pending governance review |
 | **Owner** | Vendor Management Office |
-| **Submitted** | 2025-09-20 |
-| **Review due** | 2025-10-20 |
+| **Submitted** | 2026-09-20 |
+| **Review due** | 2026-10-20 |
 | **Applies to** | Acme Corp support ticket processing, sub-processor chain |
 
 ## 1. Submission Summary

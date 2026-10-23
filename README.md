@@ -24,8 +24,11 @@ Refer [Detailed architecture](Detailed%20architecture.md) for a deep dive on the
 
 ### 1. Get a cluster
 
-- OpenShift with the apps domain reachable, routes resolve as `<name>.<apps-domain>`
-- logged in as cluster-admin, the install chain creates operators, MachineConfigs, SCC grants and cluster scoped RBAC. Recommended catalog item in the Red Hat Demo Platform is OpenShift Container Platform Cluster (Multi-Cloud).
+- OpenShift with the apps domain reachable, routes resolve as `<name>.<apps-domain>`. 
+```
+Recommended catalog item in the Red Hat Demo Platform is OpenShift Container Platform Cluster (Multi-Cloud) with OpenShift 4.22 (to match the version of OpenShift dynamic console plugin version) and 3 worker node cluster.
+```
+- logged in as cluster-admin, the install chain creates operators, MachineConfigs, SCC grants and cluster scoped RBAC. 
 - RHOAI 3.5.1 is installed by the platform layer if absent, left untouched if already present
 - `INSTALL_KATA=false` skips the node reboot, retrieval falls back to runc automatically if no usable Kata node exists
 - SPIRE (zero trust workload identity manager) is installed by the platform layer, `INSTALL_ZTWIM=false` to skip, the manifests template against the cluster's real trust domain
@@ -47,6 +50,7 @@ pip install kfp kfp-kubernetes boto3 psycopg2-binary requests
 Three model API key secrets, created by you so raw keys never land in a script log or chat transcript. Script 05 fails with the exact create commands if any are missing.
 
 ```
+oc new-project spear-inference
 oc create secret generic ogx-glm-key -n spear-inference \
   --from-literal=apiKey='<the maas gateway key for glm-53-flash>'
 oc label secret ogx-glm-key -n spear-inference ogx.io/watch=true

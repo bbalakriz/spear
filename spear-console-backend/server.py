@@ -5,7 +5,7 @@
 # reading a completed autorag run's per pattern scores needs a real signed s3
 # get (boto3), and triggering kfp runs correctly needs the real kfp rest field
 # names rather than a hand rolled json body, so this now ships as a built
-# image (see owner-console-backend/Dockerfile) instead of a configmap mounted
+# image (see spear-console-backend/Dockerfile) instead of a configmap mounted
 # script.
 #
 # mlflow reads still use this pod's own service account token, unchanged from
@@ -110,7 +110,7 @@ MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "")
 # the knowledge base page's read-only source strip, the pipeline's own view
 # of where sanitization reads from: the bare host:port form the kfp pipeline
-# itself defaults to (pipelines/phase1_ingestion/pipeline.py's
+# itself defaults to (pipelines/corpus_prepare/pipeline.py's
 # MINIO_ENDPOINT_DEFAULT, distinct from the http:// prefixed MINIO_ENDPOINT
 # above which boto3 needs), the raw intake bucket/prefix every ingestion run
 # lists, and the minio console browser link for the manifest. secret names
@@ -123,7 +123,7 @@ MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "")
 # this never silently drifts from pipeline.py's own dsl.pipeline defaults
 # the way AUTORAG_RAW_BUCKET already quietly does above. only used if that
 # live lookup fails, e.g. right after a fresh install before anyone has
-# run pipelines/phase1_ingestion/compile_and_run.py yet
+# run pipelines/corpus_prepare/compile_and_run.py yet
 INGESTION_SOURCE_ENDPOINT = os.environ.get(
     "INGESTION_SOURCE_ENDPOINT", "minio.minio.svc.cluster.local:9000"
 )
@@ -155,7 +155,7 @@ COORDINATOR_POD = os.environ.get("SPEAR_SHIELD_COORDINATOR_POD", "default--spear
 RETRIEVAL_POD = os.environ.get("SPEAR_SHIELD_RETRIEVAL_POD", "default--spear-retrieval")
 SPEAR_SHIELD_MCP_GATEWAY_URL = os.environ.get(
     "SPEAR_SHIELD_MCP_GATEWAY_URL",
-    "http://spear-shield-gateway-istio.spear-shield-agents.svc.cluster.local:8080/mcp",
+    "http://spear-shield-mcp-gateway-istio.spear-shield-agents.svc.cluster.local:8080/mcp",
 )
 SPEAR_SHIELD_MCP_GATEWAY_HOST_HEADER = os.environ.get("SPEAR_SHIELD_MCP_GATEWAY_HOST_HEADER", "")
 # the exact same literal url spear-coordinator-agent's own main.py already

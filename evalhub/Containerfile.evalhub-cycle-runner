@@ -23,7 +23,7 @@
 # all, it only ever applies server side to COPY/ADD once a build is
 # already running, by then the upload already happened. without
 # --exclude, oc tars up the whole repo root client side first, including
-# .venv-kfp and owner-console/node_modules at over 1gb combined, and the
+# .venv-kfp and spear-console/node_modules at over 1gb combined, and the
 # upload hangs for many minutes. the .dockerignore file is still kept,
 # harmless, and correct if this Containerfile ever grows a `COPY . .`,
 # but it is not what keeps this particular upload small

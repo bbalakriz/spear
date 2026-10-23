@@ -132,7 +132,7 @@ export default function ArchitectureStatusPage() {
         {error && (
           <Alert
             variant="danger"
-            title="Could not reach the owner console backend"
+            title="Could not reach the spear console backend"
             isInline
             style={{ marginTop: '1rem' }}
           >

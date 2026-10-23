@@ -1,4 +1,4 @@
-# four narrow, read only grants so owner-console-backend's own
+# four narrow, read only grants so spear-console-backend's own
 # demo_workload_identity can name the real spire to keycloak pathway live,
 # off the real cluster, at call time, instead of typing the mechanism into
 # its own source. three of the four pin resourceNames, same least

@@ -3,8 +3,8 @@ set -euo pipefail
 # optional, demo only, nightmare 3 from architecture.html, tool response
 # injection. never part of the required install chain, 00 through 11,
 # run this on demand against an already running
-# 09-install-worktracker-and-agents.sh install, same relationship
-# 01-patch-kata-nftables.sh has to 01-install-namespaces.sh.
+# 09-install-worktracker-and-agents.sh install, kept off the numeric
+# install chain entirely, same reasoning patch-kata-nftables.sh follows.
 #
 # plants one real, malicious work package in the same data-governance
 # project seed_openproject_demo_data already seeds, subject line itself

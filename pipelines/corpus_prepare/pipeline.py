@@ -6,7 +6,7 @@ rag-phase1-ogx's chat model. the one piece still deliberately kept out of
 this pipeline is the actual AutoRAG optimization run itself: that is a
 separately registered kfp pipeline (documents-rag-optimization-pipeline,
 auto registered on every dspa pipeline server) with its own long running
-job semantics, triggered by pipelines/phase1_autorag/run_autorag.py
+job semantics, triggered by pipelines/autorag/run_autorag.py
 against this pipeline's eval dataset output, not embedded in this dag.
 
 this pipeline never writes to rag_chunks anymore, on purpose, since
@@ -16,7 +16,7 @@ chunking and embedding recipe against the eval set this same pipeline
 produces, which is backwards relative to how autorag is actually meant
 to be used: pick the winner first, then index the full corpus with that
 winner's exact settings. the real indexing now lives in
-pipelines/phase1_apply_pattern/pipeline.py, run once a winning pattern
+pipelines/corpus_index/pipeline.py, run once a winning pattern
 exists for a batch, not here.
 
 run `python3 pipeline.py` to compile phase1-ingestion-pipeline.yaml, or
@@ -38,7 +38,7 @@ SANITIZED_PREFIX_DEFAULT = "sanitized/"
 # pipeline function below: both are openshift route hostnames, which are
 # unique per cluster, a hardcoded default here would silently break on
 # any cluster other than the one this was first written against. every
-# caller (compile_and_run.py, the owner console backend's trigger
+# caller (compile_and_run.py, the spear console backend's trigger
 # endpoint) resolves them live via `oc get route` and passes them in
 # explicitly instead.
 MLFLOW_WORKSPACE_DEFAULT = "spear-pipelines"
@@ -46,7 +46,7 @@ MLFLOW_EXPERIMENT_NAME_DEFAULT = "phase1-ingestion"
 EVAL_PREFIX_DEFAULT = "autorag-eval/"
 OGX_BASE_URL_DEFAULT = "http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321"
 # glm-53-flash's maas gateway moved to root, body based routing on
-# 2026-09-27 (see PHASE1_PLAN.md and pipelines/phase1_autorag/
+# 2026-09-27 (see PHASE1_PLAN.md and pipelines/autorag/
 # run_autorag.py), restored here once that was confirmed live through
 # ogx itself, double "openai/" prefixed for the same litellm strip
 # reason explained in generate_eval_dataset's own docstring below
@@ -274,7 +274,7 @@ def generate_eval_dataset(
     foundation model id for glm-53-flash is
     "openai/publishers/prelude-maas/models/glm-53-flash" (the long form
     is maas's own body based routing id, see
-    pipelines/phase1_autorag/run_autorag.py and PHASE1_PLAN.md for why),
+    pipelines/autorag/run_autorag.py and PHASE1_PLAN.md for why),
     so this needs a double prefixed
     "openai/openai/publishers/prelude-maas/models/glm-53-flash" to
     survive the strip.
@@ -282,7 +282,7 @@ def generate_eval_dataset(
     writes the AutoRAG test-data json schema
     (question/correct_answers/correct_answer_document_ids) both as this
     step's own kfp artifact and to minio under eval_prefix, so
-    pipelines/phase1_autorag/run_autorag.py can point the real AutoRAG
+    pipelines/autorag/run_autorag.py can point the real AutoRAG
     kfp pipeline's test_data_key straight at it.
     """
     import json
@@ -468,7 +468,7 @@ def log_ingestion_report(
             "note": (
                 "this batch is not indexed into rag_chunks yet. indexing now "
                 "happens after a winning pattern is selected, see "
-                "pipelines/phase1_apply_pattern/pipeline.py, not as part of "
+                "pipelines/corpus_index/pipeline.py, not as part of "
                 "ingestion. trigger an apply pattern run against this "
                 "batch's autorag run once it has a winner."
             ),
@@ -480,7 +480,7 @@ def log_ingestion_report(
         },
         "autorag_trigger": (
             "not run from inside this pipeline, see "
-            "pipelines/phase1_autorag/run_autorag.py, which triggers the "
+            "pipelines/autorag/run_autorag.py, which triggers the "
             "real documents-rag-optimization-pipeline against this "
             "batch's eval dataset separately"
         ),

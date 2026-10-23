@@ -144,7 +144,7 @@ spec:
               port: 8321
         # correction, 2026-10-04: missed when this cr's own namespace split
         # off from the pipeline server's, the ingestion pipeline's own
-        # generate_eval_dataset step (pipelines/phase1_ingestion/pipeline.py)
+        # generate_eval_dataset step (pipelines/corpus_prepare/pipeline.py)
         # calls this service directly from spear-pipelines and got a
         # silent, dropped connection, not a fast refusal, confirmed live:
         # a plain curl from spear-pipelines timed out completely while the
@@ -170,7 +170,7 @@ spec:
         # httpcore.ConnectTimeout against rag-phase1-ogx-service, caught
         # by nemoguardrails's own generic exception handler and returned
         # as a clean 200 with message.content literally "Internal server
-        # error", no tool_calls, which is what owner-console's chat page
+        # error", no tool_calls, which is what spear-console's chat page
         # ends up showing the real human. a plain curl from spear-guardrails
         # reproduced the same silent timeout the spear-pipelines gap above
         # did, this namespace was simply never added either.

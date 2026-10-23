@@ -97,10 +97,10 @@ metadata:
 spec:
   parentRefs:
     # cross namespace now, see this file's own header comment, requires
-    # spear-shield-gateway's allowedRoutes.namespaces.from: All
+    # spear-shield-mcp-gateway's allowedRoutes.namespaces.from: All
     - group: gateway.networking.k8s.io
       kind: Gateway
-      name: spear-shield-gateway
+      name: spear-shield-mcp-gateway
       namespace: spear-shield-agents
   hostnames:
     - spear-openproject-mcp.mcp.local

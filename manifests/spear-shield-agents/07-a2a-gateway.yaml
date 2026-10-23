@@ -1,3 +1,7 @@
+# the a2a gateway, agent to agent calls between the coordinator and the
+# retrieval agent flow through here. the mcp gateway every tool call
+# flows through is a separate object entirely, 02-mcp-gateway.yaml, own
+# listeners, own httproutes, not shared with this one.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -6,7 +10,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: spear-shield-agents
 spec:
-  # same gatewayClassName as 02-gateway.yaml's own mcp gateway
+  # same gatewayClassName as 02-mcp-gateway.yaml's own mcp gateway
   gatewayClassName: istio
   listeners:
     - name: http

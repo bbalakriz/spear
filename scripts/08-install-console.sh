@@ -2,20 +2,22 @@
 set -euo pipefail
 # builds and deploys the console: the backend (manifests/spear-console)
 # plus the frontend openshift console plugin
-# (owner-console/charts/openshift-console-plugin). both images are built
+# (spear-console/charts/openshift-console-plugin). both images are built
 # binary, straight from source, into this namespace's own internal
 # registry, same pattern every other custom image in this project already
 # uses.
 #
-# NAMESPACE_MIGRATION_PLAN.md: the component itself is renamed, console
+# NAMESPACE_MIGRATION_PLAN.md: the component itself was renamed, console
 # not owner-console, since it is slated to also host the phase 2 chat tab,
 # not just phase 1 ingestion controls. the source directories at the repo
-# root (owner-console/owner-console-backend) keep their own names for
-# now, that deeper rename is deliberately deferred, see the plan's own
-# section 1, this script still builds from those paths
+# root followed later, owner-console/owner-console-backend renamed to
+# spear-console/spear-console-backend, this script builds from those
+# paths now, the BuildConfig/Helm release names themselves stayed as
+# phase1-ingestion-console(-backend), that is a separate, still deferred
+# rename
 #
 # MLFLOW_URL, DSPA_ROUTE and GUARDRAILS_ROUTE are never hardcoded anywhere
-# in owner-console-backend/server.py: all three are openshift route
+# in spear-console-backend/server.py: all three are openshift route
 # hostnames, unique per cluster, so this script resolves them live and
 # injects them into the backend deployment with `oc set env`, not the
 # applied manifest itself, so a later `oc apply -f 01-backend.yaml` never
@@ -185,7 +187,7 @@ main() {
   log "mirroring minio-dsp-creds into ${CONSOLE_NS}"
   mirror_secret minio-dsp-creds "${PIPELINES_NS}" "${CONSOLE_NS}"
 
-  build_image "${BACKEND_BC}" "${ROOT_DIR}/owner-console-backend"
+  build_image "${BACKEND_BC}" "${ROOT_DIR}/spear-console-backend"
 
   log "applying backend rbac, chat creds and deployment"
   oc apply -f "${ROOT_DIR}/manifests/spear-console/00-backend-rbac.yaml"
@@ -258,13 +260,13 @@ main() {
   wait_deploy_ready "${BACKEND_DEPLOY}" "${CONSOLE_NS}"
 
   log "building the frontend plugin bundle"
-  ( cd "${ROOT_DIR}/owner-console" && yarn build )
-  build_image "${FRONTEND_BC}" "${ROOT_DIR}/owner-console"
+  ( cd "${ROOT_DIR}/spear-console" && yarn build )
+  build_image "${FRONTEND_BC}" "${ROOT_DIR}/spear-console"
 
   local frontend_image
   frontend_image="$(image_digest_ref "${FRONTEND_BC}")"
   log "deploying the console plugin chart with helm, image ${frontend_image}"
-  helm upgrade --install "${HELM_RELEASE}" "${ROOT_DIR}/owner-console/charts/openshift-console-plugin" \
+  helm upgrade --install "${HELM_RELEASE}" "${ROOT_DIR}/spear-console/charts/openshift-console-plugin" \
     -n "${CONSOLE_NS}" \
     --set "plugin.image=${frontend_image}"
 

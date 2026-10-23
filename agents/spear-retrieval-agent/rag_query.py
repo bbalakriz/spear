@@ -26,7 +26,7 @@ dept (POLICY-DG-042) from the one neither sees despite also being general
 live rows, not clearance_level alone.
 
 the filter lives once, on rag_chunks itself
-(pipelines/phase1_apply_pattern/pipeline.py, the schema owner). this
+(pipelines/corpus_index/pipeline.py, the schema owner). this
 module does not reimplement that WHERE clause. it only maps the caller's
 claims into the three session variables the policy reads. rag_reader has
 no bypassrls, so postgres only ever hands back a row the policy allows,
@@ -130,7 +130,7 @@ def abac_filtered_search(
 
 
 def connect():
-    # same psycopg2 connection pattern phase1_apply_pattern/pipeline.py
+    # same psycopg2 connection pattern corpus_index/pipeline.py
     # already uses against pgvector-creds
     # PGVECTOR_DB_PORT, not PGVECTOR_PORT: found live, kubernetes auto
     # injects PGVECTOR_PORT itself (the legacy service link env var,

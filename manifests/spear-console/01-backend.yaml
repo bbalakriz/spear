@@ -7,10 +7,11 @@
 # run's per pattern scores needs a real signed s3 get (boto3), and triggering
 # kfp runs correctly needs the real kfp rest field names (not a hand rolled
 # json body), so this ships as a built image, source lives in
-# owner-console-backend/ at the repo root (NAMESPACE_MIGRATION_PLAN.md
-# section 1: that source directory rename to spear-console-backend is
-# deliberately deferred, see this file's own header comment pattern in
-# 00-backend-rbac.yaml), built and pushed the same way the console
+# spear-console-backend/ at the repo root (NAMESPACE_MIGRATION_PLAN.md
+# section 1 first deferred this source directory rename, done in a
+# later pass, see 00-backend-rbac.yaml's own header comment for why the
+# resource names themselves stayed as phase1-ingestion-console-backend),
+# built and pushed the same way the console
 # plugin's own frontend image is (oc new-build/oc start-build
 # --from-dir, into this namespace's own internal registry image stream, see
 # PHASE1_PLAN.md).
@@ -67,7 +68,7 @@ spec:
           env:
             # read only use of the same shared minio credential every other
             # pipeline component in this project already uses, see
-            # pipelines/phase1_ingestion/pipeline.py's _use_minio_creds. this
+            # pipelines/corpus_prepare/pipeline.py's _use_minio_creds. this
             # backend only ever calls get_object/list_objects_v2 with it.
             - name: MINIO_ACCESS_KEY
               valueFrom:

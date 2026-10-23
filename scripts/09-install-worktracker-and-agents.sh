@@ -596,6 +596,12 @@ deploy_sandboxed_agents() {
   oc start-build spear-coordinator-agent --from-dir="${ROOT_DIR}/agents" --wait -n "${AGENTS_NS}"
   oc start-build spear-retrieval-agent --from-dir="${ROOT_DIR}/agents" --wait -n "${AGENTS_NS}"
 
+  # openshift refuses cross namespace pulls from the internal registry
+  # without this grant; without it the relay in spear-data sits in
+  # ImagePullBackOff against spear-shield-agents/spear-retrieval-agent
+  log "allow spear-data's default sa to pull spear-retrieval-agent from ${AGENTS_NS}"
+  oc apply -f "${AGENTS_MANIFESTS}/09-rag-query-relay-image-puller-rbac.yaml"
+
   log "rag-query-relay, same image as spear-retrieval-agent, now that it actually exists"
   oc apply -f "${ROOT_DIR}/manifests/spear-data/02-rag-query-relay.yaml"
   wait_deploy_ready spear-shield-rag-query-relay "${DATA_NS}"
@@ -659,8 +665,8 @@ main() {
   log "openproject demo data: personas, data-governance project, work packages, api tokens"
   seed_openproject_demo_data
 
-  log "spear-shield-gateway, auth policies"
-  apply_templated "${AGENTS_MANIFESTS}/02-gateway.yaml"
+  log "spear-shield-mcp-gateway, auth policies"
+  apply_templated "${AGENTS_MANIFESTS}/02-mcp-gateway.yaml"
   apply_templated "${AGENTS_MANIFESTS}/03-auth-policies.yaml"
 
   log "spear-openproject-mcp code configmap"
@@ -682,7 +688,6 @@ main() {
     --from-file=server.py="${ROOT_DIR}/mcp-servers/spear-shield-mcp-guard-proxy/server.py" \
     --dry-run=client -o yaml | oc apply -f -
   apply_templated "${AGENTS_MANIFESTS}/04-mcp-guard-proxy.yaml"
-  oc apply -f "${AGENTS_MANIFESTS}/05-mcp-guard-proxy-referencegrant.yaml"
   # a configmap update alone never reaches an already running pod, only a
   # fresh pod mounts the new content, so force one on every run rather
   # than silently serving stale server.py against a cluster that is not
@@ -712,30 +717,30 @@ main() {
   log "sandboxed agents: image builds, rag-query-relay, openshell sandbox create/policy/provider"
   deploy_sandboxed_agents
 
+  # keep this block to commands the user actually runs next, nothing
+  # else. narrative/caveat text belongs in a source comment, not here,
+  # see git history on this block for the longer reasoning if ever
+  # needed again.
   cat <<EOF
 
-spear-shield-agents and spear-worktracker deployed. resolved for this cluster, nothing hardcoded:
+spear-shield-agents and spear-worktracker deployed.
   openproject:  https://${OPENPROJECT_HOST}
   mcp gateway:  https://${MCP_PUBLIC_HOST}/mcp
   sso issuer:   ${ISSUER_URL}
 
-credentials, none of them in this repo, all in cluster secrets:
-  openproject admin login:         oc get secret spear-openproject-login-creds -n ${WORKTRACKER_NS} -o jsonpath='{.data.admin-password}' | base64 -d
+credentials (cluster secrets, none in this repo):
+  openproject admin login:          oc get secret spear-openproject-login-creds -n ${WORKTRACKER_NS} -o jsonpath='{.data.admin-password}' | base64 -d
   balakrishnan.b openproject login: oc get secret spear-openproject-login-creds -n ${WORKTRACKER_NS} -o jsonpath='{.data.balakrishnan\.b-password}' | base64 -d
   siddhartha.de openproject login:  oc get secret spear-openproject-login-creds -n ${WORKTRACKER_NS} -o jsonpath='{.data.siddhartha\.de-password}' | base64 -d
   balakrishnan.b api token:         oc get secret spear-openproject-api-tokens -n ${WORKTRACKER_NS} -o jsonpath='{.data.balakrishnan\.b}' | base64 -d
   siddhartha.de api token:          oc get secret spear-openproject-api-tokens -n ${WORKTRACKER_NS} -o jsonpath='{.data.siddhartha\.de}' | base64 -d
   spear-shield-agents realm users:  oc get keycloakrealmimport spear-shield-agents-realm -n keycloak -o jsonpath='{range .spec.realm.users[*]}{.username}{" "}{.credentials}{"\n"}{end}'
 
-sandboxed agents, openshell sandbox list for current status:
-  spear-coordinator, spear-retrieval, both created by deploy_sandboxed_agents above
+sandbox status:  oc get sandbox -n ${AGENTS_NS}
 
-one real thing worth checking after this, not assumed: manifests/spear-shield-agents/06-cluster-spiffeid.yaml
-pins a literal agents.x-k8s.io/sandbox-name-hash value for the coordinator sandbox,
-confirmed live on an earlier cluster to be deterministic from the sandbox name alone,
-but never independently reconfirmed on this one. compare it against the real pod:
-  oc get pod -n ${AGENTS_NS} -l app.kubernetes.io/managed-by=openshell -o jsonpath='{.items[0].metadata.labels.agents\.x-k8s\.io/sandbox-name-hash}{"\n"}'
-and patch 06-cluster-spiffeid.yaml's own podSelector value if it differs.
+if a sandbox was ever recreated under a new name, confirm the coordinator's spiffe identity still resolves:
+  oc get pod -n ${AGENTS_NS} -l openshell.ai/managed-by=openshell -o jsonpath='{.items[0].metadata.labels.agents\.x-k8s\.io/sandbox-name-hash}{"\n"}'
+  (compare against manifests/spear-shield-agents/06-cluster-spiffeid.yaml's podSelector value, patch if it differs)
 EOF
 }
 

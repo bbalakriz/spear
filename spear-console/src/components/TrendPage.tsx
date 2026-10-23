@@ -279,9 +279,9 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
 
   // the closed loop button, confidential data leak card only: acts on
   // this latest already completed scan's own job id, never triggers a
-  // fresh scan itself. owner-console-backend does the real read + patch
+  // fresh scan itself. spear-console-backend does the real read + patch
   // in process against the real coordinator-agent-config configmap, see
-  // apply_closed_loop_patterns in owner-console-backend/server.py
+  // apply_closed_loop_patterns in spear-console-backend/server.py
   const [closedLoopBusy, setClosedLoopBusy] = useState(false);
   const [closedLoopResult, setClosedLoopResult] = useState<{
     added: string[];

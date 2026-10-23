@@ -62,7 +62,7 @@ def serve(host: str, port: int, on_rpc: JsonHandler, on_card: Callable[[], dict[
                 # receives the user's query plus their real keycloak jwt as
                 # a plain Authorization header on this request, not inside
                 # the json-rpc body, that is how an ordinary http caller
-                # like owner-console-backend actually sends a bearer token.
+                # like spear-console-backend actually sends a bearer token.
                 # the full header map rides along too now, PHASE3_PLAN.md
                 # section 4: it is the only way retrieval ever sees the
                 # coordinator's own outbound traceparent header to stitch
@@ -131,7 +131,7 @@ def completed_task(request_id: Any, text: str, trace: list[dict[str, Any]] | Non
     }
     # not part of the a2a spec, same kind of project specific extra field
     # as params.callerToken above: a real per hop timing breakdown of the
-    # request this agent just handled, owner-console's chat page renders
+    # request this agent just handled, spear-console's chat page renders
     # it as a live trace. only the coordinator populates this today, see
     # main.py's own answer()
     if trace:

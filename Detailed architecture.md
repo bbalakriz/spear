@@ -34,7 +34,7 @@ flowchart LR
 
     subgraph OC["OpenShift console"]
         CP["Console plugin<br/>(SpearShieldChatPage etc.)"]
-        BK["owner-console-backend<br/>(spear-console ns)"]
+        BK["spear-console-backend<br/>(spear-console ns)"]
     end
 
     U -->|"openshift console UI<br/>(sso realm login)"| CP
@@ -43,7 +43,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    BK["owner-console-backend"]
+    BK["spear-console-backend"]
     AP["OpenShift apiserver<br/>(kubernetes.default.svc)"]
     KC[("Keycloak<br/>(sso + spear-shield-agents<br/>realms, keycloak ns)")]
     PC[("spear-shield-console-creds secret<br/>(spear-console ns): one persona<br/>realm password file per username")]
@@ -159,7 +159,7 @@ guard proxy before any model or agent sees content.
 ```mermaid
 flowchart LR
     AG2b["spear-retrieval-agent<br/>(caller JWT as Authorization,<br/>host = mcp-spear-shield-agents...<br/>(egress policy: gateway :8080 rest))"]
-    subgraph GW3["spear-shield-gateway (istio, mcps listener)"]
+    subgraph GW3["spear-shield-mcp-gateway (istio, mcps listener)"]
         RBA["AuthPolicy per-tool RBAC:<br/>('tool:' + x-mcp-toolname) in<br/>resource_access[x-mcp-servername].roles<br/>401/403 fail-closed<br/>(03-auth-policies.yaml)"]
     end
     GP["spear-shield-mcp-guard-proxy<br/>(spear-shield-agents ns :8000)<br/>request guard + response guard,<br/>config work-tracker-config"]
@@ -180,7 +180,7 @@ flowchart LR
 
 The guard proxy is one deployment for every MCP server (no per-server env), deriving each
 request's real backend from `x-mcp-servername` — onboarding a new MCP server is a one-line
-HTTPRoute backendRef change. Demo: `scripts/09-demo-tool-response-injection.sh` plants a
+HTTPRoute backendRef change. Demo: `scripts/demo-tool-response-injection.sh` plants a
 real malicious work package; the response guard blocks its subject line before the
 retrieval agent's LLM ever sees it. The caller JWT authorizes the MCP gateway hop and
 supplies the username for assignee=self; OpenProject itself is called with that user's
@@ -208,7 +208,7 @@ flowchart LR
     OGX2["OGX (spear-inference)<br/>judge: gemma4<br/>embed: nomic-embed-text-v1.5"]
     MINIO[("MinIO<br/>ragas dataset jsonl<br/>evalhub-ragas-data bucket")]
     GC["coordinator-agent-config<br/>configmap (spear-guardrails)<br/>regex patterns"]
-    CB["owner-console-backend<br/>/trigger/closed-loop"]
+    CB["spear-console-backend<br/>/trigger/closed-loop"]
     TP["Evaluation Trends page<br/>(console plugin TrendPage)"]
 
     RG -->|"judge + embedding calls"| OGX2

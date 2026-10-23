@@ -145,7 +145,7 @@ Needs `.venv-kfp`:
 
 ```
 source .venv-kfp/bin/activate
-python pipelines/phase1_ingestion/compile_and_run.py
+python pipelines/corpus_prepare/compile_and_run.py
 ```
 
 Every document is sent through the guardrails `/v1/guardrail/checks` call, the vendor submission from 7.1 is blocked, every other document passes and moves on to real eval question generation over the sanitized set. Nothing is chunked or written to `rag_chunks` yet. Run id lands in MLflow experiment `phase1-ingestion`, workspace `spear-pipelines`, using your own `oc whoami -t` token.
@@ -155,7 +155,7 @@ Every document is sent through the guardrails `/v1/guardrail/checks` call, the v
 Needs 7.2's eval dataset:
 
 ```
-python pipelines/phase1_autorag/run_autorag.py seed-batch-001
+python pipelines/autorag/run_autorag.py seed-batch-001
 ```
 
 Triggers the RHOAI auto-registered `documents-rag-optimization-pipeline`.
@@ -167,7 +167,7 @@ Triggers the RHOAI auto-registered `documents-rag-optimization-pipeline`.
 Read the winning pattern from the console backend (`GET /kfp/autorag-leaderboard?run_id=<autorag_run_id>` through the console proxy), then:
 
 ```
-python pipelines/phase1_apply_pattern/compile_and_run.py \
+python pipelines/corpus_index/compile_and_run.py \
     <batch_id> <autorag_run_id> <pattern_name> <chunk_size> <chunk_overlap> <embedding_model>
 ```
 
@@ -192,7 +192,7 @@ The ABAC filter on `rag_chunks` means `balakrishnan.b` and `siddhartha.de` get g
 #### 7.6 The malicious MCP tool response injection 
 
 ```
-./scripts/09-demo-tool-response-injection.sh
+./scripts/demo-tool-response-injection.sh
 ```
 
 Plants one real malicious work package, a prompt injection payload in the subject line, assigned to `balakrishnan.b`. Ask "show my work packages" in the chat, the response comes back as a genuine mix of clean and malicious content and the guard proxy's response guard blocks the malicious subject before any model ever sees it.
@@ -318,13 +318,13 @@ Known behaviors, all previously hit live and worked around in the scripts:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| API server drops mid-install | the Kata step reboots every node in the labelled pool | do not interrupt `00-a-install-platform.sh` during Kata; the wait loop tolerates the drop; a healthy KataConfig is never touched on rerun; after a node reboot rerun `./scripts/01-patch-kata-nftables.sh` (the initramfs patch is wiped) |
+| API server drops mid-install | the Kata step reboots every node in the labelled pool | do not interrupt `00-a-install-platform.sh` during Kata; the wait loop tolerates the drop; a healthy KataConfig is never touched on rerun; after a node reboot rerun `./scripts/patch-kata-nftables.sh` (the initramfs patch is wiped) |
 | script 05 fails on missing OGX secrets | expected on first install | create the three secrets from step 3 and rerun |
 | `phase1-apply-pattern-pipeline` registration skipped | script 04 warns and skips if `.venv-kfp` is absent | create the venv (step 2) and rerun script 04 |
 | MLflow 400 "Workspace context is required" | caller's namespace lacks the `spear.io/mlflow-workspace` label or the request lacks `X-MLflow-Workspace: spear-pipelines` | script 04 sets the label on `spear-pipelines`; cross-namespace callers also need the SubjectAccessReview RBAC (script 04 grants pipeline runner, console backend and human users) |
 | `spear-shield-security-trace` (or other SPEAR experiments) missing from the MLflow UI | UI is scoped to the `spear-pipelines` workspace only, or the experiment was soft deleted (`lifecycle_stage: deleted`) | open MLflow from the `spear-pipelines` project context; restore with `POST .../experiments/restore` for experiment id 6 if soft deleted, name is `spear-shield-security-trace` not `spear-shield-agents-trace` |
 | MCP tools/call "Bad request syntax" or 404s after install | mcp-gateway operator (v0.7.1 preview) regenerates its ext_proc EnvoyFilter with `request_body_mode: STREAMED`, which plain HTTP backends cannot parse | script 09 pauses the controller and patches both filters to BUFFERED; if you ever unpause the controller for maintenance, rerun script 09's patch step afterwards |
-| Ask SPEAR Shield returns 503 Service Unavailable while agents are up | Kuadrant WASM filter fail closed after Envoy could not fetch `plugin.wasm` from the `kuadrant-operator-wasm` service (often after operator or gateway pod churn) | restart the gateway pods: `oc rollout restart deploy/spear-shield-a2a-gateway-istio deploy/spear-shield-gateway-istio -n spear-shield-agents`; confirm with an unauthenticated curl to the A2A path returning 401 rather than 503 |
+| Ask SPEAR Shield returns 503 Service Unavailable while agents are up | Kuadrant WASM filter fail closed after Envoy could not fetch `plugin.wasm` from the `kuadrant-operator-wasm` service (often after operator or gateway pod churn) | restart the gateway pods: `oc rollout restart deploy/spear-shield-a2a-gateway-istio deploy/spear-shield-mcp-gateway-istio -n spear-shield-agents`; confirm with an unauthenticated curl to the A2A path returning 401 rather than 503 |
 | console tighten-guardrails button returns 403 | the closed-loop patcher RBAC is missing | rerun script 08 (idempotent) |
 | agent code changes not showing up in the sandbox | sandboxes seed their workspace PVC from the image exactly once; `oc patch` on the CR is accepted but never reconciles into the running pod | after `oc start-build <agent> --from-dir=agents --wait -n spear-shield-agents`, delete the sandbox's PVC and pod together (PVC first), then recreate; plain `oc delete pod` keeps the stale PVC |
 | a provider refuses to delete | a provider attached to a sandbox refuses deletion even when the sandbox pod is gone | delete the sandboxes first |
@@ -360,12 +360,12 @@ Deliberately left alone otherwise: RHOAI itself, the DSC/DSCI, the odh-dashboard
 - `07-install-guardrails.sh`, four guardrail configs (`internal-docs`, `vendor-submission`, `work-tracker`, `coordinator-agent`), the `NemoGuardrails` CR, live smoke tests against `/v1/guardrail/checks`
 - `08-install-console.sh`, console backend and frontend plugin, routes injected via `oc set env`, never hardcoded
 - `09-install-worktracker-and-agents.sh`, the heaviest script: OpenProject plus demo data, the `spear-shield-agents` Keycloak realm, SPIFFE federated auth, both MCP gateways and the guard proxy, both agent builds and the in cluster job creating the two OpenShell sandboxes
-- `09-demo-tool-response-injection.sh`, plants the malicious work package used in step 7.6 (run after script 09, not part of `00-install-spear.sh`)
+- `demo-tool-response-injection.sh`, plants the malicious work package used in step 7.6 (run after script 09, not part of `00-install-spear.sh`)
 
 Outside `00-install-spear.sh`, used by steps 7.7 and 7.8:
 
 - `10-install-evalhub.sh`, EvalHub CR in `spear-shield-eval`, custom providers, `spear-pipelines` tenant registration, suspended `evalhub-cycle-runner` CronJob
 - `11-submit-evalhub-jobs.sh`, one evaluation cycle: export ragas dataset, then ragas, IBM CLEAR, garak and confidential leak scan into `spear-shield-evalhub-results`
 
-Optional, never part of the required chain: `scripts/01-patch-kata-nftables.sh` (rerun after any Kata node reboot, see Troubleshooting).
+Optional, never part of the required chain: `scripts/patch-kata-nftables.sh` (rerun after any Kata node reboot, see Troubleshooting).
 

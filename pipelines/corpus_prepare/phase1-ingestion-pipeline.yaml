@@ -209,12 +209,12 @@ deploymentSpec:
           \    to ogx, so the model string passed in here always needs one extra\n\
           \    leading \"openai/\" over whatever id ogx itself expects. ogx's own\n\
           \    foundation model id for glm-53-flash is\n    \"openai/publishers/prelude-maas/models/glm-53-flash\"\
-          \ (the long form\n    is maas's own body based routing id, see\n    pipelines/phase1_autorag/run_autorag.py\
+          \ (the long form\n    is maas's own body based routing id, see\n    pipelines/autorag/run_autorag.py\
           \ and PHASE1_PLAN.md for why),\n    so this needs a double prefixed\n  \
           \  \"openai/openai/publishers/prelude-maas/models/glm-53-flash\" to\n  \
           \  survive the strip.\n\n    writes the AutoRAG test-data json schema\n\
           \    (question/correct_answers/correct_answer_document_ids) both as this\n\
-          \    step's own kfp artifact and to minio under eval_prefix, so\n    pipelines/phase1_autorag/run_autorag.py\
+          \    step's own kfp artifact and to minio under eval_prefix, so\n    pipelines/autorag/run_autorag.py\
           \ can point the real AutoRAG\n    kfp pipeline's test_data_key straight\
           \ at it.\n    \"\"\"\n    import json\n    import os\n\n    import boto3\n\
           \    from datasets import Dataset\n    from sdg_hub import Flow, FlowRegistry\n\
@@ -432,14 +432,14 @@ deploymentSpec:
           \            \"status\": \"pending\",\n            \"note\": (\n       \
           \         \"this batch is not indexed into rag_chunks yet. indexing now\
           \ \"\n                \"happens after a winning pattern is selected, see\
-          \ \"\n                \"pipelines/phase1_apply_pattern/pipeline.py, not\
+          \ \"\n                \"pipelines/corpus_index/pipeline.py, not\
           \ as part of \"\n                \"ingestion. trigger an apply pattern run\
           \ against this \"\n                \"batch's autorag run once it has a winner.\"\
           \n            ),\n        },\n        \"sdg_hub_eval_dataset\": {\n    \
           \        \"qa_pairs_created\": qa_pairs_created,\n            \"s3_key\"\
           : eval_dataset_key,\n            \"sample\": eval_rows[:3],\n        },\n\
           \        \"autorag_trigger\": (\n            \"not run from inside this\
-          \ pipeline, see \"\n            \"pipelines/phase1_autorag/run_autorag.py,\
+          \ pipeline, see \"\n            \"pipelines/autorag/run_autorag.py,\
           \ which triggers the \"\n            \"real documents-rag-optimization-pipeline\
           \ against this \"\n            \"batch's eval dataset separately\"\n   \
           \     ),\n        \"valid_documents\": valid,\n    }\n\n    headers = {\"\

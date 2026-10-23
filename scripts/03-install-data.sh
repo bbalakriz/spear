@@ -34,7 +34,7 @@ ensure_pgvector_extension() {
 # defense in depth, not just raguser's own superuser session reused
 # everywhere. no superuser, no createdb, no bypassrls, confirmed this is
 # what makes the row level security policy on rag_chunks
-# (pipelines/phase1_apply_pattern/pipeline.py, created once that table
+# (pipelines/corpus_index/pipeline.py, created once that table
 # itself exists) actually mean something: a role with bypassrls set, which
 # raguser has since it is this database's own bootstrap postgres superuser,
 # ignores every policy regardless of what the policy says. password always

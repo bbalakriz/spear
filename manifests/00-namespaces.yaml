@@ -4,7 +4,7 @@
 #
 # rag-phase1 itself is retired here, not recreated: once every piece
 # that used to live in it (pgvector, ogx, guardrails, the pipeline
-# server, the owner console, openproject) has its own real namespace
+# server, the spear console, openproject) has its own real namespace
 # below, nothing is left that actually needs it to exist. minio keeps
 # its own name, not renamed to spear-storage, section 8's own decision,
 # only its placement changed. spear-shield-agents keeps its own

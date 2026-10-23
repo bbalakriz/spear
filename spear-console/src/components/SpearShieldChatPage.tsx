@@ -34,7 +34,7 @@ import './spear-shield-chat.css';
 // PHASE2_PLAN.md section 8: no persona picker here, this page always asks
 // as whoever is actually signed into the console right now. the backend
 // resolves that real identity from the forwarded token itself, this page
-// never sends a username anywhere, see owner-console-backend/server.py's
+// never sends a username anywhere, see spear-console-backend/server.py's
 // ask_spear_shield.
 const PROXY_PATH = '/api/proxy/plugin/phase1-ingestion-console/backend';
 

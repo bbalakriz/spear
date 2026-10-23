@@ -155,13 +155,13 @@ main() {
   # rag_chunks is deliberately left empty for a batch until a winning
   # autorag pattern is applied to it, see PHASE1_PLAN.md's sequencing
   # writeup, 2026-09-28: ingestion itself no longer writes to this table
-  # at all, that only happens once pipelines/phase1_apply_pattern/
+  # at all, that only happens once pipelines/corpus_index/
   # pipeline.py runs, so a row count check here would be meaningless on a
   # freshly ingested batch that has not had a pattern applied yet.
   check "rag_chunks table exists (created lazily by either pipeline on first write)" \
     oc exec deploy/pgvector -n "${DATA_NS}" -- \
     psql -U raguser -d ragdb -tAc "select 1 from information_schema.tables where table_name='rag_chunks'"
-  # written by pipelines/phase1_ingestion/pipeline.py's generate-eval-dataset
+  # written by pipelines/corpus_prepare/pipeline.py's generate-eval-dataset
   # step, a real sdg hub run against the sanitized corpus, see
   # PHASE1_PLAN.md's "SDG Hub eval dataset generation and real AutoRAG
   # trigger" section for the run that produced this.
@@ -185,7 +185,7 @@ assert len(rows) > 0 and 'question' in rows[0] and 'correct_answer_document_ids'
     "oc get secret autorag-s3-creds -n ${PIPELINES_NS} >/dev/null && oc get secret autorag-ogx-creds -n ${PIPELINES_NS} >/dev/null"
   # confirms the real, rhoai auto registered documents-rag-optimization-
   # pipeline is present on this dspa, the same lookup
-  # pipelines/phase1_autorag/run_autorag.py does before triggering a run,
+  # pipelines/autorag/run_autorag.py does before triggering a run,
   # using the caller's own oc whoami -t token, no separate credential.
   # the dspa route hostname is resolved live here too, never hardcoded,
   # it is unique per cluster
@@ -198,7 +198,7 @@ assert len(rows) > 0 and 'question' in rows[0] and 'correct_answer_document_ids'
 
   log "phase1-apply-pattern-pipeline"
   # applies a winning autorag pattern to the production index, see
-  # pipelines/phase1_apply_pattern/. registered (compile + upload, no
+  # pipelines/corpus_index/. registered (compile + upload, no
   # run) by scripts/04-install-pipelines.sh's own
   # register_apply_pattern_pipeline, part of the normal install chain
   # now, triggering a real run still needs real batch/pattern data and
@@ -212,8 +212,8 @@ assert len(rows) > 0 and 'question' in rows[0] and 'correct_answer_document_ids'
   check "spear-openproject deployment available" oc wait --for=condition=Available deployment/spear-openproject -n "${WORKTRACKER_NS}" --timeout=5s
   check "spear-openproject-mcp reports Ready" oc wait mcpserver spear-openproject-mcp -n "${WORKTRACKER_NS}" --for=condition=Ready --timeout=5s
   check "spear-shield-mcp-guard-proxy deployment available" oc wait --for=condition=Available deployment/spear-shield-mcp-guard-proxy -n "${AGENTS_NS}" --timeout=5s
-  check "spear-shield-gateway's allowedRoutes is All, not Same, for the cross namespace worktracker route" bash -c \
-    "[[ \"\$(oc get gateway spear-shield-gateway -n ${AGENTS_NS} -o jsonpath='{.spec.listeners[0].allowedRoutes.namespaces.from}')\" == 'All' ]]"
+  check "spear-shield-mcp-gateway's allowedRoutes is All, not Same, for the cross namespace worktracker route" bash -c \
+    "[[ \"\$(oc get gateway spear-shield-mcp-gateway -n ${AGENTS_NS} -o jsonpath='{.spec.listeners[0].allowedRoutes.namespaces.from}')\" == 'All' ]]"
   check "spear-shield-rag-query-relay deployment available (manual follow up, see scripts/09-install-worktracker-and-agents.sh)" \
     oc wait --for=condition=Available deployment/spear-shield-rag-query-relay -n "${DATA_NS}" --timeout=5s
 

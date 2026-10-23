@@ -476,7 +476,7 @@ main() {
       wait_kata_ready
     fi
     log "patching kata guest initramfs with the nf_tables modules openshell needs"
-    "${ROOT_DIR}/scripts/01-patch-kata-nftables.sh"
+    "${ROOT_DIR}/scripts/patch-kata-nftables.sh"
   fi
 
   log "platform install complete"

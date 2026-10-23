@@ -1,11 +1,11 @@
 # same two authpolicy shape as the reference's own
 # manifests/20-security/03-auth-policies.yaml, rebuilt against
-# spear-shield-gateway and the spear-shield-agents realm, own instance,
+# spear-shield-mcp-gateway and the spear-shield-agents realm, own instance,
 # nothing shared with agent-pack, section 2.
 apiVersion: kuadrant.io/v1
 kind: AuthPolicy
 metadata:
-  name: spear-shield-gateway-auth
+  name: spear-shield-mcp-gateway-auth
   namespace: spear-shield-agents
   labels:
     app.kubernetes.io/part-of: spear-shield-agents
@@ -13,7 +13,7 @@ spec:
   targetRef:
     group: gateway.networking.k8s.io
     kind: Gateway
-    name: spear-shield-gateway
+    name: spear-shield-mcp-gateway
     sectionName: mcp
   defaults:
     when:
@@ -36,7 +36,7 @@ spec:
 apiVersion: kuadrant.io/v1
 kind: AuthPolicy
 metadata:
-  name: spear-shield-gateway-tools-auth
+  name: spear-shield-mcp-gateway-tools-auth
   namespace: spear-shield-agents
   labels:
     app.kubernetes.io/part-of: spear-shield-agents
@@ -44,7 +44,7 @@ spec:
   targetRef:
     group: gateway.networking.k8s.io
     kind: Gateway
-    name: spear-shield-gateway
+    name: spear-shield-mcp-gateway
     sectionName: mcps
   rules:
     authentication:

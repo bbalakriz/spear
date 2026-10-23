@@ -80,7 +80,7 @@ GUARDRAILS_CONFIG_ID = os.environ.get("GUARDRAILS_CONFIG_ID", "coordinator-agent
 # function name and arguments back, not assumed from the "tool calling
 # enabled" capability line in PHASE1_PLAN.md alone
 GENERATION_MODEL = os.environ.get("GENERATION_MODEL", "openai/publishers/prelude-maas/models/glm-53-flash")
-# the trace shown on owner-console's chat page used to hard code
+# the trace shown on spear-console's chat page used to hard code
 # glm-53-flash in this label, so it kept saying that even if
 # GENERATION_MODEL were ever pointed at a different model. derived from
 # the real env var instead, same last path segment convention the trend
@@ -185,7 +185,7 @@ def _trace_step(
 ) -> None:
     # real wall clock timing for one hop of this request, not a fabricated
     # or estimated number. from/to/protocol name the two real components
-    # on each side of this hop, owner-console's chat page renders the
+    # on each side of this hop, spear-console's chat page renders the
     # whole list as a timeline, not just text. ok is false only for a
     # hop that was genuinely refused or failed, so a blocked request
     # renders red at the real point of failure instead of a generic
@@ -425,7 +425,7 @@ def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> d
     # built by hand rather than through _trace_step
     received_at_ms = round(time.time() * 1000)
     method = body.get("method")
-    # demo only method, owner-console's security demo page uses this to
+    # demo only method, spear-console's security demo page uses this to
     # prove the workload identity hop live: makes this sandbox's own real
     # outbound call to the retrieval agent's own whoami method, over the
     # exact same http_json(RETRIEVAL_A2A_URL, ...) channel every real tool
@@ -462,7 +462,7 @@ def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> d
     prompt = text_from_message(body)
     print(f"coordinator request (sandbox={socket.gethostname()}): {prompt}")
     # root span for the whole request, PHASE3_PLAN.md section 4. this
-    # sandbox is always the root, owner-console-backend calls in over a2a
+    # sandbox is always the root, spear-console-backend calls in over a2a
     # but never starts a trace of its own, so there is nothing upstream
     # for this span to continue from, unlike the delegate_tool_calls hop
     # below which hands its own traceparent on to retrieval

@@ -143,7 +143,7 @@ deploymentSpec:
           \ dsl.Output[dsl.Dataset],\n) -> NamedTuple(\"Outputs\", [(\"chunks_created\"\
           , int), (\"documents_indexed\", int), (\"embedding_failures\", int)]):\n\
           \    \"\"\"fetches batch_id's own already logged ingestion_report.json from\n\
-          \    mlflow (the same artifact owner-console-backend/server.py's\n    ingestion_report()\
+          \    mlflow (the same artifact spear-console-backend/server.py's\n    ingestion_report()\
           \ reads), pulls the abac tags and the guardrails\n    verdict per document\
           \ from it, then re indexes every document that\n    passed sanitization\
           \ using the winning pattern's real chunk_size,\n    chunk_overlap and embedding_model_id.\n\

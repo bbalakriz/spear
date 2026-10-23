@@ -7,7 +7,7 @@ coordinator's own outbound Authorization to the retrieval agent's a2a
 endpoint is injected automatically by the sidecar's own token_grant
 provider (spiffe svid -> keycloak access token), not something this
 code computes, and the retrieval agent's own outbound Authorization to
-spear-shield-gateway is the real end user's own jwt, passed in
+spear-shield-mcp-gateway is the real end user's own jwt, passed in
 explicitly by main.py per call, not one fixed credential. extra_headers
 below is how main.py supplies that per call value.
 """

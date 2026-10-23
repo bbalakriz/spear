@@ -10,10 +10,11 @@
 # this service account kept getting {"experiments": []} back regardless.
 #
 # NAMESPACE_MIGRATION_PLAN.md: resource names kept as is
-# (phase1-ingestion-console-backend), only the namespace moved, see that
-# file's own section 1 for why the deeper owner-console/owner-console-backend
-# source tree and component rename is deliberately out of scope for
-# this pass
+# (phase1-ingestion-console-backend), only the namespace moved at the
+# time, see that file's own section 1. the source tree itself
+# (owner-console, owner-console-backend) was renamed in a later pass to
+# spear-console / spear-console-backend, this resource's own name
+# stayed untouched, that is a separate, still deferred rename
 apiVersion: v1
 kind: ServiceAccount
 metadata:

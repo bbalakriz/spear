@@ -53,7 +53,7 @@ network_policies:
       # that live test used: real cluster dns name, host header
       # override to the gateway's own listener hostname for the
       # HTTPRoute to match, see main.py's own MCP_GATEWAY_HOST_HEADER
-      - host: spear-shield-gateway-istio.spear-shield-agents.svc.cluster.local
+      - host: spear-shield-mcp-gateway-istio.spear-shield-agents.svc.cluster.local
         port: 8080
         protocol: mcp
         # no enforcement/access fields here, matching the reference's

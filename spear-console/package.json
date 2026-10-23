@@ -1,7 +1,7 @@
 {
   "name": "phase1-ingestion-console",
   "version": "0.0.1",
-  "description": "Owner console plugin for phase1-ingestion-pipeline: read only view of guardrails, ABAC tagging, and AutoRAG leaderboard status per project, see PHASE1_PLAN.md section 6",
+  "description": "Spear console plugin for phase1-ingestion-pipeline: read only view of guardrails, ABAC tagging, and AutoRAG leaderboard status per project, see PHASE1_PLAN.md section 6",
   "private": true,
   "license": "Apache-2.0",
   "repository": {

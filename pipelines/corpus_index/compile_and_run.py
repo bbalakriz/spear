@@ -1,6 +1,6 @@
 """compiles phase1-apply-pattern-pipeline.yaml then uploads and triggers
 one run against rag-phase1-dspa, same auth pattern as
-phase1_ingestion/compile_and_run.py (the caller's own `oc whoami -t`
+corpus_prepare/compile_and_run.py (the caller's own `oc whoami -t`
 token, no separate pipeline server credential).
 
 this script does not look up the winning pattern itself: minio's s3 api
@@ -8,7 +8,7 @@ is only reachable in cluster (confirmed live, this cluster has no
 external route for it, only the console ui route), and this script runs
 from a caller's own machine. the owner console backend already runs in
 cluster and already does this exact lookup for real, in
-autorag_leaderboard() (owner-console-backend/server.py), so the settings
+autorag_leaderboard() (spear-console-backend/server.py), so the settings
 below are meant to be copied from that endpoint's own response
 (GET /kfp/autorag-leaderboard?run_id=<autorag_run_id> through the
 console plugin proxy) rather than re implemented here against an

@@ -15,7 +15,7 @@ given a batch_id (to find that batch's already logged ingestion report,
 for the document list and abac tags) and a winning pattern's settings
 (chunk_size, chunk_overlap and embedding_model_id, passed in as plain
 run parameters, already extracted by the caller from a completed autorag
-run's pattern.json, see owner-console-backend/server.py's
+run's pattern.json, see spear-console-backend/server.py's
 autorag_leaderboard()), this pipeline re chunks and re embeds every
 document that batch's own guardrails audit marked "success", deletes any
 rows rag_chunks already had for those doc_ids first (chunk boundaries
@@ -78,7 +78,7 @@ def apply_winning_pattern(
     apply_report: dsl.Output[dsl.Dataset],
 ) -> NamedTuple("Outputs", [("chunks_created", int), ("documents_indexed", int), ("embedding_failures", int)]):
     """fetches batch_id's own already logged ingestion_report.json from
-    mlflow (the same artifact owner-console-backend/server.py's
+    mlflow (the same artifact spear-console-backend/server.py's
     ingestion_report() reads), pulls the abac tags and the guardrails
     verdict per document from it, then re indexes every document that
     passed sanitization using the winning pattern's real chunk_size,

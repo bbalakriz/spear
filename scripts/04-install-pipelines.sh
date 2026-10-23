@@ -130,7 +130,7 @@ ensure_experiment() {
 # registers phase1-apply-pattern-pipeline on the dspa, compile + upload
 # only, --register-only, no run triggered, a real run still needs a real
 # batch_id and a real winning pattern from a completed autorag run, see
-# pipelines/phase1_apply_pattern/compile_and_run.py's own usage comment,
+# pipelines/corpus_index/compile_and_run.py's own usage comment,
 # that part stays manual. added so scripts/90-verify.sh's own check for
 # this pipeline being registered passes on a plain, scripted install,
 # same registered-but-not-run state documents-rag-optimization-pipeline
@@ -142,7 +142,7 @@ register_apply_pattern_pipeline() {
     return 0
   fi
   log "registering phase1-apply-pattern-pipeline on ${DSPA_NAME}"
-  "${venv}/bin/python3" "${ROOT_DIR}/pipelines/phase1_apply_pattern/compile_and_run.py" --register-only
+  "${venv}/bin/python3" "${ROOT_DIR}/pipelines/corpus_index/compile_and_run.py" --register-only
 }
 
 main() {

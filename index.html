@@ -211,7 +211,7 @@
         </div>
 
         {/* CONTROL PLANE */}
-        <Layer label="Control plane · identity in, before any agent runs" color="slate" note="owner-console-backend (spear-console ns)">
+        <Layer label="Control plane · identity in, before any agent runs" color="slate" note="spear-console-backend (spear-console ns)">
           <div className="flex gap-3 flex-wrap">
             <Card title="Console plugin" subtitle="the only user-facing door" color="blue" wide
               items={[
@@ -299,7 +299,7 @@
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
                 <div className="gate-bar w-1 h-9 shrink-0" />
-                <Card title="spear-shield-gateway · mcps listener" subtitle="per-tool RBAC AuthPolicy" color="cyan" tag="enforcement" highlighted compact wide
+                <Card title="spear-shield-mcp-gateway · mcps listener" subtitle="per-tool RBAC AuthPolicy" color="cyan" tag="enforcement" highlighted compact wide
                   items={[
                     <span>('tool:' + x-mcp-toolname) in resource_access[x-mcp-servername].roles - 401/403 fail-closed <Ref>(03-auth-policies.yaml)</Ref></span>,
                     <span>the caller JWT's signature is finally verified here</span>,

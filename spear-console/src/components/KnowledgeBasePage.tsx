@@ -46,8 +46,8 @@ import { useEffect, useState } from 'react';
 // PHASE1_PLAN.md section 6/7: reads the real log-ingestion-report mlflow
 // artifact, lists and triggers real kfp runs, and reads a completed
 // autorag run's real per pattern scores, all through this plugin's own
-// spec.proxy backend (manifests/40-owner-console plus
-// owner-console-backend/). this component never recomputes or fabricates
+// spec.proxy backend (manifests/spear-console plus
+// spear-console-backend/). this component never recomputes or fabricates
 // any of the numbers it shows, everything here is either a direct read of
 // something the pipelines themselves already wrote, or a direct kfp api
 // call made on the signed in user's own behalf.
@@ -215,9 +215,9 @@ interface FlowStep {
 
 // bala:names call out the actual component doing the work, not a generic
 // phase name, hover each one for what it actually does.
-// pipelines/phase1_ingestion/pipeline.py,
-// pipelines/phase1_autorag/run_autorag.py and
-// pipelines/phase1_apply_pattern/pipeline.py for the real implementations,
+// pipelines/corpus_prepare/pipeline.py,
+// pipelines/autorag/run_autorag.py and
+// pipelines/corpus_index/pipeline.py for the real implementations,
 // and FLOW.md for the full end to end diagram.
 const FLOW_STEPS: FlowStep[] = [
   {
@@ -647,7 +647,7 @@ export default function KnowledgeBasePage() {
         {reportError && (
           <Alert
             variant="danger"
-            title="Could not reach the owner console backend"
+            title="Could not reach the spear console backend"
             isInline
             style={{ marginTop: '1rem' }}
           >

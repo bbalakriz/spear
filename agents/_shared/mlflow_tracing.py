@@ -107,7 +107,7 @@ def configure() -> bool:
         return True
     except Exception as exc:  # noqa: BLE001
         # a telemetry failure never takes the real request down with it,
-        # same fallback discipline owner-console-backend's own
+        # same fallback discipline spear-console-backend's own
         # ingestion_source_config already uses
         print(f"mlflow_tracing: failed to configure, tracing stays off: {exc}")
         _enabled = False

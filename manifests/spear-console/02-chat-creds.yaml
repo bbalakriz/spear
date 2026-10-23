@@ -1,4 +1,4 @@
-# credentials the owner-console-backend needs to do a real password grant
+# credentials the spear-console-backend needs to do a real password grant
 # against the spear-shield-agents realm on behalf of whichever real human
 # is signed into the openshift console, section 8. the console backend
 # only ever learns the signed in user's openshift username (resolved from
@@ -19,7 +19,7 @@
 # NAMESPACE_MIGRATION_PLAN.md: this is the one wart this whole migration
 # exists to fix for this file specifically. namespace used to be
 # rag-phase1, not spear-shield-agents, only because that is where the
-# owner-console-backend pod that mounts this lived, a plain secret
+# spear-console-backend pod that mounts this lived, a plain secret
 # cannot be mounted cross namespace. now that the backend itself lives
 # in spear-console, this secret lives right alongside it, no cross
 # namespace placement needed at all anymore

@@ -20,7 +20,7 @@ CR_NAME="rag-phase1-guardrails"
 # polling the deployment's own Available condition instead. live status
 # later the same day showed bbrPluginFound: false and phase: Ready at the
 # same time, so that was wrong, bbr absence is logged but non blocking.
-# the real and only confirmed blocker was the missing spear-shield-gateway
+# the real and only confirmed blocker was the missing spear-shield-mcp-gateway
 # object, fixed by ensure_early_gateway above, polling .status.phase
 # directly again now that the real fix is in place
 wait_guardrails_ready() {
@@ -100,7 +100,7 @@ ensure_early_gateway() {
   sed \
     -e "s|MCP_PUBLIC_HOST_PLACEHOLDER|${mcp_public_host}|g" \
     -e "s|ISSUER_URL_PLACEHOLDER|${issuer_url}|g" \
-    "${agents_manifests}/02-gateway.yaml" | oc apply -f -
+    "${agents_manifests}/02-mcp-gateway.yaml" | oc apply -f -
 }
 
 main() {
@@ -119,7 +119,7 @@ main() {
 
   # correction, 2026-10-04: this comment used to say the cr below carries
   # a template.pod.mcpGateway pointer and that status.mcpGateway never
-  # reports found until spear-shield-gateway exists, which is why this
+  # reports found until spear-shield-mcp-gateway exists, which is why this
   # ensure_early_gateway call exists. that field has since been removed
   # from 05-nemoguardrails-cr.yaml entirely, confirmed live to be
   # unneeded, see that manifest's own header comment. kept this call

@@ -116,7 +116,7 @@ const ACCESS_CONTROL_SCENARIOS: Scenario[] = [
     title: 'Tool scope and assignee enforcement',
     intro:
       'Three real callers against the OpenProject work tracker: a caller lacking the role is blocked at the gateway, a caller holding the role is blocked by this project\u2019s own assignee check on someone else\u2019s item and a caller acting on their own item succeeds.',
-    enforcedBy: 'Authorino AuthPolicy spear-shield-gateway-tools-auth -> mcp gateway',
+    enforcedBy: 'Authorino AuthPolicy spear-shield-mcp-gateway-tools-auth -> mcp gateway',
   },
 ];
 

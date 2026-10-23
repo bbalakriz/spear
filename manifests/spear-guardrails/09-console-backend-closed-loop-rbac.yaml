@@ -1,9 +1,9 @@
-# PHASE3_PLAN.md section 8, the ui half: owner-console-backend's own real
+# PHASE3_PLAN.md section 8, the ui half: spear-console-backend's own real
 # closed loop patch button, next to the trend page's confidential data
 # leak card. scoped to exactly one named configmap, get to read the
 # current pattern list before merging, patch to write the merged result
 # back, nothing broader, same least privilege shape every other
-# owner-console-backend grant in this project already uses, see
+# spear-console-backend grant in this project already uses, see
 # manifests/spear-shield-agents/10-console-backend-pathway-rbac.yaml for
 # the sibling pattern
 apiVersion: rbac.authorization.k8s.io/v1

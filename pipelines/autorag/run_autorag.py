@@ -3,7 +3,7 @@ own kfp pipeline, which rhoai auto registers on every dspa pipeline
 server (confirmed via official docs, not reverse engineered), rather
 than reimplementing autorag's dashboard flow ourselves.
 
-mirrors phase1_ingestion/compile_and_run.py's auth pattern (the caller's
+mirrors corpus_prepare/compile_and_run.py's auth pattern (the caller's
 own `oc whoami -t` token, no separate pipeline server credential) but
 does not compile or upload anything: this pipeline already exists on
 rag-phase1-dspa, this script only looks it up by name and runs it.
@@ -22,7 +22,7 @@ copy.
 parameters point at:
   - sanitized/ in the raw_bucket as the corpus autorag is allowed to
     index (the sanitized only boundary sanitize_documents itself
-    enforces, see phase1_ingestion/pipeline.py)
+    enforces, see corpus_prepare/pipeline.py)
   - the eval dataset phase1_ingestion_pipeline's generate_eval_dataset
     step wrote to autorag-eval/<batch_id>_test_data.json
   - the pgvector vector_io provider already live and healthy on

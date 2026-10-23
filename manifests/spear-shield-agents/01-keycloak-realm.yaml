@@ -5,7 +5,7 @@
 # tool:search_work_packages and tool:update_work_package are the real,
 # decided names, not placeholders, see PHASE2_PLAN.md section 4. the
 # scope mapping is on spear-coordinator because that is the client
-# owner-console-backend uses for the password grant per real human user,
+# spear-console-backend uses for the password grant per real human user,
 # section 8, so the resulting token actually carries resource_access for
 # whichever tool roles that specific user holds, not a fixed agent identity.
 #

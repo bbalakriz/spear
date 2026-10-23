@@ -11,8 +11,8 @@
 # back after finding it live on this cr during the phase 3 telemetry
 # investigation, believing it was real drift that needed writing back.
 # confirmed live since that the field is not needed at all: the operator
-# discovers spear-shield-gateway on its own via the MCPGatewayExtension
-# object already targeting it (manifests/spear-shield-agents/02-gateway.yaml),
+# discovers spear-shield-mcp-gateway on its own via the MCPGatewayExtension
+# object already targeting it (manifests/spear-shield-agents/02-mcp-gateway.yaml),
 # status.mcpGateway.mcpGatewayFound stays true with this field removed
 # entirely. this field only exists to enable a separate, unused tech
 # preview feature, guardrails enforcement on mcp tool call traffic via an

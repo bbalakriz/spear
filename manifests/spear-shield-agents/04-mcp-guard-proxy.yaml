@@ -1,5 +1,5 @@
 # externalized, gateway side request/response guardrail enforcement,
-# shared by every mcp server fronted by spear-shield-gateway, without
+# shared by every mcp server fronted by spear-shield-mcp-gateway, without
 # touching any of their own code, see
 # mcp-servers/spear-shield-mcp-guard-proxy/server.py for why this exists
 # instead of wiring nemo-request-guard/nemo-response-guard as a second
@@ -22,9 +22,8 @@
 #
 # NAMESPACE_MIGRATION_PLAN.md: spear-openproject-mcp's own HTTPRoute now
 # lives in a different namespace (spear-worktracker), so its backendref
-# to this Service is cross namespace, see
-# manifests/spear-shield-agents/05-mcp-guard-proxy-referencegrant.yaml
-# for the ReferenceGrant that permits it
+# to this Service is cross namespace, see the ReferenceGrant at the
+# bottom of this same file for the permission that allows it
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -102,3 +101,26 @@ spec:
   ports:
     - port: 8000
       targetPort: 8000
+---
+# cross namespace backendref permission for the proxy's Service above,
+# kept in this same file since the two are always applied together, see
+# the Deployment/Service comment up top for why this grant is needed:
+# spear-openproject-mcp's own HTTPRoute lives in spear-worktracker while
+# this proxy's Service stays in spear-shield-agents, gateway api's own
+# cross namespace backendref rule requires a ReferenceGrant living in
+# the target namespace naming both the source kind/namespace and the
+# target kind, plain name matching is not enough on its own
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: spear-worktracker-to-guard-proxy
+  namespace: spear-shield-agents
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: spear-worktracker
+  to:
+    - group: ""
+      kind: Service
+      name: spear-shield-mcp-guard-proxy

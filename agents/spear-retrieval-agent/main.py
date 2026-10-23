@@ -18,7 +18,7 @@ comment on why), and executes each one for real:
   all, see rag_query_server.py's own module docstring
 - search_work_packages / update_work_package: forwards the caller's own
   jwt as the Authorization header on a real tools/call against
-  spear-shield-gateway, the same full path PHASE2_PLAN.md section 4
+  spear-shield-mcp-gateway, the same full path PHASE2_PLAN.md section 4
   already live tested end to end (siddhartha.de's own real tool rbac
   and assignee=self results), this code is just the first thing to
   actually call it as a real a2a delegated action instead of a one off
@@ -32,7 +32,7 @@ Authorization (the coordinator's workload identity) is what
 authorino's a2a gateway authpolicy actually checks, not
 params.callerToken, that field is invisible to a header based jwt
 check entirely. the callerToken's own signature still gets checked for
-real at the next hop, spear-shield-gateway's own tool rbac authpolicy,
+real at the next hop, spear-shield-mcp-gateway's own tool rbac authpolicy,
 exactly the same as if it had been sent there directly, so a forged or
 tampered token still fails there with a real 401/403, not silently
 accepted here and laundered through.
@@ -67,7 +67,7 @@ PUBLIC_URL = os.environ.get("AGENT_PUBLIC_URL", f"http://{NAME}:{PORT}/")
 # a plain ClusterIP hit without that header override does not route
 # anywhere, confirmed live in that section, not re-guessed here
 MCP_GATEWAY_URL = os.environ.get(
-    "MCP_GATEWAY_URL", "http://spear-shield-gateway-istio.spear-shield-agents.svc.cluster.local:8080/mcp"
+    "MCP_GATEWAY_URL", "http://spear-shield-mcp-gateway-istio.spear-shield-agents.svc.cluster.local:8080/mcp"
 )
 # no cluster specific fallback on purpose, nothing in this source tree
 # should bake in one cluster's own hostname, this always comes from the
@@ -157,7 +157,7 @@ def _trace_step(
 ) -> None:
     # same shape as spear-coordinator-agent's own helper, real wall clock
     # timing per hop, spliced into the coordinator's own trace one level
-    # up so owner-console's chat page shows the whole chain as one
+    # up so spear-console's chat page shows the whole chain as one
     # timeline. ok is false only for a hop that was genuinely refused or
     # failed, so the timeline can render exactly that step red instead
     # of leaving the viewer to guess which one actually blocked the
@@ -453,7 +453,7 @@ def run_tool_call(
 
 def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> dict[str, Any] | None:
     method = body.get("method")
-    # demo only method, owner-console's security demo page uses this to
+    # demo only method, spear-console's security demo page uses this to
     # prove the coordinator's workload identity hop live. confirmed this
     # session that reading our own inbound authorization header here is
     # not a useful proof: the openshell a2a router that forwards traffic
@@ -461,7 +461,7 @@ def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> d
     # before it lands here, for every caller, not just this one, a sound
     # anti spoofing property since a2a itself has no per hop auth of its
     # own. this handler just confirms the call reached us at all, the
-    # actual proof is the contrast owner-console-backend builds: the
+    # actual proof is the contrast spear-console-backend builds: the
     # identical naked call from outside any sandbox gets a clean 401 from
     # the retrieval a2a gateway's own authpolicy, the real coordinator
     # process making the same call with no token of its own succeeds

@@ -65,11 +65,11 @@ main() {
   # genuinely fail before that fix (every document gets tagged "error")
   # and pass after it
   check "pipeline runner sa can actually call the guardrails /v1/guardrail/checks endpoint (not just rbac can-i)" bash -c \
-    "oc run guardrails-verify-probe --rm -i --restart=Never --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n ${PIPELINES_NS} \
-      --overrides='{\"spec\":{\"serviceAccountName\":\"pipeline-runner-rag-phase1-dspa\"}}' --command -- \
-      bash -c \"curl -sfk -X POST https://rag-phase1-guardrails.${GUARDRAILS_NS}.svc.cluster.local/v1/guardrail/checks \
+    "source '${ROOT_DIR}/scripts/lib-common.sh'; run_restricted_probe guardrails-verify-probe '${PIPELINES_NS}' pipeline-runner-rag-phase1-dspa \
+      \"curl -sfk -X POST https://rag-phase1-guardrails.${GUARDRAILS_NS}.svc.cluster.local/v1/guardrail/checks \
         -H 'Content-Type: application/json' -H \\\"Authorization: Bearer \\\$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\\\" \
-        -d '{\\\"model\\\":\\\"test\\\",\\\"messages\\\":[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"Hello\\\"}]}'\" | grep -q '\"status\":\"success\"'"
+        -d '{\\\"model\\\":\\\"test\\\",\\\"messages\\\":[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"Hello\\\"}]}'\" \
+      | grep -q '\"status\":\"success\"'"
 
   log "ogx (${INFERENCE_NS})"
   check "ogxserver reports Ready" bash -c \

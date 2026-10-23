@@ -51,6 +51,54 @@ wait_deploy_ready() {
   oc wait --for=condition=Available "deployment/${name}" -n "${ns}" --timeout="${timeout}"
 }
 
+# one shot curl/bash probe under the restricted scc. openshift's
+# restricted-v2 (and any namespace with pod-security restricted warn)
+# rejects pods that omit container seccompProfile, and the moment
+# --overrides sets containers[] oc run's own --command is dropped, so
+# both the securityContext and the bash -c script have to live inside
+# the override. stdout of the probe is printed; exit status matches the
+# container's. sa may be empty to keep the namespace default.
+run_restricted_probe() {
+  local name="$1" ns="$2" sa="$3" script="$4"
+  local img="registry.access.redhat.com/ubi9/ubi-minimal:latest"
+  local overrides phase tries=60 exit_code
+  oc delete pod "${name}" -n "${ns}" --ignore-not-found >/dev/null 2>&1 || true
+  overrides=$(jq -nc \
+    --arg name "${name}" \
+    --arg img "${img}" \
+    --arg sa "${sa}" \
+    --arg script "${script}" \
+    '{
+      spec: {
+        securityContext: {runAsNonRoot: true, seccompProfile: {type: "RuntimeDefault"}},
+        containers: [{
+          name: $name,
+          image: $img,
+          command: ["bash", "-c", $script],
+          securityContext: {
+            allowPrivilegeEscalation: false,
+            capabilities: {drop: ["ALL"]},
+            runAsNonRoot: true,
+            seccompProfile: {type: "RuntimeDefault"}
+          }
+        }]
+      }
+    } | if $sa == "" then . else .spec.serviceAccountName = $sa end')
+  oc run "${name}" --restart=Never --image="${img}" -n "${ns}" --overrides="${overrides}" >/dev/null
+  while (( tries > 0 )); do
+    phase=$(oc get pod "${name}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+    if [[ "${phase}" == "Succeeded" || "${phase}" == "Failed" ]]; then
+      break
+    fi
+    sleep 2
+    tries=$((tries - 1))
+  done
+  oc logs "${name}" -n "${ns}" 2>/dev/null || true
+  exit_code=$(oc get pod "${name}" -n "${ns}" -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}' 2>/dev/null || echo 1)
+  oc delete pod "${name}" -n "${ns}" --ignore-not-found >/dev/null 2>&1 || true
+  [[ "${exit_code}" == "0" ]]
+}
+
 # a secretKeyRef only resolves within the pod's own namespace, so a
 # consumer in one namespace reading a secret owned by another (ogxserver
 # in spear-inference reading pgvector-creds, owned by spear-data) needs

@@ -6,6 +6,16 @@
 # approve it once, wait for the pinned csv to succeed" sequence. kept in
 # one place so the approval logic can't drift between call sites.
 
+# find an InstallPlan in ns whose clusterServiceVersionNames list
+# contains csv. subscription.status.installPlanRef always tracks the
+# channel head, even under Manual, so the pinned startingCSV's plan is
+# often a different object once olm has also proposed an upgrade.
+find_install_plan_for_csv() {
+  local ns="$1" csv="$2"
+  oc get installplan -n "${ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.clusterServiceVersionNames}{"\n"}{end}' 2>/dev/null \
+    | awk -v csv="${csv}" '$0 ~ csv { print $1; exit }'
+}
+
 # resolves a Subscription's install plan and approves it if it is not
 # already approved. idempotent, an already approved plan is left alone.
 #
@@ -18,20 +28,34 @@
 # plan silently approved the upgrade instead of the pinned startingCSV,
 # confirmed live: rhbk-operator drifted from the pinned v26.4.15-opr.1 to
 # v26.4.16-opr.1 this way, two install plans existed, both approved, one
-# for each csv. refusing to approve a plan that does not carry the pinned
-# csv closes that gap, bumping the pin is a deliberate edit to the
+# for each csv. only ever approving a plan that carries the pinned csv
+# closes that gap, bumping the pin is a deliberate edit to the
 # manifest, never an accidental side effect of rerunning the script.
 approve_install_plan() {
-  local name="$1" ns="$2" tries=60 plan="" starting_csv="" plan_csvs=""
+  local name="$1" ns="$2" tries=60 plan="" starting_csv="" plan_csvs="" installed_csv=""
   starting_csv=$(oc get subscription "${name}" -n "${ns}" -o jsonpath='{.spec.startingCSV}' 2>/dev/null || true)
   while (( tries > 0 )); do
-    plan=$(oc get subscription "${name}" -n "${ns}" -o jsonpath='{.status.installPlanRef.name}' 2>/dev/null || true)
+    # already sitting on the pin: leave the channel-head upgrade plan
+    # (status.installPlanRef) unapproved and move on.
+    installed_csv=$(oc get subscription "${name}" -n "${ns}" -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)
+    if [[ -n "${starting_csv}" && "${installed_csv}" == "${starting_csv}" ]]; then
+      return 0
+    fi
+
+    plan=""
+    if [[ -n "${starting_csv}" ]]; then
+      plan=$(find_install_plan_for_csv "${ns}" "${starting_csv}")
+    fi
+    if [[ -z "${plan}" ]]; then
+      plan=$(oc get subscription "${name}" -n "${ns}" -o jsonpath='{.status.installPlanRef.name}' 2>/dev/null || true)
+    fi
     if [[ -n "${plan}" ]]; then
       plan_csvs=$(oc get installplan "${plan}" -n "${ns}" -o jsonpath='{.spec.clusterServiceVersionNames}' 2>/dev/null || true)
       if [[ -n "${starting_csv}" && "${plan_csvs}" != *"${starting_csv}"* ]]; then
-        echo "refusing to approve install plan ${plan} for ${name} in ${ns}: it targets ${plan_csvs}, not the pinned startingCSV ${starting_csv}." >&2
-        echo "olm proposed a channel upgrade on its own, this project never approves one of those unattended, bump startingCSV in the manifest yourself if that upgrade is wanted." >&2
-        return 1
+        # channel-head plan only, keep waiting for one that carries the pin
+        sleep 5
+        tries=$((tries - 1))
+        continue
       fi
       if [[ "$(oc get installplan "${plan}" -n "${ns}" -o jsonpath='{.spec.approved}' 2>/dev/null)" != "true" ]]; then
         printf '== approving install plan %s for %s ==\n' "${plan}" "${name}"
@@ -42,7 +66,11 @@ approve_install_plan() {
     sleep 5
     tries=$((tries - 1))
   done
-  echo "subscription ${name} in ${ns} never produced an install plan to approve" >&2
+  if [[ -n "${starting_csv}" ]]; then
+    echo "subscription ${name} in ${ns} never produced an install plan for pinned startingCSV ${starting_csv}" >&2
+  else
+    echo "subscription ${name} in ${ns} never produced an install plan to approve" >&2
+  fi
   return 1
 }
 

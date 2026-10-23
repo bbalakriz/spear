@@ -31,7 +31,7 @@ Recommended catalog item in the Red Hat Demo Platform is OpenShift Container Pla
 - logged in as cluster-admin, the install chain creates operators, MachineConfigs, SCC grants and cluster scoped RBAC. 
 - RHOAI 3.5.1 is installed by the platform layer if absent, left untouched if already present
 - `INSTALL_KATA=false` skips the node reboot, retrieval falls back to runc automatically if no usable Kata node exists
-- SPIRE (zero trust workload identity manager) is installed by the platform layer, `INSTALL_ZTWIM=false` to skip, the manifests template against the cluster's real trust domain
+- SPIRE (zero trust workload identity manager) is installed by the platform layer, `INSTALL_ZTWIM=false` to skip; agent and Keycloak SPIFFE config pin the installed ZTWIM trust domain `agent-pack.internal`
 
 ### 2. Workstation tools
 

@@ -43,6 +43,7 @@ wait_guardrails_ready() {
 # checks the response's top level status matches $3 (success|blocked).
 check_verdict() {
   local config_id="$1" content="$2" expect="$3" route token body guardrails_field status
+  local tries=8
   route="https://$(oc get route "${CR_NAME}" -n "${GUARDRAILS_NS}" -o jsonpath='{.status.ingress[0].host}')"
   token="$(oc whoami -t)"
   if [[ -n "${config_id}" ]]; then
@@ -50,11 +51,21 @@ check_verdict() {
   else
     guardrails_field=""
   fi
-  body=$(curl -ksS -X POST "${route}/v1/guardrail/checks" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer ${token}" \
-    -d "{\"model\":\"test\",\"messages\":[{\"role\":\"user\",\"content\":\"${content}\"}]${guardrails_field}}")
-  status=$(printf '%s' "${body}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status","error"))' 2>/dev/null || echo error)
+  # route can still return an html error page for a few seconds after the
+  # cr reports Ready (router admission / kube-rbac-proxy warmup), retry
+  # until we get real json rather than failing the first html blip.
+  while (( tries > 0 )); do
+    body=$(curl -ksS -X POST "${route}/v1/guardrail/checks" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer ${token}" \
+      -d "{\"model\":\"test\",\"messages\":[{\"role\":\"user\",\"content\":\"${content}\"}]${guardrails_field}}")
+    if status=$(printf '%s' "${body}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status","error"))' 2>/dev/null); then
+      break
+    fi
+    status=error
+    sleep 5
+    tries=$((tries - 1))
+  done
   if [[ "${status}" == "${expect}" ]]; then
     log "ok: config_id='${config_id:-default}' -> ${status} (expected ${expect})"
   else
@@ -139,11 +150,11 @@ main() {
   # being the dspa's own fixed name (see scripts/04-install-pipelines.sh's
   # own DSPA_NAME), not namespace scoped so no renaming needed here
   log "confirming the pipeline runner sa itself, not just this installer's own token, can call the route"
-  if ! oc run guardrails-rbac-probe --rm -i --restart=Never --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n "${PIPELINES_NS}" \
-    --overrides='{"spec":{"serviceAccountName":"pipeline-runner-rag-phase1-dspa"}}' --command -- \
-    bash -c "curl -sfk -X POST https://${CR_NAME}.${GUARDRAILS_NS}.svc.cluster.local/v1/guardrail/checks \
+  if ! run_restricted_probe guardrails-rbac-probe "${PIPELINES_NS}" pipeline-runner-rag-phase1-dspa \
+    "curl -sfk -X POST https://${CR_NAME}.${GUARDRAILS_NS}.svc.cluster.local/v1/guardrail/checks \
       -H 'Content-Type: application/json' -H \"Authorization: Bearer \$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\" \
-      -d '{\"model\":\"test\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'" | grep -q '"status":"success"'; then
+      -d '{\"model\":\"test\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'" \
+    | grep -q '"status":"success"'; then
     echo "warning: pipeline-runner-rag-phase1-dspa cannot call the guardrails route, the ingestion pipeline's sanitize step will tag every document \"error\"" >&2
   fi
 

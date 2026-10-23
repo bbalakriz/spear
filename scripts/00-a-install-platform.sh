@@ -5,7 +5,7 @@ set -euo pipefail
 # platform itself (operator, dsc, dsci, dashboard config), plus authorino,
 # rhcl (kuadrant), ossm3/istio, mcp-gateway operator, and the keycloak
 # operator plus a real keycloak server instance. run this once per cluster
-# before deploy-agent-pack.sh. every step here is safe to re-run,
+# before 00-b-install-openshell.sh and the project chain. every step here is safe to re-run,
 # subscriptions and crs are check first or plain idempotent apply, the
 # keycloak db password is only ever generated once and never touched again
 # on a rerun. the rhoai dsc/dsci/dashboard config are the one exception,
@@ -360,29 +360,47 @@ ensure_keycloak_serving_cert_annotation() {
   return 1
 }
 
-# the rhoai operator, DSCInitialization and DataScienceCluster singletons,
-# and OdhDashboardConfig are shared cluster wide state that other teams'
-# workloads may already depend on, kserve, workbenches, model registry, and
-# so on. a fresh cluster has none of these four resources yet, so applying
-# the captured manifest verbatim is safe. a cluster that already has rhoai
-# installed almost certainly has settings beyond what this project needs, so
-# this only checks that the two dashboard flags this project actually depends
-# on, agentsCatalog and mcpCatalog, are turned on, and warns rather than
-# patches if they are not, leaving that decision to whoever owns the
-# cluster's rhoai install.
+# the rhoai operator, DSCInitialization and DataScienceCluster singletons
+# are shared cluster wide state that other teams' workloads may already
+# depend on, kserve, workbenches, model registry, and so on. a fresh
+# cluster has none of these yet, so applying the captured manifest is
+# safe. a cluster that already has a dsc is left alone. the dashboard
+# feature flags this project needs (agentsCatalog, mcpCatalog, and the
+# rest in 00-dashboard-flags-patch.yaml) are additive booleans: the
+# operator creates a default odh-dashboard-config without them, so we
+# always merge patch those keys on rather than warn and walk away.
+#
+# odhdashboardconfig's crd is installed by the dashboard component after
+# the dsc reconciles, not by the rhods-operator csv.
+ensure_rhoai_dashboard_flags() {
+  oc wait --for=jsonpath='{.status.phase}'=Ready dscinitialization/default-dsci --timeout=300s
+  oc wait --for=jsonpath='{.status.phase}'=Ready datasciencecluster/default-dsc --timeout=300s
+  log "waiting for OdhDashboardConfig crd"
+  oc wait --for=condition=Established crd/odhdashboardconfigs.opendatahub.io --timeout=300s
+  # operator creates the default cr once the dashboard is up; fall back to
+  # the captured manifest if it never shows.
+  if ! oc get odhdashboardconfig odh-dashboard-config -n redhat-ods-applications >/dev/null 2>&1; then
+    log "odh-dashboard-config not created yet, applying from manifest"
+    oc apply -f "${ROOT_DIR}/manifests/platform/01-rhoai.yaml"
+  fi
+  local agents_catalog mcp_catalog
+  agents_catalog=$(oc get odhdashboardconfig odh-dashboard-config -n redhat-ods-applications \
+    -o jsonpath='{.spec.dashboardConfig.agentsCatalog}' 2>/dev/null || true)
+  mcp_catalog=$(oc get odhdashboardconfig odh-dashboard-config -n redhat-ods-applications \
+    -o jsonpath='{.spec.dashboardConfig.mcpCatalog}' 2>/dev/null || true)
+  if [[ "${agents_catalog}" == "true" && "${mcp_catalog}" == "true" ]]; then
+    log "odh-dashboard-config already has agentsCatalog and mcpCatalog enabled"
+    return 0
+  fi
+  log "patching odh-dashboard-config: agentsCatalog=${agents_catalog:-unset} -> true, mcpCatalog=${mcp_catalog:-unset} -> true"
+  oc patch odhdashboardconfig odh-dashboard-config -n redhat-ods-applications \
+    --type merge --patch-file "${ROOT_DIR}/manifests/spear-inference/00-dashboard-flags-patch.yaml"
+}
+
 ensure_rhoai_platform() {
   if oc get datasciencecluster default-dsc >/dev/null 2>&1; then
     log "rhoai already installed, leaving DataScienceCluster/DSCInitialization untouched"
-    local agents_catalog mcp_catalog
-    agents_catalog=$(oc get odhdashboardconfig odh-dashboard-config -n redhat-ods-applications \
-      -o jsonpath='{.spec.dashboardConfig.agentsCatalog}' 2>/dev/null || true)
-    mcp_catalog=$(oc get odhdashboardconfig odh-dashboard-config -n redhat-ods-applications \
-      -o jsonpath='{.spec.dashboardConfig.mcpCatalog}' 2>/dev/null || true)
-    if [[ "${agents_catalog}" != "true" || "${mcp_catalog}" != "true" ]]; then
-      echo "warning: odh-dashboard-config has agentsCatalog=${agents_catalog:-unset} mcpCatalog=${mcp_catalog:-unset}," >&2
-      echo "warning: the agents/mcp servers this project deploys will not be visible in the dashboard until both are true." >&2
-      echo "warning: see manifests/platform/01-rhoai.yaml for the flags this project needs." >&2
-    fi
+    ensure_rhoai_dashboard_flags
     return 0
   fi
   log "installing rhoai 3.5 (operator, dsc, dsci, dashboard config)"
@@ -393,11 +411,11 @@ ensure_rhoai_platform() {
   oc apply -f "${ROOT_DIR}/manifests/platform/01-rhoai.yaml" 2>/dev/null || true
   dedupe_operatorgroup redhat-ods-operator rhods-operator
   approve_and_wait_subscription rhods-operator redhat-ods-operator
-  # crds exist now that the csv succeeded, this apply is what actually
-  # creates dsci/dsc/dashboard config.
-  oc apply -f "${ROOT_DIR}/manifests/platform/01-rhoai.yaml"
-  oc wait --for=jsonpath='{.status.phase}'=Ready dscinitialization/default-dsci --timeout=300s
-  oc wait --for=jsonpath='{.status.phase}'=Ready datasciencecluster/default-dsc --timeout=300s
+  # dsci/dsc crds ship with the csv, so this apply lands those two. the
+  # odhdashboardconfig crd is installed later by the dashboard component
+  # once the dsc reconciles, so tolerate that one missing here.
+  oc apply -f "${ROOT_DIR}/manifests/platform/01-rhoai.yaml" 2>/dev/null || true
+  ensure_rhoai_dashboard_flags
 }
 
 main() {
@@ -466,7 +484,7 @@ main() {
 
 keycloak: https://${KEYCLOAK_HOSTNAME}/
 next step:
-  ./scripts/deploy-agent-pack.sh
+  ./scripts/00-b-install-openshell.sh
 EOF
 }
 

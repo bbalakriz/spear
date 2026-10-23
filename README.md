@@ -25,9 +25,8 @@ Refer [Detailed architecture](Detailed%20architecture.md) for a deep dive on the
 ### 1. Get a cluster
 
 - OpenShift with the apps domain reachable, routes resolve as `<name>.<apps-domain>`. 
-```
-Recommended catalog item in the Red Hat Demo Platform is OpenShift Container Platform Cluster (Multi-Cloud) with OpenShift 4.22 (to match the version of OpenShift dynamic console plugin version) and 3 worker node cluster.
-```
+> Recommended catalog item in the Red Hat Demo Platform is OpenShift Container Platform Cluster (Multi-Cloud) with OpenShift 4.22 (to match the version of OpenShift dynamic console plugin version) and 3 worker node cluster.
+
 - logged in as cluster-admin, the install chain creates operators, MachineConfigs, SCC grants and cluster scoped RBAC. 
 - RHOAI 3.5.1 is installed by the platform layer if absent, left untouched if already present
 - `INSTALL_KATA=false` skips the node reboot, retrieval falls back to runc automatically if no usable Kata node exists

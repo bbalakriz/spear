@@ -46,9 +46,34 @@ ensure_secret() {
   oc create secret generic "${name}" -n "${ns}" "$@"
 }
 
+# oc wait --for=condition=Available fails fast with NotFound when the
+# deployment does not exist yet, it never actually waits for creation.
+# an operator reconciling a cr into a real deployment (evalhub off its
+# own EvalHub cr, for one) needs a few seconds for that deployment to
+# even show up, so this polls for existence first, then hands off to
+# the real oc wait for the rest of the given timeout.
 wait_deploy_ready() {
-  local name="$1" ns="$2" timeout="${3:-300s}"
+  local name="$1" ns="$2" timeout="${3:-300s}" tries=30
+  while ! oc get "deployment/${name}" -n "${ns}" >/dev/null 2>&1; do
+    if (( tries <= 0 )); then
+      echo "deployment/${name} in ${ns} never showed up" >&2
+      return 1
+    fi
+    sleep 2
+    tries=$((tries - 1))
+  done
   oc wait --for=condition=Available "deployment/${name}" -n "${ns}" --timeout="${timeout}"
+}
+
+# forces a controller to re-reconcile an already applied cr by bumping a
+# throwaway annotation, cheaper than deleting/recreating the object.
+# some operators (evalhub's, confirmed live) only reconcile on a change
+# to the cr itself, never on their own when a resource they depend on
+# shows up later, so a rerun against a cr stuck on a stale failed
+# reconcile needs this nudge, not just a repeat of the same apply.
+nudge_reconcile() {
+  local kind="$1" name="$2" ns="$3"
+  oc annotate "${kind}" "${name}" -n "${ns}" "spear.io/reconcile-nonce=$(date +%s)" --overwrite >/dev/null
 }
 
 # one shot curl/bash probe under the restricted scc. openshift's

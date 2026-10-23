@@ -129,9 +129,32 @@ main() {
   log "custom provider configmaps: ragas-v062, ibm-clear-v060, on the operator's own newer quay.io tags"
   oc apply -f "${ROOT_DIR}/manifests/spear-shield-eval/03-custom-providers.yaml"
 
+  # the fourth provider the cr below lists, spear-confidential-data, is
+  # our own image, not a community one, so it needs a real build before
+  # its provider configmap can point at anything. missing this step
+  # entirely used to leave the evalhub cr stuck reconciling forever
+  # ("no ConfigMap with label ...evalhub-provider-name=spear-confidential-data
+  # in namespace redhat-ods-applications"), confirmed live, never
+  # producing a deployment at all.
+  log "spear-confidential-data provider: imagestream/buildconfig, build, provider configmap"
+  oc apply -f "${ROOT_DIR}/manifests/spear-shield-eval/04-confidential-data-provider-build.yaml"
+  oc start-build spear-confidential-data-provider --from-dir="${ROOT_DIR}/evalhub" --wait -n "${EVAL_NS}"
+  local image_digest
+  image_digest="$(oc get istag spear-confidential-data-provider:latest -n "${EVAL_NS}" -o jsonpath='{.image.metadata.name}')"
+  sed "s|IMAGE_DIGEST_PLACEHOLDER|${image_digest}|g" \
+    "${ROOT_DIR}/manifests/spear-shield-eval/05-confidential-data-provider-config.yaml" | oc apply -f -
+
   log "the real evalhub cr, providers: ragas-v062, ibm-clear-v060, garak"
   oc apply -f "${ROOT_DIR}/manifests/spear-shield-eval/01-evalhub.yaml"
-  oc wait --for=condition=Available deployment/evalhub -n "${EVAL_NS}" --timeout=300s
+  # the provider configmap above is now applied before this cr, so a
+  # genuinely fresh install's first reconcile already sees it. this
+  # nudge only matters on a rerun against a cluster whose cr is already
+  # sitting in the old stuck state from before that ordering fix,
+  # confirmed live: the operator never retries a failed reconcile on its
+  # own once the missing configmap shows up later, only on a real change
+  # to the cr, a cheap metadata only annotation bump is enough
+  nudge_reconcile evalhub evalhub "${EVAL_NS}"
+  wait_deploy_ready evalhub "${EVAL_NS}"
 
   log "caller serviceaccount + rbac for submitting jobs"
   oc apply -f "${ROOT_DIR}/manifests/spear-shield-eval/02-caller-rbac.yaml"

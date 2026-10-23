@@ -34,14 +34,13 @@ data:
     # pods this operator creates use imagePullPolicy IfNotPresent, a
     # floating :latest tag means a node that already pulled an older
     # build never re-checks the registry for newer content, it just
-    # reuses its own stale local cache. bump this digest by hand every
-    # time evalhub/spear-confidential-data-provider actually changes and
-    # gets rebuilt, `oc get istag spear-confidential-data-provider:latest
-    # -n spear-shield-eval -o jsonpath='{.image.dockerImageReference}'`
-    # prints the current one
+    # reuses its own stale local cache. scripts/10-install-evalhub.sh
+    # resolves the real digest straight off the imagestream right after
+    # building it and substitutes IMAGE_DIGEST_PLACEHOLDER below, never a
+    # hand copied value sitting here going stale
     runtime:
       k8s:
-        image: image-registry.openshift-image-registry.svc:5000/spear-shield-eval/spear-confidential-data-provider@sha256:380a2e8b392804b53be1ff4792bfc47b40b6fcb9d9b0c72bcec82d80e6d259b8
+        image: image-registry.openshift-image-registry.svc:5000/spear-shield-eval/spear-confidential-data-provider@IMAGE_DIGEST_PLACEHOLDER
         entrypoint:
           - python3
           - main.py

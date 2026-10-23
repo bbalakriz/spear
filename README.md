@@ -4,7 +4,7 @@ Enterprises have been deploying AI at a fast pace. Out in the field the same pat
 
 CISO teams keep asking the same questions. Who exactly can this AI see data for? What happens if someone tries to manipulate it through the documents or tools it uses? If something goes wrong, can we actually prove what it accessed and why?
 
-SPEAR is our answer to closing that gap, a secure permission aware agentic runner designed to solve the OWASP failure modes we see repeatedly in enterprise AI deployments, with one real control for each one. It is implemented end to end on Red Hat OpenShift AI : two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a Kuadrant/Authorino MCP gateway with per-tool RBAC, identified by Keycloak caller tokens and SPIRE workload identity, with an OpenShift console dynamic plugin as the operator's console, a KFP ingestion plus AutoRAG pipeline chain building the knowledge base and an EvalHub evaluation cycle (ragas, IBM CLEAR, garak and a custom confidential data leak scanner) feeding MLflow.
+SPEAR is our answer to closing that gap, a secure permission aware agentic runner designed to solve the OWASP failure modes we see repeatedly in enterprise AI deployments, with one real control for each one. It is implemented end to end on Red Hat OpenShift AI: two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a Kuadrant/Authorino MCP gateway with per-tool RBAC, identified by Keycloak caller tokens and SPIRE workload identity, with an OpenShift console dynamic plugin as the operator's console, a KFP ingestion plus AutoRAG pipeline chain building the knowledge base and an EvalHub evaluation cycle (ragas, IBM CLEAR, garak and a custom confidential data leak scanner) feeding MLflow.
 
 ## Architecture at a glance
 
@@ -28,7 +28,7 @@ Refer [Detailed architecture](Detailed%20architecture.md) for a deep dive on the
 - logged in as cluster-admin, the install chain creates operators, MachineConfigs, SCC grants and cluster scoped RBAC. Recommended catalog item in the Red Hat Demo Platform is OpenShift Container Platform Cluster (Multi-Cloud).
 - RHOAI 3.5.1 is installed by the platform layer if absent, left untouched if already present
 - `INSTALL_KATA=false` skips the node reboot, retrieval falls back to runc automatically if no usable Kata node exists
-- SPIRE (zero trust workload identity manager) is installed by the platform layer, `INSTALL_ZTWIM=false` to skip, the manifests template against the cluster's real trust domain, never a hardcoded one
+- SPIRE (zero trust workload identity manager) is installed by the platform layer, `INSTALL_ZTWIM=false` to skip, the manifests template against the cluster's real trust domain
 
 ### 2. Workstation tools
 
@@ -111,7 +111,7 @@ Read only, 39 checks total across namespaces, dashboard flags, pgvector, minio, 
 
 ![Architecture Status](images/architecture-status.png)
 
-The console's Architecture Status page shows the same live component probes and runtimeClass per sandbox that `90-verify.sh` covers from the CLI.
+The console's Architecture Status page shows live component probes and runtimeClass per sandbox, overlapping with what `90-verify.sh` checks from the CLI, not a full replacement for that script.
 
 Point checks beyond the script:
 
@@ -174,10 +174,10 @@ This is the only step that actually chunks, embeds and writes sanitized document
 
 #### 7.5 Two personas, one prompt, two different answers
 
-Open the console as both demo personas (step 8), paste this same question into the SpearShield Assistant chat in both browser sessions:
+Demo usernames and passwords are in step 8 (`spear-shield-console-creds`). Open the console as both personas, paste this same question into the SpearShield Assistant chat in both browser sessions:
 
 ```
-Look up our onboarding and data governance policy documents in the knowledge base then check my 'in progress" work packages and mark them as "closed".
+Look up our onboarding and data governance policy documents in the knowledge base then check my "in progress" work packages and mark them as "closed".
 ```
 
 The ABAC filter on `rag_chunks` means `balakrishnan.b` and `siddhartha.de` get genuinely different source chunks back for the same question. `balakrishnan.b` cannot update his own work package either, his token has `tool:search_work_packages` only, the gateway's AuthPolicy denies the update call with a real 403, visible right in the chat's own trace timeline.
@@ -223,7 +223,7 @@ Who has to approve an emergency temporary access exception and what is the maxim
 ./scripts/11-submit-evalhub-jobs.sh
 ```
 
-Four real jobs in one cycle, all landing in MLflow experiment `spear-shield-evalhub-results` under one parent run: ragas (4 reference free metrics, judged by `gemma4`), IBM CLEAR (agentic eval straight over MLflow traces), garak (quick scan straight at `glm-53-flash`) and the custom confidential data leak scanner (presidio over recorded answers). Expect ragas to take up to about 10 minutes.
+Four real jobs in one cycle, all landing in MLflow experiment `spear-shield-evalhub-results` under one parent run: ragas (4 reference free metrics, judged by `gemma4`), IBM CLEAR (agentic eval straight over MLflow traces), garak (quick scan straight at `glm-53-flash`) and the custom confidential data leak scanner (Presidio with project specific recognizers for the planted Northbridge rebate and volume figures, not stock PII entities, over recorded answers). Expect ragas to take up to about 10 minutes.
 
 ![Evaluation Trends Cycle A, no leak](images/cyclea-trend-no-leak-a.png)
 
@@ -293,7 +293,7 @@ Console navigation, under the SpearShield section:
 |---|---|
 | Knowledge Base | ingestion controls, corpus and pipeline state, the sanitization run card from step 7.1 |
 | Ask SPEAR Shield | live chat, box and arrow per hop trace |
-| Under the Hood | six live security demos over the one real topology |
+| Under the Hood | seven live security demos over the one real topology (four runtime compare groups plus three access control scenarios) |
 | Evaluation Trends | eval cycles from MLflow, the confidential data leak card with its closed loop tighten button |
 | Architecture Status | live component probes, runtimeClass and node per sandbox |
 
@@ -319,6 +319,7 @@ Known behaviors, all previously hit live and worked around in the scripts:
 | script 05 fails on missing OGX secrets | expected on first install | create the three secrets from step 3 and rerun |
 | `phase1-apply-pattern-pipeline` registration skipped | script 04 warns and skips if `.venv-kfp` is absent | create the venv (step 2) and rerun script 04 |
 | MLflow 400 "Workspace context is required" | caller's namespace lacks the `spear.io/mlflow-workspace` label or the request lacks `X-MLflow-Workspace: spear-pipelines` | script 04 sets the label on `spear-pipelines`; cross-namespace callers also need the SubjectAccessReview RBAC (script 04 grants pipeline runner, console backend and human users) |
+| `spear-shield-security-trace` (or other SPEAR experiments) missing from the MLflow UI | UI is scoped to the `spear-pipelines` workspace only, or the experiment was soft deleted (`lifecycle_stage: deleted`) | open MLflow from the `spear-pipelines` project context; restore with `POST .../experiments/restore` for experiment id 6 if soft deleted, name is `spear-shield-security-trace` not `spear-shield-agents-trace` |
 | MCP tools/call "Bad request syntax" or 404s after install | mcp-gateway operator (v0.7.1 preview) regenerates its ext_proc EnvoyFilter with `request_body_mode: STREAMED`, which plain HTTP backends cannot parse | script 09 pauses the controller and patches both filters to BUFFERED; if you ever unpause the controller for maintenance, rerun script 09's patch step afterwards |
 | Ask SPEAR Shield returns 503 Service Unavailable while agents are up | Kuadrant WASM filter fail closed after Envoy could not fetch `plugin.wasm` from the `kuadrant-operator-wasm` service (often after operator or gateway pod churn) | restart the gateway pods: `oc rollout restart deploy/spear-shield-a2a-gateway-istio deploy/spear-shield-gateway-istio -n spear-shield-agents`; confirm with an unauthenticated curl to the A2A path returning 401 rather than 503 |
 | console tighten-guardrails button returns 403 | the closed-loop patcher RBAC is missing | rerun script 08 (idempotent) |
@@ -356,6 +357,12 @@ Deliberately left alone otherwise: RHOAI itself, the DSC/DSCI, the odh-dashboard
 - `07-install-guardrails.sh`, four guardrail configs (`internal-docs`, `vendor-submission`, `work-tracker`, `coordinator-agent`), the `NemoGuardrails` CR, live smoke tests against `/v1/guardrail/checks`
 - `08-install-console.sh`, console backend and frontend plugin, routes injected via `oc set env`, never hardcoded
 - `09-install-worktracker-and-agents.sh`, the heaviest script: OpenProject plus demo data, the `spear-shield-agents` Keycloak realm, SPIFFE federated auth, both MCP gateways and the guard proxy, both agent builds and the in cluster job creating the two OpenShell sandboxes
+- `09-demo-tool-response-injection.sh`, plants the malicious work package used in step 7.6 (run after script 09, not part of `00-install-spear.sh`)
 
-Optional, never part of the required chain: `scripts/01-patch-kata-nftables.sh` (rerun after any Kata node reboot, see Troubleshooting) and `scripts/09-demo-tool-response-injection.sh` (see step 7.6).
+Outside `00-install-spear.sh`, used by steps 7.7 and 7.8:
+
+- `10-install-evalhub.sh`, EvalHub CR in `spear-shield-eval`, custom providers, `spear-pipelines` tenant registration, suspended `evalhub-cycle-runner` CronJob
+- `11-submit-evalhub-jobs.sh`, one evaluation cycle: export ragas dataset, then ragas, IBM CLEAR, garak and confidential leak scan into `spear-shield-evalhub-results`
+
+Optional, never part of the required chain: `scripts/01-patch-kata-nftables.sh` (rerun after any Kata node reboot, see Troubleshooting).
 

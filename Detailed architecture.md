@@ -1,4 +1,4 @@
-# SPEAR Shield - End-to-End Flow Diagram
+# SPEAR - End-to-End Flow Diagram
 
 One question ("show my work packages" / "summarize the retention policy") traverses six
 enforcement layers: sandbox isolation (runc / Kata), openshell egress policy, guardrails
@@ -38,8 +38,7 @@ flowchart LR
     end
 
     U -->|"openshift console UI<br/>(sso realm login)"| CP
-    CP -->|"consoleFetchJSON<br/>/api/proxy/.../spear-shield/ask"| BK
-    BK -.->|"proxy alias injects<br/>console user's OAuth token<br/>(Authorization header)"| CP
+    CP -->|"consoleFetchJSON<br/>/api/proxy/.../spear-shield/ask<br/>(console proxy injects the signed<br/>in user's OAuth token as Authorization)"| BK
 ```
 
 ```mermaid
@@ -137,12 +136,14 @@ flowchart LR
     AG2 -->|"reads params.callerToken only,<br/>decode_claims -> clearance_level,<br/>dept, team (main.py:138)"| AG2
     AG2 -->|"rag_search: http post /search with<br/>caller_clearance / caller_dept / caller_team<br/>(egress policy: relay :8080 rest)"| REL
     REL -->|"embed_query via ogx /v1/embeddings<br/>nomic-embed-text-v1.5, 768 dims<br/>(cross-ns ingress on ogx netpol)"| OGX
-    REL -->|"SELECT on rag_chunks as rag_reader<br/>(row-level security + ABAC filter:<br/>clearance + dept, never clearance alone<br/>- rag_query.py:61)"| PG
+    REL -->|"SELECT on rag_chunks as rag_reader<br/>(row-level security + ABAC filter:<br/>clearance + dept or team,<br/>never clearance alone<br/>- rag_query.py:87)"| PG
     REL -->|"filtered documents<br/>(caller + count + docs)"| AG2
     AG2 -.->|"in-process mlflow tracing<br/>(both agents, traceparent stitch,<br/>egress policy: mlflow :443)"| MF
 ```
 
-ABAC is three-dimensional by design: `clearance_level` alone would wrongly grant cross-dept
+ABAC is three dimensional by design: a chunk is visible only when its `clearance_level`
+ranks at or below the caller and either the caller's `dept` or `team` matches (or the
+chunk is `enterprise-wide`). `clearance_level` alone would wrongly grant cross dept
 visibility. The relay connects as `rag_reader` (not the `raguser` superuser, which has BYPASSRLS and would
 silently ignore the row-level security policy).
 
@@ -170,18 +171,20 @@ flowchart LR
     RBA -->|"2. backendRef -> guard proxy<br/>(cross-ns ReferenceGrant)"| GP
     GP -->|"3. request guard:<br/>guardrail/checks on incoming args<br/>(blocks injected payloads)"| GRC
     GP -->|"4. forward (backend resolved from<br/>x-mcp-servername, server.py:126)"| OM
-    OM -->|"5. real OpenProject REST call<br/>(Bearer = caller JWT)"| OP
+    OM -->|"5. decode caller JWT for username,<br/>then OpenProject REST with that<br/>persona's personal API token<br/>(Basic auth from spear-openproject-api-tokens,<br/>not the caller JWT as Bearer)"| OP
     OP -->|"6. tool response<br/>(work package subjects verbatim)"| OM
     OM -->|"7. response through proxy:<br/>guardrail/checks on response body<br/>(blocks injected subjects before<br/>any model sees them)"| GRC
-    GP -->|"8. sanitized response<br/>(or blocked_result 403)"| AG2b
-    OM -.->|"assignee=self refusal:<br/>update_work_package by a caller<br/>who is not the assignee (real 403,<br/>same caller JWT)"| AG2b
+    GP -->|"8. sanitized response<br/>(MCP isError: true on HTTP 200,<br/>not an HTTP 403)"| AG2b
+    OM -.->|"assignee=self refusal:<br/>update_work_package by a caller<br/>who is not the assignee (real 403,<br/>same caller JWT for identity)"| AG2b
 ```
 
 The guard proxy is one deployment for every MCP server (no per-server env), deriving each
 request's real backend from `x-mcp-servername` — onboarding a new MCP server is a one-line
 HTTPRoute backendRef change. Demo: `scripts/09-demo-tool-response-injection.sh` plants a
 real malicious work package; the response guard blocks its subject line before the
-retrieval agent's LLM ever sees it.
+retrieval agent's LLM ever sees it. The caller JWT authorizes the MCP gateway hop and
+supplies the username for assignee=self; OpenProject itself is called with that user's
+personal API token from `spear-openproject-api-tokens`.
 
 ---
 
@@ -198,7 +201,7 @@ flowchart LR
         RG["ragas-v062<br/>(4 reference-free metrics,<br/>dataset exported from real traces)"]
         IC["ibm-clear-v060<br/>(agentic eval over mlflow traces)"]
         GK["garak quick scan<br/>(straight at glm-53-flash)"]
-        CD["spear-confidential-data<br/>(presidio leak scan over<br/>recorded answers)"]
+        CD["spear-confidential-data<br/>(presidio + custom Northbridge<br/>figure recognizers over<br/>recorded answers)"]
     end
 
     MF2[("MLflow<br/>spear-shield-security-trace:<br/>agent traces<br/>spear-shield-evalhub-results:<br/>eval runs, one parent per cycle")]
@@ -218,14 +221,16 @@ flowchart LR
     CD -->|"leak scan results + leaked text<br/>tagged onto its own mlflow run<br/>(spear-confidential-data-provider/<br/>adapter.py)"| MF2
     TP -->|"closed-loop button posts<br/>latest leak job id<br/>(closed-loop RBAC applied<br/>by 08-install-console.sh)"| CB
     CB -.->|"reads leak detail from the<br/>provider's own mlflow run by job id,<br/>turns leaked text into regex patterns<br/>(server.py apply_closed_loop_patterns)"| MF2
-    CB -->|"patches configmap in process,<br/>no batch job (get/patch Role on<br/>one named configmap)"| GC
+    CB -->|"patches configmap in process:<br/>regex_detection input and output<br/>patterns plus output rails flows<br/>(get/patch Role on one named configmap)"| GC
     GC -.->|"patched config.yaml consumed on<br/>subsequent guardrail checks against<br/>coordinator-agent-config (kubelet<br/>configmap volume sync propagates;<br/>pod restart forces it)"| CB
 ```
 
 No LLM judge for the closed loop: the backend reads the leak detail from the scanner's
 own mlflow run (tagged there by the provider's adapter), converts the leaked text into
-regex patterns, and patches `coordinator-agent-config` directly - the next ask runs under
-the tightened rails.
+regex patterns (plus the scanner's own canonical rebate/volume patterns), and patches
+`coordinator-agent-config` input and output `regex_detection` in process, enabling
+output rails if missing. Output is what blocks a re ask of the same natural question;
+input alone only matches if the figures appear in the user prompt.
 
 ---
 
@@ -235,8 +240,8 @@ the tightened rails.
 |---|---|---|
 | 1 | console -> plugin -> backend -> apiserver -> keycloak | apiserver self-lookup identity, password grant (demo-only persona password on file) |
 | 2 | gateway -> sandbox -> guardrails -> retrieval | dual-issuer auth, spiffe sub pinning, input rails, sandbox egress |
-| 3 | retrieval -> relay -> ogx/pgvector | ABAC (clearance + dept), RLS via rag_reader, trace export |
+| 3 | retrieval -> relay -> ogx/pgvector | ABAC (clearance + dept or team), RLS via rag_reader, trace export |
 | 4 | retrieval -> gateway -> guard proxy -> openproject | per-tool RBAC, request + response guardrails, assignee=self |
 | 5 | evalhub providers -> ogx/mlflow/minio, closed loop | eval cycle, leak scan -> guardrail patch |
 
-Refer [Readme.md](Readme.md) for further details on build/deploy chain, pipeline ingestion + AutoRAG, platform operators layer, the openshell external CLI route.
+Refer [README.md](README.md) for further details on build/deploy chain, pipeline ingestion + AutoRAG, platform operators layer, the openshell external CLI route.

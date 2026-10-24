@@ -1,25 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# NAMESPACE_MIGRATION_PLAN.md: creates every namespace this project owns
-# up front, before anything that lives inside any of them, plus the one
-# shared, cluster wide piece of state every namespace below ultimately
-# depends on, the odh-dashboard-config feature flags autorag needs.
-# minio gets its own namespace create here too even though it is not
-# listed in manifests/00-namespaces.yaml (that file is this project's
-# own eight namespaces, minio is a plain generic deployment with no
-# project specific logic, same reasoning as keeping its own name, see
-# the plan's own section 8).
+# project namespaces plus minio and odh dashboard autorag flags
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=./lib-common.sh
 source "${ROOT_DIR}/scripts/lib-common.sh"
 
-# odh-dashboard-config is a cluster wide singleton other teams' dashboard
-# customizations may already sit on. this patch only ever adds two boolean
-# keys under spec.dashboardConfig and never removes or overwrites anything
-# else there, confirmed against the live cr's current content before this
-# was first written (it had neither key set). still checked and skipped if
-# already true, so a rerun is a no-op rather than a repeated patch call.
+# patch only genAiStudio and autorag flags; skip if already true
 ensure_dashboard_flags() {
   local genai autorag
   genai=$(oc get odhdashboardconfig odh-dashboard-config -n redhat-ods-applications \

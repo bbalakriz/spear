@@ -1,32 +1,16 @@
 #!/usr/bin/env python3
-"""spear-coordinator-agent, PHASE2_PLAN.md section 7.
+"""spear-coordinator-agent.
 
-receives the user's text query plus their real keycloak bearer token
-(an ordinary Authorization header on the inbound a2a request, see
-_shared/a2a_server.py's own comment on why), calls the foundation
-model with two real tools described, rag_search and
-search_work_packages/update_work_package, using real openai compatible
-tool calling against ogx (confirmed live before writing this, a direct
-/v1/chat/completions call against glm-53-flash with a tools schema
-genuinely returns a real tool_calls response, not assumed), lets the
-model decide what the query needs, then delegates the actual tool
-calls to spear-retrieval-agent over spear-a2a-gateway rather
-than executing them itself, same architecture decision PHASE2_PLAN.md
-section 2 makes explicit: this project exists to secure two kinds of
-traffic, agent to agent and agent to tool, a single agent design only
-ever exercises the second one.
+takes the user's query and keycloak bearer token, calls the foundation
+model with rag_search and work tracker tools, then delegates tool
+execution to spear-retrieval-agent over spear-a2a-gateway rather than
+running tools in this sandbox.
 
-two different credentials travel on the coordinator -> retrieval hop,
-on purpose, not by accident:
-- the outbound Authorization header on that http call is this sandbox's
-  own workload identity, a spire jwt-svid asserted to keycloak and
-  injected automatically by the openshell supervisor's own
-  coordinator-a2a-token-grant provider, this code never touches it
-- the real end user's own jwt travels as an extra json-rpc field,
-  params.callerToken, see _shared/a2a_server.py's caller_token_from_message,
-  since the header slot is already spoken for by the workload identity
-  above. spear-retrieval-agent reads it from there, not from its own
-  inbound Authorization header
+two credentials travel on the coordinator -> retrieval hop: the outbound
+Authorization header is this sandbox's own workload identity (spire
+jwt-svid, injected by the openshell token_grant provider), while the real
+end user's jwt travels as params.callerToken instead, since the header
+slot is already taken. see _shared/a2a_server.py's caller_token_from_message.
 """
 
 from __future__ import annotations
@@ -49,42 +33,24 @@ PORT = int(os.environ.get("AGENT_PORT", "8080"))
 NAME = os.environ.get("AGENT_NAME", "spear-coordinator-agent")
 VERSION = os.environ.get("AGENT_VERSION", "0.1.0")
 PUBLIC_URL = os.environ.get("AGENT_PUBLIC_URL", f"http://{NAME}:{PORT}/")
-# the service's own dns name is deliberately the exact string the
-# spear-a2a-gateway HTTPRoute's own hostnames field matches
-# against, mirroring the reference's own specialist-a2a-gateway naming,
-# so the plain Host header this call sends by default is already
-# correct, no manual override needed on this hop (unlike the mcp
-# gateway hop below, whose friendly service name is not the gateway's
-# own externally facing hostname)
+# dns name matches the HTTPRoute hostnames field, so the default Host
+# header is already correct here (unlike the mcp gateway hop below)
 RETRIEVAL_A2A_URL = os.environ.get(
     "RETRIEVAL_A2A_URL", "http://spear-retrieval-a2a-gateway.spear-agents.svc.cluster.local:80"
 ).rstrip("/")
 
-# points straight at spear-guardrails's own route, not at ogx
-# directly: this agent's own reasoning call now runs through
-# coordinator-agent-config's input/output rails, manifests/spear-guardrails,
-# which itself forwards to the real model (its own models: block). ogx's
-# NetworkPolicy, confirmed live, is declared straight on the OGXServer
-# cr's own spec.network.policy.ingress field rather than hand patching
-# the derived NetworkPolicy (which the operator silently reverts), see
-# manifests/spear-inference/01-ogxserver.yaml
+# routes through coordinator-agent-config's rails, not ogx directly; set
+# NetworkPolicy via the OGXServer cr's spec.network.policy.ingress, the
+# operator reverts a hand patched derived policy, see 01-ogxserver.yaml
 OGX_BASE_URL = os.environ.get("OGX_BASE_URL", "https://GUARDRAILS_HOST_PLACEHOLDER")
-# a dedicated service account's own long lived token, not a dynamic grant:
-# openshell sandboxes set automountServiceAccountToken: false, confirmed
-# live, so there is no per-pod token to read the way an ordinary
-# deployment would, see coordinator-guardrails-sa.yaml's own comment
+# dedicated sa's long lived token; openshell sandboxes set
+# automountServiceAccountToken: false, see coordinator-guardrails-sa.yaml
 OGX_API_KEY = os.environ.get("OGX_API_KEY", "")
 GUARDRAILS_CONFIG_ID = os.environ.get("GUARDRAILS_CONFIG_ID", "coordinator-agent-config")
-# glm-53-flash's own /v1/chat/completions tool calling confirmed live
-# before writing this file, real finish_reason tool_calls, real
-# function name and arguments back, not assumed from the "tool calling
-# enabled" capability line in PHASE1_PLAN.md alone
+# glm tool calling verified on /v1/chat/completions (finish_reason tool_calls)
 GENERATION_MODEL = os.environ.get("GENERATION_MODEL", "openai/publishers/prelude-maas/models/glm-53-flash")
-# the trace shown on spear-console's chat page used to hard code
-# glm-53-flash in this label, so it kept saying that even if
-# GENERATION_MODEL were ever pointed at a different model. derived from
-# the real env var instead, same last path segment convention the trend
-# page's own shortModelName uses
+# derived from the env var so the chat trace label never drifts from the
+# real model, same last path segment convention as the trend page's shortModelName
 GENERATION_MODEL_SHORT = GENERATION_MODEL.rstrip("/").split("/")[-1]
 
 TOOLS = [
@@ -183,16 +149,10 @@ def _trace_step(
     protocol: str,
     ok: bool = True,
 ) -> None:
-    # real wall clock timing for one hop of this request, not a fabricated
-    # or estimated number. from/to/protocol name the two real components
-    # on each side of this hop, spear-console's chat page renders the
-    # whole list as a timeline, not just text. ok is false only for a
-    # hop that was genuinely refused or failed, so a blocked request
-    # renders red at the real point of failure instead of a generic
-    # looking green chain all the way through. time.monotonic() drives
-    # duration_ms since it can't jump backwards mid request, time.time()
-    # drives timestamp_ms since that one needs to mean something to a
-    # human reading it, not just measure an interval
+    # real wall clock timing per hop; ok=False marks a genuinely refused or
+    # failed hop so the console's timeline renders red at the actual point
+    # of failure. monotonic for duration (can't jump back), time.time for
+    # the human readable timestamp
     trace.append(
         {
             "step": step,
@@ -209,17 +169,9 @@ def _trace_step(
 
 @mlflow_tracing.trace(name="chat_completion", span_type=mlflow_tracing.SPAN_TYPE_LLM)
 def chat_completion(messages: list[dict[str, Any]]) -> dict[str, Any]:
-    # passthrough: true in coordinator-agent-config is what makes tools/
-    # tool_choice actually work here, confirmed live: without it nemo
-    # guardrails' own /v1/chat/completions rejects any request carrying
-    # them outright, "only supported for non-streaming requests when the
-    # guardrails configuration has 'passthrough: true'". a blocked rail
-    # still fires in passthrough mode, confirmed live too, it comes back
-    # as a normal 200 with a refusal message in message.content, same
-    # shape as any other answer, nothing special to catch here, and now
-    # that the decorator above captures this whole response as the
-    # span's real output, a refusal shows up in the trace itself too,
-    # not just this function's own return value
+    # passthrough: true in coordinator-agent-config is required for
+    # tools/tool_choice; blocked rails still return 200 with refusal text
+    # in message.content, which the decorator captures into the trace too
     headers = {"content-type": "application/json"}
     if OGX_API_KEY:
         headers["authorization"] = f"Bearer {OGX_API_KEY}"
@@ -234,11 +186,8 @@ def chat_completion(messages: list[dict[str, Any]]) -> dict[str, Any]:
         },
         extra_headers=headers,
     )
-    # real token counts, not estimated ones, already in ogx's own
-    # openai compatible response body, just never read before now.
-    # pulled out as their own attributes too since those are easier to
-    # query across many traces than digging through the full response
-    # the decorator already stored as this span's output
+    # pull real token counts into their own span attributes, easier to
+    # query across traces than digging through the full response body
     span = mlflow_tracing.current_span()
     if span is not None:
         usage = response.get("usage") or {}
@@ -259,11 +208,9 @@ def _looks_like_tool_error(raw: str) -> bool:
 def delegate_tool_calls(
     tool_calls: list[dict[str, Any]], caller_token: str, trace: list[dict[str, Any]]
 ) -> dict[str, str]:
-    """hands the model's own chosen tool calls to spear-retrieval-agent in
-    one batch, over a2a, and returns {tool_call_id: result_text}. the
-    retrieval agent is the one that actually touches rag_chunks and the
-    work tracker mcp tool, section 2's own isolation rationale, not this
-    sandbox.
+    """hands the model's chosen tool calls to spear-retrieval-agent in one
+    batch over a2a, returns {tool_call_id: result_text}. the retrieval
+    agent is the one that touches rag_chunks and the work tracker tool.
     """
     started_at = time.monotonic()
     names = ", ".join(tc["function"]["name"] for tc in tool_calls)
@@ -274,10 +221,8 @@ def delegate_tool_calls(
 
     @mlflow_tracing.trace(name="tool delegation", span_type=mlflow_tracing.SPAN_TYPE_TOOL)
     def _delegate(calls: list[dict[str, Any]]) -> dict[str, Any]:
-        # caller_token reaches the outbound a2a payload only through
-        # this closure, never as one of this function's own bound
-        # arguments: mlflow.trace auto captures every bound argument,
-        # the real end user's bearer token must never land in a trace
+        # caller_token stays in this closure, never a bound argument;
+        # mlflow.trace auto captures bound arguments and must never see it
         payload = {
             "jsonrpc": "2.0",
             "id": "coord-delegate",
@@ -290,9 +235,7 @@ def delegate_tool_calls(
                 "callerToken": caller_token,
             },
         }
-        # the real traceparent header, the one thing that turns retrieval's
-        # own spans into children of this one instead of a second,
-        # disconnected trace, PHASE3_PLAN.md section 4
+        # traceparent header stitches retrieval's spans onto this trace
         trace_headers = mlflow_tracing.outgoing_trace_headers()
         body = http_json(RETRIEVAL_A2A_URL, payload, extra_headers=trace_headers)
         result = body.get("result") or {}
@@ -303,12 +246,8 @@ def delegate_tool_calls(
             by_id = {r["id"]: r["result"] for r in results if "id" in r}
         except json.JSONDecodeError:
             by_id = {tc["id"]: text for tc in calls}
-        # a per tool call refusal (spear-openproject-mcp's own assignee=self
-        # check, or the gateway's own tool rbac authpolicy, see
-        # run_work_tracker_tool in spear-retrieval-agent) already renders its
-        # own red hop below once retrieval's sub trace is spliced in, marking
-        # this outer hop red too so the whole failing sub chain stands out,
-        # not just the one deepest box
+        # mark this outer hop red too when any tool call failed, so the
+        # whole failing chain stands out once retrieval's sub trace is spliced in
         any_tool_error = any(_looks_like_tool_error(v) for v in by_id.values())
         span = mlflow_tracing.current_span()
         if span is not None:
@@ -318,11 +257,8 @@ def delegate_tool_calls(
     try:
         outcome = _delegate(calls_payload)
     except Exception as exc:  # noqa: BLE001
-        # the a2a hop itself failed outright, not a tool level refusal,
-        # recorded as its own real block rather than left to crash this
-        # whole request with no trace at all. mlflow's own decorator
-        # already records this exception on the span itself, nothing
-        # extra to set here
+        # the a2a hop itself failed, not a tool level refusal; record it
+        # as a block rather than crash the whole request with no trace
         _trace_step(
             trace,
             "tool delegation",
@@ -346,23 +282,12 @@ def delegate_tool_calls(
         protocol="a2a message/send",
         ok=not outcome["any_tool_error"],
     )
-    # retrieval's own completed_task already carries its own real sub
-    # hops (rag-query-relay, mcp-gateway), spliced in right after this
-    # hop so the flow diagram shows the whole chain, not just this edge
+    # splice in retrieval's own sub hops (rag-query-relay, mcp-gateway)
     trace.extend(outcome["sub_trace"])
     return {tc["id"]: by_id.get(tc["id"], json.dumps({"error": "no result returned for this tool call"})) for tc in tool_calls}
 
 
-# a real tool refusal (e.g. spear-openproject-mcp's own assignee=self
-# check refusing a write to someone else's work package, confirmed live,
-# this never reaches openproject's own rbac at all) often makes the model
-# try a second, different tool before it gives up and writes an actual
-# answer, a genuine multi round agent loop, not a single question/single
-# tool/single answer shape. found live when a real cross user update
-# attempt's first tool call came back refused and the model's very next
-# move was another tool_calls response, which the old single round
-# version here had no way to handle and just returned an empty "no
-# synthesized answer" placeholder
+# tool refusal can trigger another tool round before a final answer
 MAX_TOOL_ROUNDS = 4
 
 
@@ -375,11 +300,8 @@ def answer(user_text: str, caller_token: str) -> tuple[str, list[dict[str, Any]]
 
     for round_num in range(MAX_TOOL_ROUNDS):
         started_at = time.monotonic()
-        # chat_completion is its own @mlflow_tracing.trace() now, a real
-        # span with the full messages in and the full response out,
-        # nothing left to wrap here, round number is implicit in the
-        # trace tree's own ordering and in how many messages each call
-        # carries
+        # chat_completion is its own traced span, round number is
+        # implicit in the trace tree's ordering
         response = chat_completion(messages)
         choice = (response.get("choices") or [{}])[0]
         message = choice.get("message") or {}
@@ -398,12 +320,8 @@ def answer(user_text: str, caller_token: str) -> tuple[str, list[dict[str, Any]]
         if not tool_calls:
             return message.get("content") or "no answer came back from the model", trace
 
-        # nemo guardrails own get_history_cache_key indexes every message
-        # by msg["content"] unconditionally, confirmed live via a real
-        # KeyError in its pod logs, so a tool call message with no
-        # content key at all (the plain openai shape) blows up the next
-        # call. append a content key even though it is empty, this is a
-        # guardrails quirk not an openai requirement
+        # nemo guardrails indexes every message by content unconditionally;
+        # a tool call message with no content key blows up the next call
         message.setdefault("content", "")
         messages.append(message)
         results_by_id = delegate_tool_calls(tool_calls, caller_token, trace)
@@ -420,19 +338,11 @@ def answer(user_text: str, caller_token: str) -> tuple[str, list[dict[str, Any]]
 
 
 def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> dict[str, Any] | None:
-    # real wall clock moment this request actually arrived, used below
-    # for the "request received" step's own timestamp since that one is
-    # built by hand rather than through _trace_step
+    # timestamp for the "request received" step, built by hand below
     received_at_ms = round(time.time() * 1000)
     method = body.get("method")
-    # demo only method, spear-console's security demo page uses this to
-    # prove the workload identity hop live: makes this sandbox's own real
-    # outbound call to the retrieval agent's own whoami method, over the
-    # exact same http_json(RETRIEVAL_A2A_URL, ...) channel every real tool
-    # delegation already uses, confirmed live this is the only way to
-    # observe the openshell supervisor's real injected token, it only
-    # credentials this sandbox's own declared main process, never an
-    # oc exec'd side process making the identical call by hand
+    # demo only: console's security page proves the workload identity hop
+    # by calling retrieval's whoami over this sandbox's own real channel
     if method == "whoami-downstream":
         downstream = http_json(RETRIEVAL_A2A_URL, {"jsonrpc": "2.0", "id": 1, "method": "whoami", "params": {}})
         return completed_task(body.get("id"), json.dumps(downstream))
@@ -442,14 +352,8 @@ def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> d
             "id": body.get("id"),
             "error": {"code": -32601, "message": f"unsupported method: {method}"},
         }
-    # prefer params.callerToken, same body field a2a already carries it
-    # in one hop further down. confirmed live that openshell's own
-    # gateway relay strips the inbound Authorization header somewhere
-    # between the real caller and this sandbox (exec'ing straight into
-    # the sandbox and setting it by hand works fine, going through the
-    # exposed service does not), so the header is only a fallback for
-    # direct/local testing, not something a real caller through the
-    # gateway can rely on
+    # prefer params.callerToken; openshell strips inbound Authorization
+    # between caller and sandbox, so the header only works for local testing
     caller_token = (body.get("params") or {}).get("callerToken")
     if not caller_token and auth_header.lower().startswith("bearer "):
         caller_token = auth_header.split(" ", 1)[1].strip()
@@ -461,16 +365,10 @@ def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> d
         }
     prompt = text_from_message(body)
     print(f"coordinator request (sandbox={socket.gethostname()}): {prompt}")
-    # root span for the whole request, PHASE3_PLAN.md section 4. this
-    # sandbox is always the root, spear-console-backend calls in over a2a
-    # but never starts a trace of its own, so there is nothing upstream
-    # for this span to continue from, unlike the delegate_tool_calls hop
-    # below which hands its own traceparent on to retrieval
+    # root mlflow span for this request
     @mlflow_tracing.trace(name="coordinator-agent", span_type=mlflow_tracing.SPAN_TYPE_AGENT)
     def _handle(question: str) -> tuple[str, list[dict[str, Any]]]:
-        # caller_token reaches answer()/delegate_tool_calls() only
-        # through this closure, never as a traced argument, same rule
-        # as _delegate above
+        # caller_token stays in this closure, never a traced argument
         return answer(question, caller_token)
 
     text, trace = _handle(prompt)

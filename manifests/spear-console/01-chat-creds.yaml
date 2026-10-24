@@ -1,28 +1,5 @@
-# credentials the spear-console-backend needs to do a real password grant
-# against the spear-agents realm on behalf of whichever real human
-# is signed into the openshift console, section 8. the console backend
-# only ever learns the signed in user's openshift username (resolved from
-# their forwarded console token via a users.openshift.io/v1/users/~ self
-# lookup), not their password, so it needs its own lookup from username to
-# that user's own spear-agents realm password, same per persona
-# file-by-username shape spear-openproject-mcp's own OPENPROJECT_TOKENS_DIR
-# already uses for the exact same kind of problem.
-#
-# these two literal values are not new secrets, they are copied straight
-# out of manifests/spear-agents/01-keycloak-realm.yaml's own
-# credentials.value fields for balakrishnan.b and siddhartha.de. this is
-# demo-only duplication, a real deployment would mint these through an
-# actual identity provider flow instead of a fixed password known to this
-# backend, but there is no sso federation between the console's own
-# openshift oauth and the spear-agents realm to do that with here.
-#
-# NAMESPACE_MIGRATION_PLAN.md: this is the one wart this whole migration
-# exists to fix for this file specifically. namespace used to be
-# rag-phase1, not spear-agents, only because that is where the
-# spear-console-backend pod that mounts this lived, a plain secret
-# cannot be mounted cross namespace. now that the backend itself lives
-# in spear-console, this secret lives right alongside it, no cross
-# namespace placement needed at all anymore
+# demo username to spear-agents password map for console backend password grant (copied from realm import)
+# lives in spear-console so the backend pod can mount it (secrets are namespace local)
 apiVersion: v1
 kind: Secret
 metadata:
@@ -35,10 +12,7 @@ stringData:
   balakrishnan.b: ConsoleTest#2026
   siddhartha.de: ConsoleTest#2026
 ---
-# same reasoning, copied from manifests/spear-agents/01-keycloak-realm.yaml's
-# spear-coordinator client's own secret field. the backend needs this to
-# complete the password grant, same client the coordinator agent's own
-# tool scoping already expects tokens to come from
+# spear-coordinator client secret for password grant (matches realm import)
 apiVersion: v1
 kind: Secret
 metadata:

@@ -1,19 +1,13 @@
 # spear-confidential-data-provider, a custom evalhub provider scoring the
-# coordinator agent's own generated answers for confidential business data
-# leaks, see PHASE3_PLAN.md section 7. runs as a plain evalhub job pod,
-# FrameworkAdapter's own documented lifecycle (adapter container + sidecar,
-# configmap mounts the job spec at pod startup), not an openshell sandbox,
-# so this needs none of the iproute/nftables setup
-# spear-coordinator-agent's own Containerfile needs.
+# coordinator agent's generated answers for confidential data leaks on
+# model output. runs as a plain evalhub job pod (FrameworkAdapter's
+# documented adapter + sidecar lifecycle), not an openshell sandbox, so
+# none of the iproute/nftables setup the agent Containerfiles need.
 #
-# lives in evalhub/, not agents/: this is an evalhub provider, not a
-# conversational agent, it never runs inside the openshell sandbox
-# runtime the real agents share, a different kind of thing entirely, kept
-# separate on purpose once that got pointed out on review
+# lives in evalhub/, not agents/: this is an evalhub provider, never runs
+# inside the openshell sandbox runtime the real agents share
 #
-# eval-hub-sdk confirmed live to resolve against this cluster's own
-# packages.redhat.com index with no extra credentials needed, no vendoring
-# from the shipped garak image required.
+# eval-hub-sdk resolves from packages.redhat.com, no extra credentials needed
 #
 # build in cluster:
 #   oc start-build spear-confidential-data-provider --from-dir=evalhub --wait -n spear-eval

@@ -1,12 +1,4 @@
-# own openshell release for this project's two sandboxed agents, section 2.
-# not an edit of the one already live (release "openshell" in namespace
-# "openshell"), that one is hardcoded to server.sandboxNamespace: agent-pack,
-# a single value not a list, confirmed live via `helm get values openshell
-# -n openshell`, and is this cluster's shared platform layer per
-# PHASE2_PLAN.md section 1, kept exactly as is. this is a second,
-# independent release, own namespace, own sandboxNamespace, same chart,
-# same version, values otherwise identical to the reference's own values
-# file since none of those other settings are project specific.
+# openshell helm values overlay for spear sandboxes
 server:
   sandboxNamespace: spear-agents
   disableTls: true

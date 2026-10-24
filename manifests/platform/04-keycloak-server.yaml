@@ -1,15 +1,4 @@
-# the actual keycloak server this project's realm import
-# (20-security/04-keycloak-realm.yaml) targets. postgres credentials are
-# generated at install time by scripts/install-platform.sh, never hardcoded
-# here, and the secret is create-if-missing so re-running the script never
-# regenerates a password out from under an already running database.
-#
-# keycloak-tls is not created here, it comes from openshift's built in
-# service-ca operator, activated by an annotation on the "keycloak" Service
-# the rhbk operator generates from the Keycloak CR below. that Service does
-# not exist until the operator reconciles the CR, so the annotation cannot
-# be set in this file, scripts/install-platform.sh patches it on afterward.
-# no cert-manager Certificate resource is needed.
+# keycloak operator CR for shared auth server
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -133,7 +122,7 @@ spec:
       value: "true"
     # preview: spiffe idp + federated jwt client auth for openshell
     # token_grant (spiffe jwt-svid asserts to keycloak, keycloak access
-    # token rides on a2a). see scripts/20-install-security.sh sync_spiffe_*.
+    # token rides on a2a). see scripts/20-install-security.sh sync_spiffe_*
     - name: features
       value: spiffe,client-auth-federated
 ---
@@ -148,10 +137,10 @@ spec:
   host: KEYCLOAK_HOSTNAME_PLACEHOLDER
   to:
     kind: Service
-    # service-ca issues keycloak-tls for this service name (CN=keycloak.keycloak.svc).
+    # service-ca issues keycloak-tls for this service name (CN=keycloak.keycloak.svc)
     # the rhbk operator also creates keycloak-service; pointing the reencrypt
     # route there makes the router fail tls to the backend (503) because the
-    # cert cn does not match.
+    # cert cn does not match
     name: keycloak
   port:
     targetPort: 8443

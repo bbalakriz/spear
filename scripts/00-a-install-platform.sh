@@ -1,31 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# installs every cluster level prerequisite this project needs: the base rhoai
-# platform itself (operator, dsc, dsci, dashboard config), plus authorino,
-# rhcl (kuadrant), ossm3/istio, mcp-gateway operator, and the keycloak
-# operator plus a real keycloak server instance. run this once per cluster
-# before 00-b-install-openshell.sh and the project chain. every step here is safe to re-run,
-# subscriptions and crs are check first or plain idempotent apply, the
-# keycloak db password is only ever generated once and never touched again
-# on a rerun. the rhoai dsc/dsci/dashboard config are the one exception,
-# see ensure_rhoai_platform below for why those are never blindly reapplied.
+# cluster prerequisites: rhoai platform, authorino, istio, mcp gateway, keycloak, optional kata/ztwim.
+# run once before 00-b and the project chain. rhoai dsc/dsci are not blindly reapplied (see ensure_rhoai_platform).
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-# read the live cluster's own apps domain rather than hardcoding one, an
-# explicit CLUSTER_DOMAIN env var still wins if set. the old hardcoded
-# apps.cluster-crzz2... string only survives as a last resort fallback for
-# whatever unlikely case runs this before oc is logged in to a cluster.
+# read the live cluster's apps domain; CLUSTER_DOMAIN env var wins if set,
+# hardcoded string below is a last resort fallback
 CLUSTER_DOMAIN="${CLUSTER_DOMAIN:-$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}' 2>/dev/null)}"
 CLUSTER_DOMAIN="${CLUSTER_DOMAIN:-apps.cluster-crzz2.dyn.redhatworkshops.io}"
 KEYCLOAK_HOSTNAME="${KEYCLOAK_HOSTNAME:-sso.${CLUSTER_DOMAIN}}"
-# kata puts every openshell sandbox pod through a MachineConfig change, on
-# a single node cluster that means the one and only node reboots. default
-# on since that is what "sandbox pods run in kata" actually requires, set
-# to false to install everything else and skip that reboot.
+# kata needs a MachineConfig change, on a single node cluster that means
+# a reboot; set to false to skip it and install everything else
 INSTALL_KATA="${INSTALL_KATA:-true}"
-# spire/spiffe workload identity for a2a, additive to the keycloak
-# client-credentials auth already in place, does not require a reboot.
+# spire/spiffe workload identity for a2a, additive, no reboot needed
 INSTALL_ZTWIM="${INSTALL_ZTWIM:-true}"
 
 # shellcheck source=./lib-olm.sh
@@ -38,18 +26,10 @@ wait_istio_ready() {
   oc wait --for=jsonpath='{.status.state}'=Healthy istiocni/default --timeout=300s
 }
 
-# olm allows exactly one OperatorGroup per namespace, a second one leaves
-# every csv in that namespace stuck in TooManyOperatorGroups forever, on
-# any future subscription/csv change, not just the next apply. any cluster
-# that already had keycloak or rhoai installed before this project showed
-# up already carries its own OperatorGroup in those namespaces, so the
-# ones this project's own manifests declare are
-# only needed on a genuinely fresh cluster. called right after applying a
-# manifest that might have just created a second one: if exactly one
-# OperatorGroup remains, it's either a fresh cluster (ours, keep it) or
-# already deduped, nothing to do either way. more than one always means
-# ours collided with a pre-existing one, so ours, and only ours, comes
-# back out.
+# olm allows exactly one OperatorGroup per namespace; a second one leaves
+# every csv stuck in TooManyOperatorGroups. a cluster with a pre-existing
+# keycloak/rhoai install already has its own, ours is then redundant and
+# gets removed, leaving whichever one was already there
 dedupe_operatorgroup() {
   local ns="$1" ours="$2" count
   count=$(oc get operatorgroup -n "${ns}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
@@ -73,24 +53,15 @@ wait_authorino_ready() {
   return 1
 }
 
-# spire server and the spiffe csi driver reach Ready independent of any
-# live workload asking for an svid, those two are hard requirements. the
-# spire agent's k8s workload attestor needs the node's own hostname to be
-# resolvable in cluster dns, true on a standard ipi cluster, not true on
-# every bare metal/dev cluster, and the oidc discovery provider needs a
-# real svid issued to itself to fetch its own jwks, which depends on that
-# same attestation succeeding. both degrade to a warning instead of
-# failing the whole install: everything upstream of them is still real
-# and working, see ARCHITECTURE.md "SPIFFE workload identity".
+# spire server + spiffe csi driver are hard requirements, ready
+# independent of any svid request. the agent's workload attestor needs
+# the node hostname resolvable in cluster dns (true on ipi, not always on
+# bare metal), and the oidc provider's own jwks fetch depends on that same
+# attestation, so both degrade to a warning rather than fail the install
 wait_ztwim_ready() {
   oc wait --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=True \
     spireserver/cluster spiffecsidriver/cluster --timeout=180s
-  # confirmed live on a fresh multi node install: the daemonset alone took
-  # 127s from creation to its Ready condition flipping true, pulling images
-  # across every node plus scc/cert setup, a plain rollout, nothing to do
-  # with node attestation. 60s here was tighter than that and printed this
-  # warning on a run that was actually completely healthy, matching the
-  # 180s the two checks above already get avoids that false positive.
+  # spire agent daemonset can take longer than 60s on multi node clusters
   if ! oc wait --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=True \
       spireagent/cluster --timeout=180s >/dev/null 2>&1; then
     echo "warning: spire agent daemonset is not Ready yet." >&2
@@ -104,13 +75,8 @@ wait_ztwim_ready() {
   fi
 }
 
-# which machineconfigpool actually carries the nodes agent sandbox pods can
-# land on. worker if this cluster has real, schedulable worker nodes,
-# master otherwise, the single node cluster case where the one node's
-# machineconfiguration.openshift.io/role is master and the worker mcp has
-# zero machines. confirmed live: pointing kata at a pool with zero
-# machines does not error, it just sits at kataNodes.nodeCount: 0 forever,
-# no reboot, nothing, silently stuck rather than failing loudly.
+# worker if schedulable worker nodes exist, master otherwise; a single
+# node cluster's empty worker mcp would leave kata at nodeCount 0 forever
 detect_kata_pool() {
   # count nodes that are worker but not master/control-plane. do not use
   # mcp worker.machineCount: once nodes get the kata-oc label they leave
@@ -132,20 +98,7 @@ detect_kata_pool() {
   fi
 }
 
-# a re-run of this script should never touch a KataConfig that is already
-# fully installed and healthy, confirmed live this can go wrong in a way
-# that is not just wasted work: re-detecting and re-applying against an
-# already-healthy install flipped kataConfigPoolSelector from no selector
-# (the correct, working worker default) to master on a rerun, which
-# relabelled all 3 control plane nodes node-role.kubernetes.io/kata-oc,
-# the monitor daemonset then scheduled onto them and sat in
-# CreateContainerError since those nodes were never actually kata
-# installed, and both already-working worker nodes went through a second
-# unnecessary reboot cycle recovering from it. exactly why detect_kata_pool
-# read master that one time was never pinned down, this guard makes it not
-# matter: skip the whole detect/label/apply sequence outright once
-# kataNodes.readyNodeCount == kataNodes.nodeCount > 0 and nothing is
-# InProgress.
+# skip kata install when already healthy (re apply can relabel wrong pool)
 kata_already_healthy() {
   local inprogress ready total
   inprogress=$(oc get kataconfig example-kataconfig -o jsonpath='{.status.conditions[?(@.type=="InProgress")].status}' 2>/dev/null || true)
@@ -154,28 +107,7 @@ kata_already_healthy() {
   [[ "${inprogress}" != "True" && -n "${ready}" && "${ready}" -gt 0 && "${ready}" == "${total}" ]]
 }
 
-# the sandboxed-containers-operator's own kata-oc MachineConfigPool only
-# ever gains members through this label, it does not add it to nodes
-# itself, confirmed live: with no nodes carrying it, the KataConfig
-# controller sits at "Waiting for MCO to start updating." forever, no
-# error, no timeout, indistinguishable from progress unless you diff
-# `oc get nodes -l node-role.kubernetes.io/kata-oc` against the pool you
-# expect to be enrolled. this is the same manual step the upstream guide
-# this project adapted 08-kata-nftables-patch.yaml from documents, it was
-# just never needed on the single node cluster this repo started on since
-# every KataConfig test there happened before this gap was found.
-#
-# label every node in the target pool up front, before the KataConfig CR
-# exists, rather than one node at a time after. labelling a lone node
-# whose kata-oc pool membership the controller has not seen yet reads as
-# unexplained drift to it and it can revert the label mid rollout,
-# confirmed live on this same cluster, in a run where the controller's
-# own pod happened to be drained off that node partway through.
-#
-# when the pool is worker, skip nodes that also carry master/control-plane.
-# many multi node installs stamp node-role.kubernetes.io/worker on masters
-# too; labelling those pulls control planes into kata-oc and leaves them
-# stuck in waitingToInstall while only the real workers finish.
+# label kata-oc pool nodes before KataConfig exists; skip control plane workers
 label_kata_pool_nodes() {
   local pool="$1"
   local node roles
@@ -191,11 +123,9 @@ label_kata_pool_nodes() {
   done
 }
 
-# builds and applies the KataConfig CR itself. always select the nodes we
-# just labelled with kata-oc. omitting the selector (operator "all workers"
-# default) also enrolls control planes that stamp node-role.kubernetes.io/worker
-# on multi node openshift installs; those then sit in waitingToInstall with
-# no guest initrd, and the nftables patch reports "initrd not found" on them.
+# always scoped to the kata-oc labelled nodes; the operator's "all
+# workers" default also enrolls control planes on multi node installs,
+# those then sit in waitingToInstall with no guest initrd
 apply_kataconfig() {
   local pool="$1"
   cat <<EOF | oc apply -f -
@@ -206,11 +136,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: rhoai-agent-pack
 spec:
-  # eligibility checking goes through the Node Feature Discovery operator,
-  # which this project does not install. /dev/kvm and amd svm were confirmed
-  # by hand (oc debug node, ls /dev/kvm, grep svm /proc/cpuinfo) before
-  # writing this manifest, false here just skips the nfd dependency, it
-  # does not skip the actual hardware requirement.
+  # eligibility checking needs the Node Feature Discovery operator, not
+  # installed here; false skips that nfd dependency, not the hardware check itself
   checkNodeEligibility: false
   kataConfigPoolSelector:
     matchLabels:
@@ -220,9 +147,7 @@ EOF
 
 # the reboot this triggers on a single node cluster takes several minutes,
 # api server goes fully unreachable partway through, this is normal, not a
-# hang. wait for the whole labelled pool, not the first ready node: patching
-# after ready>=1 raced ahead of RuntimeClass creation and of the second
-# worker's guest image, confirmed live.
+# hang. wait until all labelled kata nodes are ready, not just the first
 wait_kata_ready() {
   local tries=120 ready=0 total=0 inprogress="" expected
   expected=$(oc get nodes -l 'node-role.kubernetes.io/kata-oc' --no-headers 2>/dev/null | wc -l | tr -d ' ')
@@ -247,8 +172,8 @@ wait_kata_ready() {
   return 1
 }
 
-# the red hat build of agent sandbox replaces an upstream kubernetes-sigs
-# controller/crd set that may already be sitting on the cluster if any..
+# red hat build replaces an upstream kubernetes-sigs controller/crd set
+# that may already be on the cluster
 install_agent_sandbox_operator() {
   local ns="agent-sandbox-system" csv="agent-sandbox-operator.v0.9.0"
 
@@ -265,9 +190,8 @@ install_agent_sandbox_operator() {
   oc delete clusterrole agent-sandbox-controller agent-sandbox-controller-extensions --ignore-not-found=true
 
   log "remove kubernetes-sigs agent sandbox crds if present"
-  # --ignore-not-found only covers a named resource that's missing, not a
-  # resource *type* that was never registered, which is the normal case on
-  # a fresh cluster, deleting instances by kind errors out hard otherwise.
+  # --ignore-not-found only covers a missing named resource, not a type
+  # that was never registered (the normal fresh cluster case)
   if oc get crd sandboxes.agents.x-k8s.io >/dev/null 2>&1; then
     oc delete sandbox,sandboxclaim,sandboxtemplate,sandboxwarmpool -A --all --ignore-not-found=true --wait=true
   fi
@@ -284,10 +208,8 @@ install_agent_sandbox_operator() {
   oc delete subscription agent-sandbox-operator -n "${ns}" --ignore-not-found=true
 
   log "install red hat build of agent sandbox operator"
-  # the delete above removes the subscription itself, not just a stale
-  # installplan, on a fresh cluster nothing recreates it afterward without
-  # this, reapplying is a no-op for every other subscription in this file,
-  # those already succeeded earlier in main.
+  # delete above removed the subscription itself; reapplying is a no-op
+  # for every other subscription in this file, those already succeeded
   oc apply -f "${ROOT_DIR}/manifests/platform/00-operators.yaml"
   approve_and_wait_subscription agent-sandbox-operator "${ns}"
 
@@ -360,25 +282,17 @@ ensure_keycloak_serving_cert_annotation() {
   return 1
 }
 
-# the rhoai operator, DSCInitialization and DataScienceCluster singletons
-# are shared cluster wide state that other teams' workloads may already
-# depend on, kserve, workbenches, model registry, and so on. a fresh
-# cluster has none of these yet, so applying the captured manifest is
-# safe. a cluster that already has a dsc is left alone. the dashboard
-# feature flags this project needs (agentsCatalog, mcpCatalog, and the
-# rest in 00-dashboard-flags-patch.yaml) are additive booleans: the
-# operator creates a default odh-dashboard-config without them, so we
-# always merge patch those keys on rather than warn and walk away.
-#
-# odhdashboardconfig's crd is installed by the dashboard component after
-# the dsc reconciles, not by the rhods-operator csv.
+# DSCInitialization/DataScienceCluster are shared cluster wide state other
+# teams may depend on; a cluster that already has a dsc is left alone.
+# dashboard feature flags (agentsCatalog, mcpCatalog) are additive
+# booleans, always merge patched on since the operator's default
+# odh-dashboard-config does not set them
 ensure_rhoai_dashboard_flags() {
   oc wait --for=jsonpath='{.status.phase}'=Ready dscinitialization/default-dsci --timeout=300s
   oc wait --for=jsonpath='{.status.phase}'=Ready datasciencecluster/default-dsc --timeout=300s
   log "waiting for OdhDashboardConfig crd"
   oc wait --for=condition=Established crd/odhdashboardconfigs.opendatahub.io --timeout=300s
-  # operator creates the default cr once the dashboard is up; fall back to
-  # the captured manifest if it never shows.
+  # fall back to the captured manifest if the operator's default cr never shows
   if ! oc get odhdashboardconfig odh-dashboard-config -n redhat-ods-applications >/dev/null 2>&1; then
     log "odh-dashboard-config not created yet, applying from manifest"
     oc apply -f "${ROOT_DIR}/manifests/platform/01-rhoai.yaml"

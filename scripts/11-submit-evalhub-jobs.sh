@@ -1,33 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# submits the four real evalhub jobs proven live this project: ragas
-# against a small real dataset exported from spear-shield-security-trace,
-# ibm-clear against that same mlflow experiment directly, garak against
-# the raw coordinator model, and spear-confidential-data, which mines
-# that same trace experiment for answers that leaked planted vendor
-# contract figures. manual, one shot runs, not the architecture.html
-# automatic kfp trigger, see PHASE3_PLAN.md section 7 for why that's
-# deferred.
-#
-# judge model is gemma4, not the coordinator's own glm-53-flash: confirmed
-# live that glm-53-flash's own chain of thought reasoning tokens
-# consistently blow past the evalhub sidecar's model call timeout under
-# ragas's structured output prompts, gemma4 has no reasoning overhead and
-# responds in about a second for the same prompts.
-#
-# ragas runs the full reference free set this provider ships, not just
-# faithfulness/answer_relevancy: context_relevance and response_groundedness
-# added too, confirmed live by reading ragas.metrics.collections' own
-# ascore() signatures inside this exact quay.io/evalhub/community-ragas:v0.6.2
-# image, both only need (user_input/response, retrieved_contexts), no
-# reference. the other 8 metrics this provider ships, context_precision,
-# context_recall, answer_correctness, context_entity_recall,
-# factual_correctness, noise_sensitivity, answer_accuracy,
-# semantic_similarity, every one of them requires a reference field in its
-# own ascore() signature, confirmed the same way. no ground truth corpus
-# exists for these real rag questions, so those 8 cannot run honestly
-# against live traffic, a golden set would be a separate, later effort,
-# not a quick parameter change
+# manual one shot evalhub jobs: ragas, ibm-clear, garak, spear-confidential-data.
+# judge model gemma4 (glm-53-flash times out on ragas structured output).
+# ragas metrics are reference free only; no golden answers for the rest.
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=./lib-common.sh
@@ -36,12 +11,7 @@ source "${ROOT_DIR}/scripts/lib-common.sh"
 JUDGE_MODEL="openai/publishers/prelude-maas/models/gemma4"
 EMBEDDING_MODEL="vllm-embedding/nomic-embed-text-v1.5"
 OGX_URL="http://spear-ogx-service.spear-inference.svc.cluster.local:8321/v1"
-# the model actually behind the coordinator agent's own generation step,
-# agents/spear-coordinator-agent/main.py's own GENERATION_MODEL default,
-# not gemma4, that one is only ever the ragas/ibm-clear judge model. this
-# is the real first garak target, straight at the model, not the agent or
-# its guardrails, same shared ogx endpoint, confirmed live via its own
-# /v1/models listing
+# coordinator generation model (garak probes ogx directly, not the agent)
 GARAK_TARGET_MODEL="openai/publishers/prelude-maas/models/glm-53-flash"
 MLFLOW_EXPERIMENT="spear-shield-security-trace"
 MLFLOW_INTERNAL_URL="https://mlflow.redhat-ods-applications.svc:8443/mlflow"
@@ -58,30 +28,7 @@ caller_token() {
   oc create token spear-eval-caller -n "${EVAL_NS}" --duration=2h
 }
 
-# pulls real (question, response, retrieved_contexts) rows straight out of
-# the coordinator's own mlflow traces and lands them in minio, one job, no
-# agent sandbox and no local file ever involved. mlflow is a plain server
-# here, confirmed live: any ordinary pod reaches it directly on its own
-# internal address with a real sa bearer token
-# (spear-coordinator-mlflow-caller, same credential the sandbox's own
-# MLFLOW_TRACKING_TOKEN already is, minted fresh here instead of read out
-# of a live pod) plus the real service ca bundle, it is a self signed cert
-# otherwise, "SSLCertVerificationError: self-signed certificate in
-# certificate chain", confirmed hitting it with no ca bundle at all. the
-# init container here writes the dataset to a shared emptyDir, the mc
-# container next to it (same image the old standalone upload job used)
-# pushes that straight into minio, ragas's own provider has no mlflow
-# aware dataset loading path of its own, confirmed reading its shipped
-# main.py, test_data_ref.s3 is genuinely the only shape it accepts
-#
-# runs in spear-agents, not minio: that is the one namespace the
-# coordinator image's own internal imagestream can be pulled from without
-# a new cross namespace system:image-puller grant, confirmed live, a
-# plain tag pull from another namespace came back "authentication
-# required". minio-root-creds is mirrored in with the existing
-# mirror_secret helper instead, same namespace boundary, opposite
-# direction, lib-common.sh already documents why a secretKeyRef needs
-# its own local copy
+# export mlflow traces to minio for ragas (job in spear-agents; mirror minio creds)
 export_and_upload_ragas_dataset() {
   log "exporting a fresh ragas dataset from real ${MLFLOW_EXPERIMENT} traces straight into minio"
   local job_ns="spear-agents"
@@ -260,22 +207,7 @@ submit_ibm_clear_job() {
 }
 EOF
 )"
-  # mlflow_experiment_name, not experiment_name: confirmed live reading the
-  # real evalhub api server's own compiled binary, it knows nothing named
-  # experiment_name or mlflow at all, only ever forwards "parameters" as an
-  # opaque map, this provider's own code happens to read this exact key
-  # back out of that map, that is the only reachable way in. makes
-  # ibm-clear save its own run straight to mlflow, including the real
-  # clear html report as a genuine artifact, confirmed live once this
-  # cluster's mlflow moved to serveArtifacts: true,
-  # manifests/spear-pipelines/03-mlflow.yaml. log_result_to_mlflow below
-  # finds this run by its own returned mlflow_run_id and only tags it into
-  # the cycle, it does not create a second one
-  #
-  # x-tenant spear-pipelines, not spear-eval: every job's adapter
-  # pod gets MLFLOW_WORKSPACE forced to its own x-tenant namespace, and
-  # spear-shield-security-trace lives in spear-pipelines's own mlflow
-  # workspace, confirmed live, see manifests/spear-eval/01-evalhub.yaml
+  # ibm-clear reads mlflow_experiment_name from parameters; x-tenant spear-pipelines
   log "submitting ibm-clear job (x-tenant ${PIPELINES_NS})"
   curl -sk -X POST \
     -H "Authorization: Bearer $(caller_token)" \
@@ -285,22 +217,7 @@ EOF
     "$(evalhub_url)/api/v1/evaluations/jobs"
 }
 
-# garak's "quick" benchmark, one dan probe, lite mode, confirmed live
-# against its own resolve_scan_profile output reading the real provider
-# image (timeout 600s in its own profile, actual run finished in 14s
-# against this cluster's real glm-53-flash). no parameters needed, the
-# profile already sets probe_spec/generations/target_type, garak's own
-# code builds an openai compatible generator straight from model.url when
-# no garak_config override is given, confirmed reading garak_adapter.py
-#
-# no mlflow_experiment_name here: confirmed live reading garak_adapter.py,
-# its own mlflow save only checks job_spec.experiment_name directly
-# (evalhub/adapter/callbacks.py), it has no parameters based bridge like
-# ibm-clear's, same structural dead end ragas hit, this result goes
-# through log_result_to_mlflow's own custom run path, not a native one
-#
-# x-tenant spear-eval, not spear-pipelines: no mlflow trace lookup
-# dependency here unlike ibm-clear, this is the simpler default tenant
+# garak quick profile; mlflow logging via log_result_to_mlflow (x-tenant spear-eval)
 submit_garak_job() {
   local body
   body="$(cat <<EOF
@@ -329,24 +246,7 @@ EOF
     "$(evalhub_url)/api/v1/evaluations/jobs"
 }
 
-# the fourth real evalhub provider, spear-confidential-data, see
-# PHASE3_PLAN.md section 7's own long writeup for the full story. mines
-# spear-shield-security-trace's own already recorded traces for answers
-# that leaked the planted vendor contract figures, no live agent call,
-# no fixed prompt list, same real data source ragas already reads.
-#
-# mlflow_url/mlflow_token/mlflow_ca_cert travel as plain benchmark
-# parameters, not model.auth: confirmed live (PHASE3_PLAN.md) this
-# adapter's job pod has no other usable channel for custom credentials,
-# same already accepted risk level the rest of this script's demo
-# credentials sit at. token minted fresh off spear-coordinator-mlflow-caller,
-# same identity export_and_upload_ragas_dataset already uses, the ca cert
-# comes off the same evalhub-mlflow-ca configmap that step already
-# ensures exists, created here too in case this function ever runs first
-#
-# x-tenant spear-eval, not spear-pipelines: this adapter opens its
-# own mlflow connection directly, no ibm-clear style sdk trace lookup
-# tying it to the pipelines tenant
+# scans mlflow traces for confidential data leaks; mlflow creds via benchmark parameters
 submit_confidential_data_job() {
   local job_ns="spear-agents"
   local mlflow_token mlflow_ca_cert body
@@ -361,9 +261,7 @@ submit_confidential_data_job() {
   fi
   mlflow_ca_cert="$(oc get configmap evalhub-mlflow-ca -n "${job_ns}" -o jsonpath='{.data.service-ca\.crt}')"
 
-  # built with python, not a bash heredoc: the ca cert's own real newlines
-  # break plain heredoc json quoting, confirmed the hard way earlier this
-  # session, json.dumps handles the escaping correctly
+  # python builds json so ca cert newlines escape correctly
   body="$(python3 - "${OGX_URL}" "${JUDGE_MODEL}" "${MLFLOW_INTERNAL_URL}" "${mlflow_token}" "${mlflow_ca_cert}" "${PIPELINES_NS}" "${MLFLOW_EXPERIMENT}" <<'PYEOF'
 import json
 import sys
@@ -400,19 +298,7 @@ PYEOF
     "$(evalhub_url)/api/v1/evaluations/jobs"
 }
 
-# polls a submitted job until evalhub itself reports completed/failed,
-# printing the final job json on stdout. 90s/5s used to be comfortably
-# loose, confirmed live it no longer is: ragas and ibm-clear are judged by
-# a real LLM against the real, steadily growing trace history
-# (export_and_upload_ragas_dataset/mlflow_traces_max_results both scale
-# with it), caught live scanning a real cycle's own mlflow runs after the
-# fact, ragas took 621s and ibm-clear took 92s, both past the old 90s
-# deadline, both silently dropped from that cycle with no error anywhere:
-# wait_for_job logged its own timeout warning same as always, but the
-# stale non-terminal body it returned has no "benchmarks" for
-# log_eval_to_mlflow.py's own loop to iterate, so it logged nothing and
-# said nothing either, the job itself still reported overall success.
-# 900s/5s leaves real headroom above the worst case measured so far
+# poll until completed/failed (ragas/ibm-clear can exceed 90s; use 900s budget)
 wait_for_job() {
   local tenant="$1" job_id="$2"
   local deadline=$((SECONDS + 900))
@@ -509,13 +395,7 @@ EOF
   oc logs "${pod}" -n "${job_ns}" | grep '^RUN_ID=' | sed 's/^RUN_ID=//'
 }
 
-# the missing write half of architecture.html's own "EvalCard auto
-# generated in MLflow" promise for providers with no native save path
-# reachable from the real job submission schema, confirmed live, see
-# log_eval_to_mlflow.py's own header for the full ragas vs ibm-clear
-# finding. runs the same plain pod shape export_and_upload_ragas_dataset
-# already proved, coordinator image, minted sa token, real service ca
-# bundle, no sandbox
+# log evalhub job json to mlflow when provider has no native save path
 log_result_to_mlflow() {
   local result_json="$1"
   local parent_run_id="${2:-}"

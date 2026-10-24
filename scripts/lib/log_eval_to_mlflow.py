@@ -1,30 +1,4 @@
-# logs one already completed evalhub job's real results into mlflow, the
-# missing half of architecture.html's own "EvalCard auto generated in
-# MLflow, zero extra work" promise for providers that have no native save
-# path of their own reachable from the real job submission schema.
-#
-# ibm-clear does have one now, confirmed live once this cluster's mlflow
-# was switched to serveArtifacts: true, its own parameters.mlflow_experiment_name
-# makes the provider itself create the run and upload its real clear html
-# report as a proper artifact, nothing this script does could improve on
-# that, so when a benchmark's own result already carries a real
-# mlflow_run_id (set by that native path), this script does not create a
-# second run, it only tags the existing one into this cycle's parent.
-#
-# ragas has no equivalent, confirmed by reading the real evalhub api
-# server's own compiled binary strings, neither "experiment_name" nor
-# "mlflow" appears anywhere in it, the go server only ever forwards
-# "parameters" as an opaque map, it has no concept of either field by
-# name. ibm-clear's own fallback works purely because its own adapter code
-# happens to read "mlflow_experiment_name" back out of that same opaque
-# parameters map, ragas's own adapter never looks there, only at
-# job_spec.experiment_name directly, a field nothing in the real request
-# path can ever populate. so ragas keeps using the full run creation below,
-# not a workaround, the only reachable option
-#
-# reads the job's own result from a local file already fetched by the
-# caller (no evalhub api call from inside this pod, that result is already
-# in hand by the time this runs)
+# log evalhub job result json to mlflow; skip new run if mlflow_run_id already set (ibm-clear)
 import json
 import os
 
@@ -49,15 +23,6 @@ class WorkspaceHeader(RequestHeaderProvider):
         return True
 
     def request_headers(self):
-        # the real constant mlflow's own rest_utils.WORKSPACE_HEADER_NAME
-        # uses is this exact casing, all caps mlflow, confirmed live
-        # reading the installed source. this registration has actually
-        # been a no-op the whole time this script worked, this job's own
-        # MLFLOW_WORKSPACE env var below already feeds the same value
-        # through mlflow's own env fallback, masking the wrong casing
-        # entirely, found while chasing the same bug for real in
-        # evalhub/spear-confidential-data-provider/adapter.py, where no
-        # such masking env var existed and it broke visibly
         return {"X-MLFLOW-WORKSPACE": WORKSPACE}
 
 

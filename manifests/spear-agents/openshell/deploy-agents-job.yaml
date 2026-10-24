@@ -1,30 +1,4 @@
-# runs the actual openshell sandbox create / provider import / policy
-# set sequence as a real in cluster Job, not from the installer's own
-# laptop through a port forward. adapted from the reference project's
-# own manifests/30-openshell/deploy-agents-job.yaml.tmpl
-# (dbs-sow-assessment/rhoai-agentic-demo), which already proved these
-# exact cli flags and the ordering live: runtime_class_name is
-# snake_case not the kubernetes field's own camelCase, providers_v2_enabled
-# has to be turned on globally before provider profile import works,
-# sandboxes have to be deleted before a provider attached to one can be
-# deleted (and that delete has to happen before the provider is touched
-# at all, not after, see scripts/09-install-worktracker-and-agents.sh's
-# own fix for getting this backwards the first time), and the
-# coordinator always stays on runc, never kata, because its supervisor
-# opens a csi spiffe workload api socket that a virtiofs mount inside a
-# kata guest cannot proxy (kata-containers/kata-containers#13162,
-# unmerged).
-#
-# one real difference from the reference: this still connects with a
-# plain --gateway-endpoint flag on every command rather than
-# "openshell gateway add ... --name incluster" plus a registered
-# OPENSHELL_GATEWAY env, the exact same connection style this project's
-# own local port forward already used successfully all along, no reason
-# to adopt a second, untested connection style just for this migration.
-#
-# jobs are immutable once created, so this gets deleted and recreated
-# on every run rather than applied in place, see the install script's
-# own deploy_sandboxed_agents
+# job to build and deploy agent sandboxes via openshell CLI
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -58,8 +32,8 @@ spec:
                 secretKeyRef:
                   name: spear-coordinator-guardrails-caller-token
                   key: token
-            # one token per sandbox, real in process mlflow tracing,
-            # PHASE3_PLAN.md section 4, see agents-mlflow-sa.yaml for
+            # one token per sandbox, real in process mlflow tracing
+            # yaml for
             # where these secrets come from
             - name: COORDINATOR_MLFLOW_TOKEN
               valueFrom:
@@ -86,7 +60,7 @@ spec:
 
               # sandboxes first: a provider attached to a sandbox refuses
               # to delete, a dead sandbox still counts as attached even
-              # once its own pod is long gone, confirmed live recovering
+              # once its own pod is long gone
               # from a cluster restart that killed both sandbox pods
               # outright
               for name in spear-retrieval spear-coordinator; do

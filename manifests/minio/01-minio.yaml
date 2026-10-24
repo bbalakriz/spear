@@ -1,18 +1,4 @@
-# standalone minio, own namespace. this is the one
-# s3 compatible store for phase 1: the document corpus (bucket
-# rag-documents, prefixes raw-intake/ and sanitized/) that the guardrails
-# sanitization step and autorag both read from and the data science
-# pipelines application's own artifact bucket (dsp-pipeline-artifacts),
-# see manifests/spear-pipelines/01-pipeline-server.yaml's externalStorage block.
-#
-# kept named minio, not renamed to spear-storage, per
-# NAMESPACE_MIGRATION_PLAN.md section 8: a single generic deployment with
-# no project specific logic in it, the churn of renaming every reference
-# was not worth it, only its placement changed, it still gets its own
-# dedicated namespace rather than staying bundled inside rag-phase1
-#
-# the minio-root-creds secret referenced below is generated once by
-# scripts/02-install-storage.sh (ensure_minio_root_secret).
+# minio for pipeline and corpus object storage
 apiVersion: v1
 kind: Namespace
 metadata:

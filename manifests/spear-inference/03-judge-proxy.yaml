@@ -1,43 +1,4 @@
-# fixes the answer_relevance llm judge metric that ai4rag's own
-# rag_templates_optimization component always computes (confirmed via
-# inspect_params.py against the real registered pipeline: "answer_relevance
-# is always computed" regardless of optimization_metric), and which was
-# failing on every single question of every pattern with
-# 'NoneType' object has no attribute 'strip' in
-# ai4rag/evaluator/llmaj_evaluator.py:_judge_row.
-#
-# root caused, not guessed: both foundation models
-# (openai/publishers/prelude-maas/models/glm-53-flash and
-# vllm-inference/Qwen3.6-35B-A3B) are reasoning models that spend their
-# entire token budget on a hidden chain of thought pass before ever
-# emitting the actual answer. llmaj_evaluator.py hardcodes
-# max_completion_tokens=256 for its structured json_schema judge calls,
-# not enough headroom for reasoning plus a real answer, so every judge
-# call hits finish_reason=length with message.content=None, confirmed
-# live by replaying the exact prompt ai4rag sends directly against ogx.
-#
-# also confirmed live: passing chat_template_kwargs={"enable_thinking":
-# false} in the request body suppresses the reasoning pass on both
-# models and they then return clean, valid json content well inside 256
-# tokens. ai4rag's own OGXFoundationModel.chat() has no hook to inject
-# this (its params model is a strict pydantic OGXModelParameters with
-# only max_completion_tokens/temperature, no passthrough field, checked
-# by reading ai4rag/rag/foundation_models/ogx.py directly out of the
-# odh-autorag-rhel9 image), and llmaj_evaluator.py's own kwargs are
-# hardcoded, so this cannot be fixed from any pipeline parameter or ogx
-# config, it is baked into the vendored image.
-#
-# the fix: this tiny transparent proxy sits between the
-# documents-rag-optimization-pipeline run and the real ogx service.
-# every request is forwarded byte for byte unchanged EXCEPT a POST
-# /v1/chat/completions whose body already carries
-# response_format.type == "json_schema" (i.e. only the judge's own
-# structured output calls, never real generation or embedding calls,
-# which do not use json_schema), which gets chat_template_kwargs
-# injected before forwarding. autorag-ogx-creds' OGX_CLIENT_BASE_URL
-# points here instead of straight at spear-ogx-service as of
-# 2026-09-27, see scripts/06-setup-autorag-secrets.sh and
-# PHASE1_PLAN.md.
+# sidecar judge proxy for ragas structured output (disable thinking on gemma judge)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -45,8 +6,8 @@ metadata:
   namespace: spear-inference
 data:
   proxy.py: |
-    # stdlib only on purpose, no pip install at pod startup to depend on,
-    # see the header comment in 03-judge-proxy.yaml for the full story.
+    # stdlib only on purpose, no pip install at pod startup to depend on
+    # see the header comment in 03-judge-proxy.yaml for the full story
     import json
     import urllib.request
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

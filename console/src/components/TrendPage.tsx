@@ -39,16 +39,10 @@ import { useEffect, useState } from 'react';
 
 const PROXY_PATH = '/api/proxy/plugin/spear-console/backend';
 
-// blue for "higher is better" lines, orange for "lower is better" ones,
-// the same two colors every card already used, just pinned explicitly now
-// so every segment of a broken line (see buildSegments below) stays the
-// same color instead of victory's own per child color cycling
+// pinned colors so broken line segments do not cycle per victory child
 const COLOR_HIGHER_BETTER = '#06c';
 const COLOR_LOWER_BETTER = '#ec7a08';
-// off white rather than pure white, the status tile title sits on the
-// console's own card background in both light and dark theme, pure
-// white (#fff) blows out against that background, this reads as a
-// clean near white title without the glare
+// off white title on card background in light and dark theme
 const COLOR_TILE_TITLE = '#f0f0f0';
 
 interface CycleBenchmark {
@@ -62,9 +56,7 @@ interface CycleBenchmark {
   report_url: string | null;
 }
 
-// the one job this page can act on directly, not just chart. kept as a
-// constant rather than inlined below so the "is this that card" checks
-// read the same everywhere they appear
+// only job this page can act on, not just chart
 const CONFIDENTIAL_LEAK_JOB = 'spear-shield-confidential-data-leak-scan';
 
 interface Cycle {
@@ -81,12 +73,7 @@ interface MetricDef {
   lowerIsBetter: boolean;
 }
 
-// every real metric each job type actually logs, confirmed live against
-// this project's own mlflow runs, not guessed. primary first in each
-// list, that is what a card opens on. ibm-clear's two agent._handle /
-// agent.chat_completion entries are this cluster's real current agent
-// names, see log_eval_to_mlflow.py and ibm-clear's own native save path,
-// a third agent showing up later would need a third entry added here
+// mlflow metric keys per job; first entry is the default dropdown
 const METRICS_BY_JOB: Record<string, MetricDef[]> = {
   'spear-shield-ragas-rag-eval': [
     { key: 'faithfulness', label: 'Faithfulness', lowerIsBetter: false },
@@ -151,10 +138,7 @@ function benchmarkFor(cycle: Cycle, jobName: string): CycleBenchmark | undefined
   return cycle.benchmarks.find((b) => b.job_name === jobName);
 }
 
-// the most recent cycle that actually ran this job, independent of which
-// metric is selected in the dropdown, used for the details panel, the
-// report link, and the status tiles at the top of the page, all three
-// read the exact same lookup rather than each doing their own search
+// latest cycle for this job, shared by tiles, details and report link
 function latestCycleAndBenchmarkFor(
   cycles: Cycle[],
   jobName: string,
@@ -177,15 +161,7 @@ interface SeriesPoint {
   benchmark: CycleBenchmark;
 }
 
-// one point per cycle that actually logged this metric, x kept as the
-// real position across every fetched cycle (not just the ones with data)
-// so a gap in the real history shows up as a real gap, split into
-// contiguous segments rather than one array: a plain victory line drawn
-// straight across a skipped cycle would draw a long, misleading slope
-// between two real but non adjacent points, exactly what made ragas look
-// like it was sliding toward zero when the real story was two cycles
-// with no ragas data at all (the wait_for_job timeout bug, since fixed)
-// followed by one real new data point
+// keep x across gap cycles; segments avoid misleading slopes across missing data
 function buildSegments(cycles: Cycle[], jobName: string, metricKey: string): SeriesPoint[][] {
   const points: (SeriesPoint | null)[] = cycles.map((cycle, i) => {
     const bench = benchmarkFor(cycle, jobName);
@@ -209,9 +185,7 @@ function buildSegments(cycles: Cycle[], jobName: string, metricKey: string): Ser
   return segments;
 }
 
-// a one glance status tile for a single job, reads the same latest
-// benchmark every trend card below already reads, this is not a separate
-// api call or a separate source of truth, just a compact summary of it
+// compact summary of the same latest benchmark the trend cards use
 const JobStatusTile = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) => {
   const latest = latestCycleAndBenchmarkFor(cycles, jobName);
   const passValue = latest?.benchmark.metrics.pass;
@@ -263,25 +237,12 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
   const [metricKey, setMetricKey] = useState(metricDefs[0].key);
   const metric = metricDefs.find((m) => m.key === metricKey) ?? metricDefs[0];
 
-  // the console's own proxy route sends back "content-security-policy:
-  // sandbox;" on anything that is not plain json, confirmed live, which
-  // blocks every inline script a navigated-to page tries to run, so a
-  // plain link straight to the proxy url renders the real clear_results.html
-  // as an empty shell, none of its own data ever shows up. fetching the
-  // text ourselves and handing it to an iframe's srcDoc sidesteps that
-  // entirely, srcDoc is not a navigation response so no csp header from
-  // the fetch applies to it, and the sandbox attribute set directly on
-  // the iframe below is this component's own choice, allow-scripts only,
-  // no allow-same-origin, the report needs no same origin access at all
+  // proxy csp blocks navigated html; fetch + iframe srcDoc sidesteps that
   const [reportOpen, setReportOpen] = useState(false);
   const [reportHtml, setReportHtml] = useState<string | null>(null);
   const [reportError, setReportError] = useState('');
 
-  // the closed loop button, confidential data leak card only: acts on
-  // this latest already completed scan's own job id, never triggers a
-  // fresh scan itself. spear-console-backend does the real read + patch
-  // in process against the real coordinator-agent-config configmap, see
-  // apply_closed_loop_patterns in console-backend/server.py
+  // closed loop patches coordinator config from this scan job id only
   const [closedLoopBusy, setClosedLoopBusy] = useState(false);
   const [closedLoopResult, setClosedLoopResult] = useState<{
     added: string[];
@@ -305,12 +266,7 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
     setReportOpen(true);
     setReportHtml(null);
     setReportError('');
-    // consoleFetchText only actually returns raw text when the response's
-    // content type is exactly text/plain, anything else (our html included)
-    // gets run through JSON.parse and blows up on the leading "<", confirmed
-    // live, that is why a plain browser fetch is used here instead, the
-    // console session cookie alone is enough to authenticate this same
-    // origin request, no console specific headers are needed for a GET
+    // consoleFetchJSON cannot load html; same origin fetch + cookie is enough
     fetch(`${PROXY_PATH}${reportUrl}`, { credentials: 'include' })
       .then((res) => {
         if (!res.ok) throw new Error(`status ${res.status}`);
@@ -326,10 +282,7 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
   const latestBenchmark = latestBenchmarkFor(cycles, jobName);
   const color = metric.lowerIsBetter ? COLOR_LOWER_BETTER : COLOR_HIGHER_BETTER;
 
-  // a dashed reference line at the pass/fail threshold, only drawn when
-  // the selected metric is the one the job's own threshold actually
-  // applies to (log_eval_to_mlflow.py only ever logs one threshold, for
-  // whichever metric its own primary_score_metric param names)
+  // threshold line only when selected metric matches primary_score_metric
   const thresholdValue =
     latestBenchmark?.params.primary_score_metric === metric.key
       ? Number(latestBenchmark.params.threshold)
@@ -337,11 +290,7 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
   const hasThreshold = !Number.isNaN(thresholdValue);
 
   return (
-    // height 100% so every card in the same grid row bottoms out flush
-    // with its neighbor, a grid row stretches the item wrapper to the
-    // tallest card's height on its own, but the card itself still needs
-    // telling to actually fill that wrapper rather than sizing to its
-    // own, shorter, content
+    // height 100% fills the grid row
     <Card style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <CardTitle>
         <Flex
@@ -364,11 +313,7 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
           )}
         </Flex>
       </CardTitle>
-      {/* flex column, flex 1 so this fills whatever extra height the
-          card picked up from height 100% above, the bottom action row
-          below gets marginTop auto so it docks to this same bottom edge
-          on every card in the row instead of floating wherever its own
-          content happens to end */}
+      {/* flex column; marginTop auto docks the action row to the card bottom */}
       <CardBody style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {jobName === CONFIDENTIAL_LEAK_JOB &&
           latestBenchmark &&
@@ -418,12 +363,7 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
                 containerComponent={
                   <ChartVoronoiContainer
                     labels={({ datum }: { datum: Partial<SeriesPoint> }) => {
-                      // the dashed threshold line's own two points carry
-                      // just x/y, no cycle or benchmark at all, the voronoi
-                      // container's hover lookup runs across every child's
-                      // data including that one, so this has to handle a
-                      // datum with no benchmark rather than assume every
-                      // hovered point came from a real eval cycle
+                      // threshold points have no benchmark on the datum
                       if (!datum.benchmark) return `threshold: ${formatValue(datum.y as number)}`;
                       return `${formatCycleLabel(datum.cycle)}\n${metric.label}: ${formatValue(datum.y as number)}\nmodel: ${shortModelName(
                         datum.benchmark.params.model ?? datum.benchmark.params.model_name,
@@ -456,16 +396,12 @@ const TrendCard = ({ jobName, cycles }: { jobName: string; cycles: Cycle[] }) =>
                 {segments.map((segment, i) => (
                   <ChartLine key={i} data={segment} style={{ data: { stroke: color } }} />
                 ))}
-                {/* a single new cycle after a gap is otherwise invisible,
-                    a line needs two points to draw at all, these dots
-                    make every real data point visible on its own */}
+                {/* dots so a lone point after a gap stays visible */}
                 <ChartScatter data={allPoints} style={{ data: { fill: color } }} size={3} />
               </Chart>
             </div>
 
-            {/* one compact line instead of a description list grid, a
-                narrower 2 up card has no room to spare for a term/value
-                pair taking its own row per field */}
+            {/* compact metadata line for narrow cards */}
             {latestBenchmark && (
               <Content
                 component="small"
@@ -563,10 +499,7 @@ export default function TrendPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    // a stale response from a superseded limit change should never
-    // overwrite a newer one, the cancelled flag below guards that rather
-    // than resetting cycles to null synchronously up front, which would
-    // trigger an extra cascading render for no real benefit here
+    // ignore stale responses after limit changes
     let cancelled = false;
     consoleFetchJSON(`${PROXY_PATH}/trend/eval-cycles?limit=${limit}`)
       .then((data: { cycles: Cycle[] }) => {
@@ -630,9 +563,7 @@ export default function TrendPage() {
                 </FlexItem>
               ))}
             </Flex>
-            {/* 2 x 2 so all four cards are visible together on one page,
-                a single scrolling column of four full width charts was
-                the thing actually forcing the long scroll */}
+            {/* 2x2 grid avoids a long single column scroll */}
             <Grid hasGutter>
               {Object.keys(METRICS_BY_JOB).map((jobName) => (
                 <GridItem key={jobName} span={6}>

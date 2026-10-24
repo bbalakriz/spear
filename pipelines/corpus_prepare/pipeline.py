@@ -1,27 +1,16 @@
-"""spear-corpus-prepare-pipeline: the one kfp pipeline for the whole ingestion
-flow, per PHASE1_PLAN.md section 3. every step here is real: list intake,
-abac validation/quarantine, guardrails sanitization, and (as of the sdg
-hub wiring) a real sdg hub generated evaluation dataset against
-spear-ogx's chat model. the one piece still deliberately kept out of
-this pipeline is the actual AutoRAG optimization run itself: that is a
-separately registered kfp pipeline (documents-rag-optimization-pipeline,
-auto registered on every dspa pipeline server) with its own long running
-job semantics, triggered by pipelines/autorag/run_autorag.py
-against this pipeline's eval dataset output, not embedded in this dag.
+"""spear-corpus-prepare-pipeline: list intake, abac validation/quarantine,
+guardrails sanitization, and a sdg hub generated evaluation dataset
+against spear-ogx's chat model. the actual AutoRAG optimization run is a
+separately registered pipeline (documents-rag-optimization-pipeline),
+triggered by pipelines/autorag/run_autorag.py against this pipeline's
+eval dataset output, not embedded in this dag.
 
-this pipeline never writes to rag_chunks anymore, on purpose, since
-2026-09-28 (see PHASE1_PLAN.md). it used to, with a fixed size placeholder
-chunker, before autorag ever had a chance to determine a winning
-chunking and embedding recipe against the eval set this same pipeline
-produces, which is backwards relative to how autorag is actually meant
-to be used: pick the winner first, then index the full corpus with that
-winner's exact settings. the real indexing now lives in
-pipelines/corpus_index/pipeline.py, run once a winning pattern
-exists for a batch, not here.
+this pipeline never writes to rag_chunks: pick the autorag winner first,
+then index the full corpus with that winner's exact settings, see
+pipelines/corpus_index/pipeline.py for that step.
 
-run `python3 pipeline.py` to compile spear-corpus-prepare-pipeline.yaml, or
-`python3 compile_and_run.py` to also upload and trigger a run against
-spear-dspa (see that file for the pipeline server auth/upload code).
+run `python3 pipeline.py` to compile spear-corpus-prepare-pipeline.yaml,
+or `python3 compile_and_run.py` to also upload and trigger a run.
 """
 from typing import NamedTuple
 
@@ -45,11 +34,7 @@ MLFLOW_WORKSPACE_DEFAULT = "spear-pipelines"
 MLFLOW_EXPERIMENT_NAME_DEFAULT = "spear-corpus-prepare"
 EVAL_PREFIX_DEFAULT = "autorag-eval/"
 OGX_BASE_URL_DEFAULT = "http://spear-ogx-service.spear-inference.svc.cluster.local:8321"
-# glm-53-flash's maas gateway moved to root, body based routing on
-# 2026-09-27 (see PHASE1_PLAN.md and pipelines/autorag/
-# run_autorag.py), restored here once that was confirmed live through
-# ogx itself, double "openai/" prefixed for the same litellm strip
-# reason explained in generate_eval_dataset's own docstring below
+# double "openai/" prefix for litellm strip via sdg hub; see generate_eval_dataset docstring
 GENERATION_MODEL_DEFAULT = "openai/publishers/prelude-maas/models/glm-53-flash"
 
 
@@ -62,7 +47,7 @@ def list_intake_documents(
     quarantined_docs: dsl.Output[dsl.Dataset],
 ) -> NamedTuple("Outputs", [("valid_count", int), ("quarantined_count", int)]):
     """reads the batch manifest and the actual objects under raw-intake/,
-    then applies the abac validation gate from PHASE1_PLAN.md section 4:
+    then applies the abac validation gate:
     doc_id, title, source, clearance_level always required, dept or team
     required once clearance_level isn't general, data_owner always
     required. anything failing that, missing its file in the bucket
@@ -157,8 +142,7 @@ def sanitize_documents(
     """calls the already deployed NemoGuardrails cr's /v1/guardrail/checks
     per document, picking internal-docs-config (the default, omit
     config_id) or vendor-submission-config based on the manifest's
-    source field, exactly the config_id switch PHASE1_PLAN.md section 2
-    describes. documents that pass get copied to sanitized/, the one
+    source field (internal vs vendor config_id). documents that pass get copied to sanitized/, the one
     thing autorag is ever allowed to sample from. the seeded vendor dpa
     document with its embedded override attempt is expected to end up in
     blocked, not sanitized/, that is this step working as designed, not
@@ -252,38 +236,23 @@ def generate_eval_dataset(
     sanitize_report: dsl.Input[dsl.Dataset],
     eval_dataset: dsl.Output[dsl.Dataset],
 ) -> NamedTuple("Outputs", [("qa_pairs_created", int), ("eval_dataset_key", str)]):
-    """PHASE1_PLAN.md section 3, step 3: real sdg hub eval dataset
-    generation, replacing the old autorag_status_stub. uses sdg hub's
-    built in "RAG Evaluation Dataset" flow (registry id loud-dawn-245,
-    required columns document + document_outline, output columns
-    question/response/ground_truth_context) against every document that
-    passed guardrails sanitization, one document per row so each
-    generated question can still be traced back to the doc_id it came
-    from.
+    """sdg hub's built in "RAG Evaluation Dataset" flow (registry id
+    loud-dawn-245, columns document + document_outline in, question/
+    response/ground_truth_context out) against every sanitized document,
+    one row per document so each question traces back to its doc_id.
 
-    document_outline is not a separate authored field anywhere upstream,
-    so this uses each document's manifest title as a lightweight stand
-    in, honest simplification, not sdg hub's fault.
+    document_outline is not authored anywhere upstream, uses the
+    manifest title as a lightweight stand in instead.
 
-    talks to spear-ogx over its in cluster service url. one real,
-    empirically confirmed gotcha: sdg hub calls litellm's `openai/`
-    custom api_base provider routing, which strips exactly one leading
-    path segment (up to the first '/') before sending the model field
-    to ogx, so the model string passed in here always needs one extra
-    leading "openai/" over whatever id ogx itself expects. ogx's own
-    foundation model id for glm-53-flash is
-    "openai/publishers/prelude-maas/models/glm-53-flash" (the long form
-    is maas's own body based routing id, see
-    pipelines/autorag/run_autorag.py and PHASE1_PLAN.md for why),
-    so this needs a double prefixed
-    "openai/openai/publishers/prelude-maas/models/glm-53-flash" to
-    survive the strip.
+    sdg hub calls litellm's `openai/` custom api_base routing, which
+    strips one leading path segment before sending the model field to
+    ogx, so the model string here needs an extra leading "openai/" over
+    whatever id ogx itself expects (glm-53-flash's long form id, see
+    pipelines/autorag/run_autorag.py, becomes double prefixed here).
 
-    writes the AutoRAG test-data json schema
-    (question/correct_answers/correct_answer_document_ids) both as this
-    step's own kfp artifact and to minio under eval_prefix, so
-    pipelines/autorag/run_autorag.py can point the real AutoRAG
-    kfp pipeline's test_data_key straight at it.
+    writes the AutoRAG test-data json schema both as this step's kfp
+    artifact and to minio under eval_prefix, so run_autorag.py can
+    point test_data_key straight at it.
     """
     import json
     import os
@@ -314,15 +283,10 @@ def generate_eval_dataset(
         )["Body"].read().decode("utf-8")
         sanitized_docs.append({
             "doc_id": doc["doc_id"],
-            # ai4rag's own docling chunker sets each retrieved chunk's
-            # document_id metadata to the raw filename (doc.name), never
-            # our abac manifest's doc_id. correct_answer_document_ids
-            # has to be written in that same namespace or
-            # context_correctness is deterministically 0 regardless of
-            # retrieval quality, confirmed by reading
-            # ai4rag/rag/chunking/docling_chunker.py and
-            # ai4rag/core/experiment/utils.py directly out of the
-            # odh-autorag-rhel9 image.
+            # ai4rag's docling chunker sets document_id to the raw
+            # filename, never our abac manifest doc_id;
+            # correct_answer_document_ids must use that same namespace
+            # or context_correctness is deterministically 0
             "filename": row["filename"],
             "document": content,
             "document_outline": doc.get("title", doc["doc_id"]),
@@ -354,11 +318,7 @@ def generate_eval_dataset(
         # answer as not grounded in the context. on a small batch that
         # can legitimately empty the whole dataset out, sdg hub raises
         # EmptyDatasetError rather than returning zero rows. a couple of
-        # retries absorb ordinary llm sampling variance (confirmed live:
-        # the exact same single-document flow succeeded cleanly in an
-        # earlier standalone run), if every attempt still comes back
-        # empty this is reported as a real zero, never faked, not a
-        # pipeline crash.
+        # retries absorb llm sampling variance; all empty is a real zero, not a crash
         result = None
         attempts = 3
         for attempt in range(1, attempts + 1):
@@ -418,20 +378,15 @@ def log_ingestion_report(
     sanitize_report: dsl.Input[dsl.Dataset],
     eval_dataset: dsl.Input[dsl.Dataset],
 ) -> str:
-    """PHASE1_PLAN.md section 3, step 8: one json artifact aggregating
-    every earlier step's real output, logged to the shared mlflow
-    instance under the spear-pipelines workspace (X-MLflow-Workspace header,
-    see manifests/spear-pipelines/03-mlflow.yaml for why that header is
-    required on this build). this is what the eventual console plugin
-    backend reads, nothing there should ever recompute anything this
-    step already produced.
+    """one json artifact aggregating every earlier step's output, logged
+    to mlflow under the spear-pipelines workspace (X-MLflow-Workspace
+    header, see manifests/spear-pipelines/03-mlflow.yaml). this is what
+    the console backend reads, nothing there recomputes this.
 
-    uses raw rest calls plus a direct boto3 artifact write instead of the
-    mlflow client package: the client's http layer doesn't have a clean
-    way to attach the workspace header this build requires per request,
-    and we already have the minio credentials this run's artifact_uri
-    resolves into on this bucket, so writing directly there is simpler
-    than adding a whole client dependency for one file.
+    uses raw rest calls plus a direct boto3 artifact write instead of
+    the mlflow client package: the client's http layer has no clean way
+    to attach the workspace header, and we already have the minio
+    credentials artifact_uri resolves into.
     """
     import json
     import os

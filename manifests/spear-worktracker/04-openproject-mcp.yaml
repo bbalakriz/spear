@@ -1,27 +1,4 @@
-# same MCPServer / HTTPRoute / MCPServerRegistration / MCPVirtualServer
-# shape as the reference's own manifests/10-agent-pack/01-mcp-calculator.yaml,
-# rebuilt for the real openproject backend. userSpecificList: Enabled
-# below is the one field that shape did not need, this server genuinely
-# returns different tool availability per caller in principle (checked
-# live against oc explain mcpserverregistration.spec, section 4), even
-# though today both tools are always listed and the actual gate is
-# tool level rbac at the gateway, not per user tools/list filtering.
-#
-# NAMESPACE_MIGRATION_PLAN.md: moved here from spear-agents, into
-# its own namespace for the first time, this is the one file in the
-# whole migration that actually crosses a real gateway api boundary, not
-# just a dns hostname. two real consequences, both handled below, re
-# verify both live once applied, not assumed:
-#   1. the HTTPRoute's own parentRef now points at a Gateway in a
-#      different namespace (spear-agents), which only works if
-#      that Gateway's own allowedRoutes.namespaces.from is All, not
-#      Same, see manifests/spear-agents/05-gateway.yaml
-#   2. the HTTPRoute's own backendRef now points at a Service in a
-#      different namespace (spear-mcp-guard-proxy, staying in
-#      spear-agents), which needs both an explicit namespace
-#      field on the backendRef itself (added below) and a
-#      ReferenceGrant object living in spear-agents permitting
-#      it, see manifests/spear-agents/08-mcp-guard-proxy.yaml
+# openproject mcp server and route in spear-worktracker
 apiVersion: mcp.x-k8s.io/v1alpha1
 kind: MCPServer
 metadata:
@@ -109,7 +86,7 @@ spec:
         - path:
             type: PathPrefix
             value: /
-      # same direct-bypass close as calculator-mcp's own httproute,
+      # same direct-bypass close as calculator-mcp's own httproute
       # section 4: this header only reaches the backend for a real
       # client's tools/call, hairpinned by envoy's ext_proc, never for
       # the broker's own separate admin connection
@@ -123,7 +100,7 @@ spec:
         # points at the guard proxy, not this server directly, see
         # manifests/spear-agents/08-mcp-guard-proxy.yaml for why
         # this hop exists. cross namespace now, explicit namespace
-        # field plus a ReferenceGrant in spear-agents required,
+        # field plus a ReferenceGrant in spear-agents required
         # see this file's own header comment
         - name: spear-mcp-guard-proxy
           namespace: spear-agents
@@ -137,12 +114,7 @@ metadata:
 spec:
   prefix: openproject_
   hint: real work packages in the self hosted openproject data governance project
-  # confirmed real via oc explain, section 4: forwards each caller's own
-  # session headers on every tools/list rather than caching one service
-  # account view. this server's own tools/list is not yet caller
-  # dependent, but this is the honest, forward compatible setting given
-  # the actual per persona rbac lives at the gateway's tool level check,
-  # not in this server's tool catalog
+  # forward caller headers on tools/list (gateway owns per persona rbac)
   userSpecificList: Enabled
   credentialRef:
     name: spear-openproject-mcp-backend-secret

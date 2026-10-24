@@ -21,9 +21,7 @@ import { Dispatch, ReactNode, SetStateAction, useEffect, useRef, useState } from
 
 const PROXY_PATH = '/api/proxy/plugin/spear-console/backend';
 
-// how long each revealed probe stays on screen before the next one
-// appears, both sandbox columns reveal the same probe at the same time,
-// that lockstep is the whole point of a side by side compare
+// reveal timing; both columns advance in lockstep
 const REVEAL_STEP_MS = 700;
 
 interface SandboxInfo {
@@ -56,8 +54,7 @@ interface CompareResult {
   groups: ProbeGroup[];
 }
 
-// one command a visitor typed themselves, run against both real sandboxes
-// at once, same pod pair the scripted probes above already use
+// visitor typed command run on both sandboxes at once
 interface TypedBoth {
   command: string;
   coordinator_output: string;
@@ -83,9 +80,7 @@ interface Scenario {
   enforcedBy: string;
 }
 
-// display order for the compare groups, mirrors COMPARE_GROUP_IDS on the
-// backend, a run all walks this same order so it lands identically to
-// pressing every one of these buttons in order by hand
+// mirrors backend COMPARE_GROUP_IDS order for run all
 const COMPARE_GROUPS: { id: string; label: string }[] = [
   { id: 'runtime-isolation', label: 'Runtime Isolation' },
   { id: 'resource-visibility', label: 'Resource Visibility' },
@@ -93,10 +88,7 @@ const COMPARE_GROUPS: { id: string; label: string }[] = [
   { id: 'least-privilege-egress', label: 'Least Privilege Egress' },
 ];
 
-// the two scenarios below the compare grid test caller identity and tool
-// rbac across real human personas, not sandbox runtime isolation, folding
-// them into the two runtime diff above would misrepresent what they
-// actually check, so they keep their own single terminal card format
+// identity and mcp rbac demos, separate from runtime compare grid
 const ACCESS_CONTROL_SCENARIOS: Scenario[] = [
   {
     id: 'workload-identity',
@@ -120,9 +112,7 @@ const ACCESS_CONTROL_SCENARIOS: Scenario[] = [
   },
 ];
 
-// terminal chrome, three dots in the usual red/yellow/green, a fixed
-// monospace body with its own dark background regardless of the console's
-// own light/dark theme, a terminal should always look like a terminal
+// fixed dark terminal chrome regardless of console theme
 const TerminalWindow = ({ title, children }: { title: string; children: ReactNode }) => (
   <div
     style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid #000', height: '100%' }}
@@ -155,10 +145,7 @@ const TerminalWindow = ({ title, children }: { title: string; children: ReactNod
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
         fontSize: '0.8rem',
         padding: '0.85rem 1rem',
-        // tall enough up front to hold all four groups side by side without
-        // its own scrollbar, the page itself scrolls instead, so a visitor
-        // comparing two columns never has to scroll one column out of sync
-        // with the other
+        // min height fits all groups; page scrolls so columns stay aligned
         minHeight: '56rem',
       }}
     >
@@ -196,8 +183,7 @@ const OutputLine = ({ output, ok = true }: { output: string; ok?: boolean }) => 
   </div>
 );
 
-// the group divider line that appears once per group inside both
-// terminals, reads as a section break in an otherwise continuous session
+// section break between probe groups in the terminal
 const GroupDivider = ({ label }: { label: string }) => (
   <Content
     component="small"
@@ -216,17 +202,7 @@ const GroupDivider = ({ label }: { label: string }) => (
   </Content>
 );
 
-// one probe block inside a terminal: the comment line carries the
-// probe's own verdict so each side stays self contained, same prompt and
-// output styling the rest of the page already uses.
-//
-// a couple of probe commands (runtime-class) are written backend side
-// with a literal {pod} placeholder rather than one pod's own real name
-// baked in, since the same probe object backs both columns and the two
-// columns have two different real pod names. podName, when given, is
-// this column's own real name from the identity call that already ran
-// on mount, substituted here so the terminal never shows a raw
-// placeholder a visitor could not actually run themselves.
+// podName substitutes {pod} in shared probe commands per column
 const ProbeBlock = ({
   probe,
   output,
@@ -264,8 +240,7 @@ const RuntimeBadge = ({ runtimeClass }: { runtimeClass: string }) => {
   );
 };
 
-// a free, editable prompt shared by both sandbox columns, enter runs the
-// typed command against both real pods at once, nothing canned about it
+// shared prompt; enter execs on both pods
 const DualPromptInput = ({
   value,
   busy,
@@ -322,17 +297,14 @@ const DualPromptInput = ({
 export default function UnderTheHoodPage() {
   const { t } = useTranslation('plugin__spear-console');
 
-  // pod identity for both terminals, fetched once on mount, no exec
-  // involved, so the two panels already show who they are before anyone
-  // presses a single run button
+  // sandbox pod identity fetched once on mount
   const [identity, setIdentity] = useState<Pick<
     CompareResult,
     'namespace' | 'coordinator' | 'retrieval'
   > | null>(null);
   const [identityError, setIdentityError] = useState('');
 
-  // one group's own result, keyed by group id, present only once that
-  // group's own button (or run all) has actually run it
+  // compare results per group id after that group runs
   const [groupResults, setGroupResults] = useState<Record<string, ProbeGroup>>({});
   const [groupRevealed, setGroupRevealed] = useState<Record<string, number>>({});
   const [compareError, setCompareError] = useState('');
@@ -344,8 +316,7 @@ export default function UnderTheHoodPage() {
   const [typedBothBusy, setTypedBothBusy] = useState(false);
   const timers = useRef<number[]>([]);
 
-  // the two access control scenarios below, same per scenario state shape
-  // this page already used before this redesign
+  // per scenario demo results below the compare grid
   const [results, setResults] = useState<Record<string, DemoResult>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [scenarioRevealed, setScenarioRevealed] = useState<Record<string, number>>({});
@@ -361,10 +332,7 @@ export default function UnderTheHoodPage() {
       .catch((err: Error) => setIdentityError(err.message));
   }, []);
 
-  // runs one group for real and resolves once its own reveal animation
-  // has finished, run all below just walks every group through this same
-  // function one at a time so a run all lands exactly like pressing
-  // every button in order by hand
+  // run one compare group; run all awaits this in COMPARE_GROUPS order
   const runGroup = (groupId: string): Promise<void> => {
     setCompareError('');
     setRunningGroup(groupId);
@@ -457,9 +425,7 @@ export default function UnderTheHoodPage() {
       .finally(() => setBusyId(null));
   };
 
-  // canonical top to bottom order regardless of which button was
-  // actually clicked first, a lone group run lands in the same place a
-  // run all would have put it
+  // render groups in COMPARE_GROUPS order
   const groupsToRender = COMPARE_GROUPS.map((def) => ({
     group: groupResults[def.id],
     visibleCount: groupRevealed[def.id] ?? 0,

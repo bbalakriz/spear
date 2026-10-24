@@ -1,37 +1,24 @@
 """triggers a real run of documents-rag-optimization-pipeline, AutoRAG's
-own kfp pipeline, which rhoai auto registers on every dspa pipeline
-server (confirmed via official docs, not reverse engineered), rather
-than reimplementing autorag's dashboard flow ourselves.
+own kfp pipeline, rhoai auto registers it on every dspa pipeline server,
+rather than reimplementing autorag's dashboard flow ourselves.
 
-mirrors corpus_prepare/compile_and_run.py's auth pattern (the caller's
-own `oc whoami -t` token, no separate pipeline server credential) but
-does not compile or upload anything: this pipeline already exists on
-spear-dspa, this script only looks it up by name and runs it.
+mirrors corpus_prepare/compile_and_run.py's auth pattern (caller's own
+`oc whoami -t` token) but does not compile or upload anything, this
+pipeline already exists on spear-dspa.
 
-parameter names below come from actually reading this pipeline's own
-live registered input definitions on this cluster (see
-inspect_params.py), not from the compiled ir pulled from github earlier
-in this project's investigation: that github copy (branch
-rhoai-3.4-fixed) turned out to describe an older parameter shape
-(llama_stack_secret_name, llama_stack_vector_io_provider_id,
-embeddings_models) that this cluster's actually registered version has
-since simplified to ogx_secret_name, vector_io_provider_id and
-embedding_models. always trust the live registration over any external
-copy.
+parameter names come from this pipeline's live registered input
+definitions (see inspect_params.py), not the compiled ir pulled from
+github, that copy's parameter shape (llama_stack_secret_name etc) is
+older than what this cluster's registered version actually expects
+(ogx_secret_name, vector_io_provider_id, embedding_models). always
+trust the live registration over any external copy.
 
-parameters point at:
-  - sanitized/ in the raw_bucket as the corpus autorag is allowed to
-    index (the sanitized only boundary sanitize_documents itself
-    enforces, see corpus_prepare/pipeline.py)
-  - the eval dataset corpus_prepare_pipeline's generate_eval_dataset
-    step wrote to autorag-eval/<batch_id>_test_data.json
-  - the pgvector vector_io provider already live and healthy on
-    spear-ogx (confirmed via a real /v1/providers call)
-  - both foundation chat models plus the embedding model, all using the
-    exact ids ogx's own /v1/models exposes (confirmed live), not the
-    litellm double prefixed form sdg_hub needed: autorag talks to ogx
-    directly by its own client, not through litellm's openai/ custom
-    api_base routing, so no double prefix is needed here.
+parameters point at: sanitized/ in raw_bucket (the sanitized only
+boundary sanitize_documents enforces), the eval dataset
+generate_eval_dataset wrote to autorag-eval/<batch_id>_test_data.json,
+the pgvector vector_io provider on spear-ogx, and both chat models plus
+the embedding model using ogx /v1/models ids directly, not sdg_hub's
+litellm double prefix, autorag talks to ogx by its own client.
 
 usage: source .venv-kfp/bin/activate && python run_autorag.py [batch_id]
 """
@@ -51,64 +38,23 @@ S3_SECRET_NAME = "autorag-s3-creds"
 OGX_SECRET_NAME = "autorag-ogx-creds"
 VECTOR_IO_PROVIDER_ID = "pgvector"
 
-# ids exactly as returned by ogx's own /v1/models, confirmed live.
-# the embedding model changed on 2026-09-27: nomic-embed-text-v2-moe via
-# litemaas is hard capped at 512 tokens server side (below the 700 token
-# minimum this pipeline itself requires), replaced with a self hosted
-# tei server serving nomic-embed-text-v1.5 at a real 8192 token context,
-# see manifests/spear-inference/01-ogxserver.yaml and
-# 02-embed-server.yaml
-#
-# glm-53-flash was genuinely unusable on 2026-09-28: ai4rag's own search
-# space preparation step checks ogx's /v1/models listing (never makes a
-# real chat completion call itself), and glm-53-flash had not appeared
-# in that listing yet, so the run failed with
-# `SearchSpaceValueError: Provided models of type 'llm' are not
-# registered in OGX: ['openai/publishers/prelude-maas/models/
-# glm-53-flash']`, see PHASE1_PLAN.md. routable is not the same thing as
-# registered, autorag only ever cares about the latter. this was fixed
-# on the ogx side (model listing now includes it, confirmed live in a
-# later session after an intervening pod restart), so glm-53-flash is
-# back in this list.
-#
-# note: even with both models correctly accepted into the search space
-# (confirmed live in search_space_prep_report's foundation_model axis),
-# a given run's actual 8 patterns can still end up all using one model.
-# that is ai4rag's own GAMOptimizer, a seeded surrogate model search
-# capped at max_evals=8 over a combinatorial space of hundreds of
-# chunking/retrieval/model combinations, not a config bug here. confirmed
-# live for one real run where all 8 real objective function evaluations
-# logged foundation_model=glm-53-flash, qwen3.6-35b-a3b never sampled.
+# ogx /v1/models ids, registered not merely routable; embedding is nomic
+# embed v1.5 (v2 moe capped at 512 tokens). GAMOptimizer may sample one
+# foundation model for all patterns in a short run
 GENERATION_MODELS = [
     "vllm-inference/Qwen3.6-35B-A3B",
     "openai/publishers/prelude-maas/models/glm-53-flash",
 ]
-# only 1 embedding model, not the section 5 spec's 2: confirmed by
-# reading ogx's own baked in config.yaml directly that
-# registered_resources.models has exactly one static embedding entry
-# templated off scalar EMBEDDING_MODEL/EMBEDDING_PROVIDER_MODEL_ID/
-# EMBEDDING_DIMENSION env vars, not a list, unlike the two independent
-# generation slots (remote::openai plus remote::vllm). this vendored
-# ogx build structurally cannot expose a second embedding model at the
-# same time, a proxy in front of it (the same trick used for the judge
-# fix) cannot help since /v1/models would still only ever list one id.
-# decision, 2026-09-27: ship phase 1 with this disclosed platform
-# limitation rather than burn time on a second self hosted embedding
-# server for a comparison ogx cannot actually run in one pass, see
-# PHASE1_PLAN.md
+# ogx exposes one embedding model id per config (not two in one pass)
 EMBEDDING_MODELS = ["vllm-embedding/nomic-embed-text-v1.5"]
 
-# production recipe per PHASE1_PLAN.md section 5, raised from the
-# 2026-09-26 first validation config (4 patterns, default "speed"
-# preset) now that the whole chain, including the answer_relevance
-# judge fix, has been watched succeed end to end
+# balanced preset, 8 patterns, faithfulness metric
 MAX_RAG_PATTERNS = 8
 PRESET = "balanced"
 OPTIMIZATION_METRIC = "faithfulness"
 
-# how long to keep polling before handing control back to the caller,
-# this pipeline is a genuine multi pattern optimization sweep, not
-# something meant to finish inside one interactive shell call
+# this is a multi pattern optimization sweep, not meant to finish inside
+# one interactive shell call, hands control back to the caller after this
 POLL_SECONDS = 90
 POLL_INTERVAL = 10
 

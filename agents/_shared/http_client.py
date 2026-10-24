@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
-"""http helper that routes through the openshell sidecar proxy, same
-shape as the reference's agents/http_client.py, minus its auth_client
-dependency: that one always stamped one fixed bearer token (client
-credentials grant) on every call. neither agent here needs that, the
-coordinator's own outbound Authorization to the retrieval agent's a2a
-endpoint is injected automatically by the sidecar's own token_grant
-provider (spiffe svid -> keycloak access token), not something this
-code computes, and the retrieval agent's own outbound Authorization to
-spear-mcp-gateway is the real end user's own jwt, passed in
-explicitly by main.py per call, not one fixed credential. extra_headers
-below is how main.py supplies that per call value.
+"""http helper that routes through the openshell sidecar proxy. neither
+agent needs a fixed bearer token: the coordinator's outbound
+Authorization to the retrieval a2a endpoint is injected automatically
+by the sidecar's token_grant provider, and the retrieval agent's
+outbound Authorization to spear-mcp-gateway is the end user's own jwt,
+passed in per call via extra_headers below.
 """
 
 from __future__ import annotations
@@ -21,18 +16,10 @@ import ssl
 import urllib.request
 from typing import Any
 
-# the sandbox supervisor sets the real, standard HTTPS_PROXY/https_proxy
-# env vars itself, confirmed live by reading env inside a running sandbox,
-# OPENSHELL_HTTP_PROXY is not a real var this platform ever sets, an
-# earlier pass here only worked by coincidence, the literal fallback
-# happened to match the real proxy address. kept as a fallback for local
-# dev outside any sandbox, where neither var exists, not as the primary
-# source of truth anymore
+# supervisor sets HTTPS_PROXY; fallback below for local dev
 _PROXY = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or "http://127.0.0.1:3128"
-# same supervisor also injects its own ca bundle, confirmed live at
-# /etc/openshell-tls/proxy/ca-bundle.pem (also exposed as SSL_CERT_FILE,
-# REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE), trusting it properly instead of
-# disabling verification outright when it is actually present
+# supervisor ca bundle at /etc/openshell-tls/proxy/ca-bundle.pem, trust it
+# properly when present instead of disabling verification outright
 _CA_BUNDLE = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
 _SSL_CONTEXT = (
     ssl.create_default_context(cafile=_CA_BUNDLE) if _CA_BUNDLE else ssl._create_unverified_context()

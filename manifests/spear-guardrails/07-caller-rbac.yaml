@@ -1,26 +1,5 @@
-# both halves of "letting a caller's own service account call the
-# guardrails route directly" merged into one file, same plain unscoped
-# get services shape, applied together under one log line in
-# scripts/07-install-guardrails.sh, not the resourceName scoped shape
-# 06-pipeline-rbac.yaml uses (confirmed live that the resourceName scoped
-# version silently 403s despite a passing subjectaccessreview, kept
-# separate on purpose, not folded in here).
-
-# the reference's own 04-pipeline-rbac.yaml documents kube-rbac-proxy's
-# config.yaml as resourceName scoped ("get" on the one named service).
-# found live, empirically, during this build: the running proxy does not
-# actually enforce that resourceName, three independent
-# subjectaccessreview reproductions with the name included all returned
-# allowed true, yet the real call still 403'd, restarting the pod fresh
-# changed nothing, and the plain "get services" (no name) check is what
-# actually returns "no" for a caller lacking it, matching the real
-# failure. own role here, not the shared spear-guardrails-caller
-# one, so the pipeline's own binding is untouched
-#
-# NAMESPACE_MIGRATION_PLAN.md: subject is spear-mcp-guard-proxy's
-# own default service account in spear-agents, unchanged, only
-# this Role/RoleBinding's own namespace moved, since that is where the
-# real Service object it grants access to now lives
+# guardrails route callers: unscoped get services (resourceName scoped rules pass SAR but still 403)
+# openproject-mcp and coordinator bindings; coordinator SA/secret stay in spear-agents
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -45,17 +24,7 @@ roleRef:
   name: spear-guardrails-caller-spear-openproject-mcp
   apiGroup: rbac.authorization.k8s.io
 ---
-# the Role/RoleBinding half of spear-coordinator-agent's own credential
-# for calling guardrails directly, same plain unscoped "get services"
-# shape as the openproject-mcp grant above, not the resourceName scoped
-# one in 06-pipeline-rbac.yaml.
-#
-# NAMESPACE_MIGRATION_PLAN.md: this Role/RoleBinding moved here since
-# this is where the real Service object they grant access to now
-# lives. the matching ServiceAccount/Secret this RoleBinding's subject
-# points at stay in spear-agents, see
-# manifests/spear-agents/openshell/coordinator-guardrails-rbac.yaml,
-# co-located with the sandbox that actually reads this token, not here
+# coordinator guardrails Role/RoleBinding (SA in spear-agents)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

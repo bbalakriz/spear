@@ -1,18 +1,4 @@
-# ImageStream + BuildConfig for evalhub-cycle-runner, same binary docker
-# build shape 04-confidential-data-provider-build.yaml already uses, built
-# from the repo root (not scripts/, see
-# evalhub/Containerfile.evalhub-cycle-runner's own comment for why) with:
-#
-#   oc start-build evalhub-cycle-runner --from-dir=. \
-#     --exclude='(^|/)(\.git|\.venv-kfp|\.venv|venv|node_modules|__pycache__|archive)(/|$)|\.(docx|pptx|rtf|excalidraw|pyc)$' \
-#     --wait -n spear-eval
-#
-# the --exclude is required, not optional, oc start-build does not read
-# the repo's own .dockerignore, confirmed live, dropping it uploads
-# .venv-kfp and node_modules too and the upload hangs for many minutes
-#
-# so the image lands in this cluster's own internal registry, where
-# 07-cycle-runner-cronjob.yaml's own CronJob can pull it.
+# evalhub cycle runner image build
 apiVersion: image.openshift.io/v1
 kind: ImageStream
 metadata:

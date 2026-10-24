@@ -1,17 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# stands up a real evalhub instance (trustyai.opendatahub.io/v1, bundled
-# inside rhods-operator 3.5 already on this cluster) with ragas-v062,
-# ibm-clear-v060 and garak registered. the stock ragas/ibm-clear configmaps
-# this cluster ships are not registered at all, confirmed live their
-# bundled v0.5.0 images have real bugs, see
-# manifests/spear-eval/03-custom-providers.yaml, no reason to enable
-# a provider nothing here ever submits a job against.
-#
-# run after 03-install-data.sh (pgvector) and 09-install-worktracker-and-agents.sh
-# (mlflow tracing on both agents, the trace data ibm-clear reads straight
-# out of mlflow). submitting the actual evaluation jobs is a separate,
-# manual step, scripts/11-submit-evalhub-jobs.sh, not run from here.
+# evalhub with ragas-v062, ibm-clear-v060, garak (not stock v0.5 providers).
+# after 03 and 09; job submit is 11-submit-evalhub-jobs.sh.
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=./lib-common.sh
@@ -21,13 +11,10 @@ EVAL_DB_NAME="evalhub"
 EVAL_DB_ROLE="evalhub_app"
 RAGAS_BUCKET="evalhub-ragas-data"
 
-# a second database on the same already running pgvector postgres server
-# (manifests/spear-data/01-pgvector.yaml), not a dedicated postgres
-# instance of its own. raguser is that server's real bootstrap superuser
-# (POSTGRES_USER on the pgvector deployment itself), same idiom
-# 03-install-data.sh's own ensure_rag_reader_role already uses for a new
-# role, createdb here needs a real CREATE DATABASE too since a role alone
-# is not enough for evalhub's own database to exist.
+# second database on the same running pgvector server
+# (manifests/spear-data/01-pgvector.yaml), not a dedicated instance.
+# raguser is that server's bootstrap superuser, same idiom as
+# 03-install-data.sh's ensure_rag_reader_role, plus a real CREATE DATABASE
 ensure_evalhub_database() {
   local password
   password="$(oc get secret evalhub-pg-creds -n "${EVAL_NS}" -o jsonpath='{.data.password}' | base64 -d)"
@@ -50,12 +37,9 @@ ensure_evalhub_database() {
   log "${EVAL_DB_NAME} database present on pgvector, owned by ${EVAL_DB_ROLE}"
 }
 
-# evalhub's own job pods download ragas test data from s3, not a
-# projected volume or inline body, the secret shape it expects
-# (AWS_ACCESS_KEY_ID etc) is different from the accesskey/secretkey
-# shape minio-root-creds/minio-dsp-creds already use elsewhere in this
-# project, so this is a re keyed copy of the same real minio root
-# credentials, not a new minio user.
+# evalhub job pods download ragas test data from s3, expects
+# AWS_ACCESS_KEY_ID style keys, different from the accesskey/secretkey
+# shape minio-root-creds uses elsewhere; this is a re keyed copy, not a new minio user
 ensure_ragas_bucket_and_s3_secret() {
   local user pass
   user=$(oc get secret minio-root-creds -n "${STORAGE_NS}" -o jsonpath='{.data.MINIO_ROOT_USER}' | base64 -d)
@@ -118,24 +102,11 @@ main() {
   log "s3 bucket and credentials for ragas's test data, on the already running minio in ${STORAGE_NS}"
   ensure_ragas_bucket_and_s3_secret
 
-  # confirmed live: this cluster's bundled v0.5.0 of both ragas and
-  # ibm-clear have real bugs (ragas's llm wrapper vs its own pinned
-  # library's newer metrics api, ibm-clear's trace fetch against this
-  # mlflow server's v3 schema). these two newer named providers point at
-  # the same quay.io images on later tags instead, see
-  # manifests/spear-eval/03-custom-providers.yaml for why a new
-  # name (not editing ragas/ibm-clear in place) is what actually survives
-  # the operator's own reconcile loop.
+  # custom provider names avoid operator overwriting stock ragas/ibm-clear
   log "custom provider configmaps: ragas-v062, ibm-clear-v060, on the operator's own newer quay.io tags"
   oc apply -f "${ROOT_DIR}/manifests/spear-eval/03-custom-providers.yaml"
 
-  # the fourth provider the cr below lists, spear-confidential-data, is
-  # our own image, not a community one, so it needs a real build before
-  # its provider configmap can point at anything. missing this step
-  # entirely used to leave the evalhub cr stuck reconciling forever
-  # ("no ConfigMap with label ...evalhub-provider-name=spear-confidential-data
-  # in namespace redhat-ods-applications"), confirmed live, never
-  # producing a deployment at all.
+  # build spear-confidential-data image before evalhub cr reconciles
   log "spear-confidential-data provider: imagestream/buildconfig, build, provider configmap"
   oc apply -f "${ROOT_DIR}/manifests/spear-eval/04-confidential-data-provider-build.yaml"
   oc start-build spear-confidential-data-provider --from-dir="${ROOT_DIR}/evalhub" --wait -n "${EVAL_NS}"
@@ -146,31 +117,15 @@ main() {
 
   log "the real evalhub cr, providers: ragas-v062, ibm-clear-v060, garak"
   oc apply -f "${ROOT_DIR}/manifests/spear-eval/01-evalhub.yaml"
-  # the provider configmap above is now applied before this cr, so a
-  # genuinely fresh install's first reconcile already sees it. this
-  # nudge only matters on a rerun against a cluster whose cr is already
-  # sitting in the old stuck state from before that ordering fix,
-  # confirmed live: the operator never retries a failed reconcile on its
-  # own once the missing configmap shows up later, only on a real change
-  # to the cr, a cheap metadata only annotation bump is enough
+  # nudge cr if a prior reconcile failed before provider configmap existed
   nudge_reconcile evalhub evalhub "${EVAL_NS}"
   wait_deploy_ready evalhub "${EVAL_NS}"
 
   log "caller serviceaccount + rbac for submitting jobs"
   oc apply -f "${ROOT_DIR}/manifests/spear-eval/02-caller-rbac.yaml"
 
-  # confirmed live: every evaluation job's adapter pod gets MLFLOW_WORKSPACE
-  # forced to whatever namespace the job actually runs in (the x-tenant
-  # header's own namespace), not this cr's own spec.env default. ibm-clear's
-  # mlflow_traces_experiment_name lookup only ever sees experiments already
-  # in that same namespace's own mlflow workspace, and
-  # spear-shield-security-trace lives in spear-pipelines, so
-  # spear-pipelines has to be a second real evalhub tenant too, not just
-  # spear-eval's own, empty workspace.
-  # also carries the dummy model auth secret ibm-clear's own litellm
-  # backend needs, it refuses to call any openai compatible endpoint
-  # without *some* non empty api key client side, even though the raw
-  # ogx server it actually calls needs none, confirmed live.
+  # second tenant for spear-pipelines mlflow workspace (security trace experiment)
+  # includes dummy model auth key for litellm client
   log "registering ${PIPELINES_NS} as a second evalhub tenant, where spear-shield-security-trace's own mlflow workspace actually lives, plus its dummy model auth secret"
   oc apply -f "${ROOT_DIR}/manifests/spear-pipelines/08-evalhub-tenant.yaml"
 

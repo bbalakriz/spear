@@ -13,16 +13,7 @@ source "${ROOT_DIR}/scripts/lib-common.sh"
 
 CR_NAME="spear-guardrails"
 
-# correction, 2026-10-04: an earlier pass here claimed the operator's own
-# "BBR plugin not found, will retry" reconcile log (bbr being an archived
-# upstream feature with no crd/spec field on this cluster) permanently
-# blocked .status.phase from ever reaching Ready, and switched this to
-# polling the deployment's own Available condition instead. live status
-# later the same day showed bbrPluginFound: false and phase: Ready at the
-# same time, so that was wrong, bbr absence is logged but non blocking.
-# the real and only confirmed blocker was the missing spear-mcp-gateway
-# object, fixed by ensure_early_gateway above, polling .status.phase
-# directly again now that the real fix is in place
+# poll nemoguardrails .status.phase (bbr warnings are non blocking)
 wait_guardrails_ready() {
   local tries=30 phase=""
   while (( tries > 0 )); do
@@ -43,14 +34,7 @@ wait_guardrails_ready() {
 # checks the response's top level status matches $3 (success|blocked).
 check_verdict() {
   local config_id="$1" content="$2" expect="$3" route token body guardrails_field status
-  # the cr reporting Ready only means the operator finished reconciling
-  # it, not that the router has actually admitted the route yet or that
-  # the guardrails pod's own presidio/nlp models are warm. confirmed
-  # live on a fresh cluster: the very first real request after Ready
-  # can still come back as the router's own default html error page,
-  # or take close to 20s once it does reach the backend (cold model
-  # load). 8 tries at 5s each (the old budget here) was not always
-  # enough, widened to a real few minutes rather than retrying forever
+  # route and cold models can lag Ready; allow several minutes of retries
   local tries=24
   route="https://$(oc get route "${CR_NAME}" -n "${GUARDRAILS_NS}" -o jsonpath='{.status.ingress[0].host}')"
   token="$(oc whoami -t)"
@@ -80,17 +64,7 @@ check_verdict() {
   fi
 }
 
-# brings up just enough of spear-agents for the nemoguardrails cr's
-# own gateway status check to pass, namespace, the realm import (no
-# placeholders of its own, a plain oc apply), and the gateway/mcpgatewayextension/
-# authpolicy file templated with the same two placeholders
-# scripts/09-install-worktracker-and-agents.sh's own resolve_hosts/apply_templated
-# use for this same file, kept minimal and duplicated here on purpose rather
-# than refactored into lib-common.sh. the authpolicies riding along early is
-# fine, same soft attach behaviour every other authpolicy in this project
-# already relies on, the gateway just comes up already protected instead of
-# briefly open. everything else that file resolves (guardrails route, spire
-# route) does not exist yet at this point in the chain and is not needed for this
+# minimal mcp gateway + realm for phase 2 sequencing (also used before full 09)
 ensure_early_gateway() {
   local agents_manifests="${ROOT_DIR}/manifests/spear-agents"
   oc apply -f "${agents_manifests}/00-namespace.yaml"
@@ -119,23 +93,11 @@ main() {
   log "guardrails configmaps and cr"
   oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/01-internal-docs-config.yaml"
   oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/02-vendor-submission-config.yaml"
-  # work-tracker-config and coordinator-agent-config back spear-agents
-  # (phase 2), applied here too since they are both just configmaps this
-  # same cr already lists in nemoConfigs, not a separate install step
+  # phase 2 configs listed on same cr
   oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/03-work-tracker-config.yaml"
   oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/04-coordinator-agent-config.yaml"
 
-  # correction, 2026-10-04: this comment used to say the cr below carries
-  # a template.pod.mcpGateway pointer and that status.mcpGateway never
-  # reports found until spear-mcp-gateway exists, which is why this
-  # ensure_early_gateway call exists. that field has since been removed
-  # from 05-nemoguardrails-cr.yaml entirely, confirmed live to be
-  # unneeded, see that manifest's own header comment. kept this call
-  # anyway: the gateway object itself is still a real, separate
-  # prerequisite for spear-openproject-mcp's own httproute and the a2a
-  # gateway work phase 2 depends on, nothing to do with guardrails'
-  # own status.phase at all anymore, just sequenced here since it is
-  # cheap and idempotent
+  # gateway still needed for mcp httproute before full 09
   ensure_early_gateway
 
   oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/05-nemoguardrails-cr.yaml"
@@ -144,19 +106,7 @@ main() {
   log "rbac: letting the kfp pipeline's own service account call the guardrails route"
   oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/06-pipeline-rbac.yaml"
 
-  # every check_verdict call below runs as this installer's own admin-ish
-  # oc whoami -t token, never as the pipeline's own service account, so
-  # none of them can ever catch a gap specific to that sa. confirmed live,
-  # 2026-10-04: the ingestion pipeline's own sanitize_documents step
-  # tagged every single real document "error" because of exactly that gap
-  # (06-pipeline-rbac.yaml's resourceNames restriction looked correct but
-  # was silently dropped by kube-rbac-proxy, see that file's own comment),
-  # while every check_verdict call here kept passing the whole time.
-  # exercising the real sa directly here closes that blind spot
-  # pipeline-runner-spear-dspa: same literal subject name
-  # 06-pipeline-rbac.yaml's own RoleBinding already grants, spear-dspa
-  # being the dspa's own fixed name (see scripts/04-install-pipelines.sh's
-  # own DSPA_NAME), not namespace scoped so no renaming needed here
+  # smoke tests use installer token; also probe pipeline-runner-spear-dspa
   log "confirming the pipeline runner sa itself, not just this installer's own token, can call the route"
   if ! run_restricted_probe guardrails-rbac-probe "${PIPELINES_NS}" pipeline-runner-spear-dspa \
     "curl -sfk -X POST https://${CR_NAME}.${GUARDRAILS_NS}.svc.cluster.local/v1/guardrail/checks \

@@ -1,26 +1,4 @@
-# newer community provider images than this cluster's bundled rhods-operator
-# 3.5.1 ships (ragas v0.5.0, ibm-clear v0.5.0), both confirmed live to have
-# real bugs fixed in later releases: v0.5.0 ragas's own llm wrapper is
-# incompatible with its own pinned ragas library's newer collections metric
-# api, and v0.5.0 ibm-clear's eval-hub-sdk fetches trace info via an
-# endpoint that never carries span data against this mlflow server's v3
-# trace schema. both confirmed fixed in v0.6.2 (ragas) and v0.6.0
-# (ibm-clear) on quay.io.
-#
-# the operator only looks up a provider's source configmap by the
-# trustyai.opendatahub.io/evalhub-provider-name label inside its own
-# namespace (redhat-ods-applications), and continuously reconciles the
-# existing ragas/ibm-clear names back to its own bundled v0.5.0 content the
-# moment either is edited directly, confirmed live (reverted within
-# seconds). a brand new name has no red hat owned template to fight it, so
-# it holds. this is the real mechanism behind what looked like a friend's
-# "custom provider" trick: a new name, not a version override on the
-# existing one.
-#
-# these live in redhat-ods-applications, the operator's own namespace, not
-# spear-eval, since that is the only place the operator's lookup
-# ever checks. scripts/10-install-evalhub.sh applies this file and then
-# adds ragas-v062/ibm-clear-v060 to the evalhub cr's spec.providers.
+# custom evalhub provider images (stock 3.5.1 ragas/ibm-clear not registered). see docs/decisions.md D12
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -18,8 +18,7 @@ import { CheckCircleIcon, ExclamationCircleIcon } from '@patternfly/react-icons'
 import { useEffect, useState } from 'react';
 
 const PROXY_PATH = '/api/proxy/plugin/spear-console/backend';
-// every badge on this page is refreshed on this interval, a real live read
-// against the cluster each time, not a cached or simulated value
+// poll cluster status on this interval
 const POLL_MS = 15000;
 
 interface Component {
@@ -34,13 +33,7 @@ interface Status {
   same_node: boolean;
 }
 
-// fixed display order, tells the real request path left to right: console
-// signs in against keycloak, the a2a gateway checks that identity plus the
-// coordinator's own workload identity, the coordinator sandbox reasons and
-// delegates to the kata isolated retrieval sandbox, which calls the mcp
-// gateway's own per tool rbac and the guardrails rails. same components
-// server.py's spear_shield_status returns, just the order pinned here
-// rather than left to whatever order the backend happens to build the list in
+// request path left to right; order pinned here, not backend list order
 const DISPLAY_ORDER = ['keycloak', 'a2a-gateway', 'coordinator', 'retrieval', 'mcp-gateway', 'guardrails'];
 
 const StatusCard = ({ component }: { component: Component }) => (

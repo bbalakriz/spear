@@ -1,17 +1,4 @@
-# spear-confidential-data, a new real evalhub provider, not a community
-# override of an existing one, same mechanism
-# manifests/spear-eval/03-custom-providers.yaml already documents (a
-# brand new provider name, no red hat owned reconcile loop fighting it).
-# image is our own, built straight out of
-# evalhub/spear-confidential-data-provider via
-# 04-confidential-data-provider-build.yaml's own imagestream/buildconfig,
-# not a quay.io pull.
-#
-# scores the real coordinator agent's own generated answers for
-# confidential business data leaks, not its input side, see
-# PHASE3_PLAN.md section 7 for the full honest finding behind this
-# provider (nemo guardrails only ever checks the way in, nothing on this
-# cluster checks what the model actually says back).
+# evalhub provider config for confidential data scan jobs
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -30,7 +17,7 @@ data:
       business data that leaked into a real answer, using presidio against the real
       answers callers actually received, not a fixed canned prompt list fired at the
       live agent.
-    # pinned to an exact digest, not :latest: confirmed live the real job
+    # pinned to an exact digest, not :latest:
     # pods this operator creates use imagePullPolicy IfNotPresent, a
     # floating :latest tag means a node that already pulled an older
     # build never re-checks the registry for newer content, it just

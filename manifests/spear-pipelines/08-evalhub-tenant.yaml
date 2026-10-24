@@ -1,16 +1,5 @@
-# registers spear-pipelines itself as a second evalhub tenant, alongside
-# evalhub's own home namespace spear-eval. confirmed live: every
-# evaluation job's adapter pod gets MLFLOW_WORKSPACE forced to whichever
-# namespace the job actually runs in (the x-tenant header's namespace),
-# not evalhub's own cr level spec.env default, so ibm-clear's
-# mlflow_traces_experiment_name lookup only ever sees experiments already
-# in that same namespace's own mlflow workspace. spear-shield-security-trace
-# lives in spear-pipelines, so evaluation jobs reading it have to run here
-# too, not in spear-eval's own empty workspace.
-#
-# the tenant label's value is intentionally empty, same as
-# manifests/spear-eval/00-namespace.yaml, the operator only checks
-# for the label's presence.
+# spear-pipelines as second evalhub tenant (ibm-clear reads mlflow in this workspace). see docs/decisions.md D10
+# empty evalhub.trustyai.opendatahub.io/tenant label value is intentional
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -18,10 +7,7 @@ metadata:
   labels:
     evalhub.trustyai.opendatahub.io/tenant: ""
 ---
-# same caller serviceaccount already used against the spear-eval
-# tenant (manifests/spear-eval/02-caller-rbac.yaml), granted here
-# too so one token can submit jobs against either tenant namespace by
-# switching the x-tenant header.
+# same spear-eval-caller SA granted here; switch x-tenant to pick tenant
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -46,13 +32,7 @@ roleRef:
   name: evalhub-evaluator
   apiGroup: rbac.authorization.k8s.io
 ---
-# evalhub forwards the real calling identity's own bearer token to mlflow
-# for mlflow's own subjectaccessreview check on experiment access, not
-# evalhub's own backend identity, confirmed live. evalhub-service is the
-# real serviceaccount name the trustyai operator gives the evalhub
-# deployment itself for this cr, discovered live via
-# oc get deployment evalhub -o jsonpath='{.spec.template.spec.serviceAccountName}',
-# not assumed or guessed.
+# evalhub-service SA needs mlflow experiments in this workspace (forwards caller token to mlflow)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -80,16 +60,7 @@ roleRef:
   name: spear-pipelines-mlflow-evalhub-caller
   apiGroup: rbac.authorization.k8s.io
 ---
-# a dummy, non secret value. the raw ogx server ibm-clear's job calls
-# against (bypassing guardrails, since this is an internal judge call not
-# live user traffic) needs no real auth at all, confirmed live, but
-# ibm-clear's own litellm backend refuses to make any openai compatible
-# call client side without *some* non empty OPENAI_API_KEY, regardless of
-# whether the server actually checks it. evalhub mounts whatever secret
-# model.auth.secret_ref names on the job submission at
-# /var/run/secrets/model/api-key, confirmed live. folded in here since
-# this and the tenant setup above only ever get applied together, one
-# evalhub job submission has no use for a tenant without this secret
+# dummy OPENAI_API_KEY: ibm-clear litellm client requires non empty key though ogx ignores it
 apiVersion: v1
 kind: Secret
 metadata:

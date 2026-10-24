@@ -1,42 +1,26 @@
-"""spear-corpus-index-pipeline: the step that used to happen too early.
+"""spear-corpus-index-pipeline: decoupled second half of indexing, run
+after autorag picks a winning recipe rather than indexing with a fixed
+size placeholder chunker before any recipe is known.
 
-before 2026-09-28 corpus_prepare_pipeline chunked, embedded and wrote
-every sanitized document into rag_chunks itself, with a fixed size
-placeholder chunker, before autorag ever got a chance to pick a real
-winning recipe against the eval set that same pipeline produced. autorag's
-own leaderboard winner was purely informational, never actually applied
-to the production index, which is backwards relative to how autorag is
-meant to be used: run the optimization sweep first, then index the full
-corpus with the winning recipe's exact settings. see PHASE1_PLAN.md for
-the full writeup.
+given a batch_id (to find that batch's logged ingestion report, for the
+document list and abac tags) and a winning pattern's settings
+(chunk_size, chunk_overlap, embedding_model_id, extracted by the caller
+from a completed autorag run's pattern.json, see
+console-backend/server.py's autorag_leaderboard()), this re chunks and
+re embeds every document the guardrails audit marked "success", deletes
+any existing rag_chunks rows for those doc_ids first (chunk boundaries
+move with chunk_size/overlap), and writes fresh rows tagged with the
+pattern_name and autorag_run_id that produced them.
 
-this pipeline is that second half, now decoupled and run after the fact.
-given a batch_id (to find that batch's already logged ingestion report,
-for the document list and abac tags) and a winning pattern's settings
-(chunk_size, chunk_overlap and embedding_model_id, passed in as plain
-run parameters, already extracted by the caller from a completed autorag
-run's pattern.json, see console-backend/server.py's
-autorag_leaderboard()), this pipeline re chunks and re embeds every
-document that batch's own guardrails audit marked "success", deletes any
-rows rag_chunks already had for those doc_ids first (chunk boundaries
-move when chunk_size/overlap change, so old rows would otherwise become
-orphaned), and writes fresh rows tagged with the pattern_name and
-autorag_run_id that produced them, so which recipe indexed a given row is
-always visible, not silently overwritten with no trace.
-
-honest limitation, disclosed rather than hidden: autorag's own winning
-pattern can name a chunking method other than a plain fixed size window
-(a real completed run on this cluster picked "recursive"), and this
-pipeline only ever reproduces chunk_size and chunk_overlap, not
-ai4rag's own recursive splitting algorithm, which is not something this
-project can inspect or reproduce. the size and overlap and the embedding
-model are the winner's real settings, the splitting method itself is
-still the same fixed window slicer corpus_prepare_pipeline used to
-carry, just parameterized now instead of hardcoded.
+known limitation: autorag's winning pattern can name a chunking method
+other than fixed size window (recursive, for example), this pipeline
+only reproduces chunk_size/chunk_overlap/embedding_model, not ai4rag's
+own splitting algorithm. the splitting method itself stays the same
+fixed window slicer corpus_prepare_pipeline used, now parameterized.
 
 run `python3 pipeline.py` to compile spear-corpus-index-pipeline.yaml,
 or `python3 compile_and_run.py <batch_id> <autorag_run_id>` to also
-upload and trigger a real run against spear-dspa.
+upload and trigger a run.
 """
 from typing import NamedTuple
 
@@ -171,23 +155,8 @@ def apply_winning_pattern(
     ):
         cur.execute(f"ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS {column} {coltype}")
 
-    # row level security, same table this function already owns the
-    # schema of. the real abac decision used to live only in
-    # rag_query.py's own WHERE clause, one layer, a bug there or a future
-    # code path that forgets to call it would have seen every row. this
-    # is the second, independent layer: rag_reader (the only role
-    # rag-query-relay ever connects as) has no bypassrls, so a row only
-    # ever comes back if this policy itself says so, regardless of what
-    # sql runs against it. rag_reader is created by
-    # scripts/03-install-data.sh, not here, a grant against a role that
-    # does not exist yet should never be what blocks a real indexing run
-    # tagged dollar quote ($rls$, not the bare $$ form), kubernetes'
-    # own $(VAR_NAME) env expansion on container args treats a literal
-    # $$ as an escaped single $ regardless of what follows, and
-    # lightweight kfp components embed this whole source as a literal
-    # arg, confirmed live: a bare $$ here reached postgres as a single
-    # $ and failed with "syntax error at or near $". a tagged delimiter
-    # never has two dollar signs adjacent, so it survives untouched.
+    # postgres RLS: second abac layer beside rag_query.py; rag_reader has no bypassrls
+    # tagged dollar quote; bare $$ is collapsed by kubelet arg expansion (see docs/decisions.md D15)
     cur.execute(
         """
         DO $rls$
@@ -226,15 +195,7 @@ def apply_winning_pattern(
         return [row["embedding"] for row in sorted(data, key=lambda r: r["index"])]
 
     def embed_chunks_with_retry(texts: list[str], attempts: int = 3) -> list[list[float]]:
-        # a null embedding row can never be found by any vector search
-        # again, ever, regardless of who is asking, so a transient blip
-        # is worth a couple retries rather than writing a dead row into a
-        # live rag index. this is the real fix for the doc-001/doc-002
-        # null embedding incident, found and repaired live on 2026-10-02:
-        # both rows turned out to predate this pipeline entirely, from an
-        # older ingestion path with the same swallow-and-null behavior,
-        # never caught because nothing downstream ever read the old
-        # embedding_failures counter
+        # retry transient embed failures; null vectors are unsearchable
         last_exc = None
         for attempt in range(attempts):
             try:
@@ -247,9 +208,7 @@ def apply_winning_pattern(
 
     total_chunks = 0
     documents_indexed = 0
-    # per doc_id, not just a count: a bare number nobody downstream reads
-    # is not a real safety net, this list is what actually ends up in
-    # apply_report.json and is small enough to always include in full
+    # per doc_id, not just a count, this is what lands in apply_report.json
     embedding_failures = []
     for row in sanitized_rows:
         doc = docs_by_id.get(row["doc_id"])
@@ -269,19 +228,14 @@ def apply_winning_pattern(
         try:
             embeddings = embed_chunks_with_retry(chunks)
         except requests.RequestException as exc:
-            # embed before delete: whatever rows this doc_id already has
-            # from a previous successful run stay exactly as they are,
-            # a failed embed here must never make a previously working
-            # doc worse off. skip the doc entirely rather than writing a
-            # permanently unsearchable null vector row
+            # embed before delete: a failed embed must never make a
+            # previously working doc worse off, skip it entirely
             print(f"  {doc['doc_id']}: embedding failed after {3} attempts ({exc}), leaving existing rows untouched, skipping")
             embedding_failures.append({"doc_id": doc["doc_id"], "error": str(exc)})
             continue
 
-        # only now that the new embeddings are actually in hand: chunk
-        # boundaries move whenever chunk_size/overlap change, so any rows
-        # this doc had under a previous pattern are stale, drop them
-        # before writing the fresh ones rather than leaving orphaned tails
+        # only now that embeddings are in hand: chunk boundaries move
+        # with chunk_size/overlap, so rows under a previous pattern are stale
         cur.execute("DELETE FROM rag_chunks WHERE doc_id = %s", (doc["doc_id"],))
 
         for idx, chunk in enumerate(chunks):
@@ -314,10 +268,7 @@ def apply_winning_pattern(
         "chunk_size": chunk_size,
         "chunk_overlap": chunk_overlap,
         "embedding_model": embedding_model,
-        # list of {doc_id, error}, not a count: an empty list here is the
-        # only thing that actually means every sanitized doc got indexed
-        # and is really searchable, a doc_id in this list was left alone,
-        # not written with a dead row
+        # list of {doc_id, error}; empty means every sanitized doc is really searchable
         "embedding_failures": embedding_failures,
         "documents_indexed": documents_indexed,
         "chunks_created": total_chunks,
@@ -410,9 +361,7 @@ def log_apply_report(
             "metrics": [
                 {"key": "chunks_created", "value": chunks_created, "timestamp": metrics_ts},
                 {"key": "documents_indexed", "value": documents_indexed, "timestamp": metrics_ts},
-                # a real mlflow metric now, not just a field buried in the
-                # json artifact nobody downstream was reading, so a non
-                # zero value actually shows up in the run view
+                # a real mlflow metric, not just buried in the json artifact
                 {"key": "embedding_failures", "value": embedding_failures, "timestamp": metrics_ts},
             ],
         },

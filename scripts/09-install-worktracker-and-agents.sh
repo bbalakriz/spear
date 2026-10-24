@@ -1,55 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# NAMESPACE_MIGRATION_PLAN.md section 8's own fold back decision:
-# openproject (spear-worktracker) and the agents/gateways (spear-agents)
-# never actually need to install independently of each other in practice,
-# one script, same as the old 08-install-spear-agents.sh was before
-# this migration split its own manifests across two namespaces.
-#
-# the realm, the self hosted openproject work tracker, spear-openproject-mcp,
-# the gateway/auth policy chain in front of it, the guard proxy, and the a2a
-# gateway plus cluster spiffeid the two sandboxed agents depend on. see
-# PHASE2_PLAN.md sections 2, 4, 5, 6, 7. the sandboxed agents themselves
-# (image builds, sandbox create, policy, provider) are now scripted too,
-# see deploy_sandboxed_agents below, adapted from the reference project's
-# own manifests/30-openshell/deploy-agents-job.yaml.tmpl in the reference repo (dbs-sow-assessment/
-# rhoai-agentic-demo), which already proved the real openshell cli flags
-# and ordering live: runtime_class_name is snake_case not the kubernetes
-# field's own camelCase, providers_v2_enabled has to be turned on globally
-# before provider profile import works, sandboxes have to be deleted
-# before a provider attached to one can be deleted, and the coordinator
-# always stays on runc, never kata, because its supervisor opens a csi
-# spiffe workload api socket that a virtiofs mount inside a kata guest
-# cannot proxy (kata-containers/kata-containers#13162, unmerged). this
-# used to run those commands from the installer's own machine through a
-# local port-forward instead of an in cluster job, on the claim that it
-# matched every other oc exec/oc cp step in this script. that claim did
-# not actually hold up, openshell cli orchestration is a heavier,
-# stateful, multi step operation, not a one off exec, so this now
-# matches the reference properly: a real Job, built cli image, see
-# manifests/spear-agents/openshell/deploy-agents-job.yaml and
-# run_agents_deploy_job below
-#
-# nothing in here is cluster specific. every hostname (this cluster's own
-# apps domain, the sso route, the guardrails route) is either constructed
-# from `oc get ingresses.config.openshift.io cluster` or resolved from an
-# already live Route, same convention scripts/08-install-console.sh already
-# uses, never typed in literally. every manifest under manifests/spear-agents/
-# and manifests/spear-worktracker/ that needs one of these carries a
-# PLACEHOLDER token instead of a real value, substituted here before
-# apply, same pattern the sibling rhoai-agentic-demo project's own
-# deploy-agent-pack.sh uses.
-#
-# admin login, both personas' native accounts, the data-governance
-# project, its three work packages, and both personas' api tokens are
-# all seeded here too, see seed_openproject_demo_data(). an earlier
-# version of this comment claimed personal api tokens need each persona
-# to log in themselves, there is no admin api for it. found live during
-# this build's schema drift recovery (PHASE2_PLAN.md section 4): that is
-# true of openproject's own rest api, but not of rails console, which an
-# admin already has full access to via oc exec, so this is scripted now
-# too, the whole openproject side of this namespace is recoverable from
-# a wiped database with a single rerun of this script.
+# openproject (spear-worktracker) plus agents, gateways, and openshell sandboxes (spear-agents).
+# hostnames come from cluster routes or ingress domain; manifests use PLACEHOLDER substitution.
+# openshell deploy runs as an in cluster job (see deploy-agents-job.yaml). coordinator stays on runc.
+# seed_openproject_demo_data seeds demo users, project, work packages, and api tokens via rails.
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=./lib-common.sh
@@ -57,9 +11,6 @@ source "${ROOT_DIR}/scripts/lib-common.sh"
 
 WORKTRACKER_MANIFESTS="${ROOT_DIR}/manifests/spear-worktracker"
 AGENTS_MANIFESTS="${ROOT_DIR}/manifests/spear-agents"
-# where the real Mlflow cr lives, same constant scripts/08-install-console.sh
-# and scripts/04-install-pipelines.sh already use, not re-derived some
-# other way here
 SHARED_NS="redhat-ods-applications"
 
 # openproject requires lower, upper, numeric, and a special character.
@@ -70,20 +21,7 @@ gen_openproject_password() {
   echo "Sp$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 16)#7"
 }
 
-# the "spire" spiffe identity provider and the "clients-federated"
-# authentication flow, neither representable in a KeycloakRealmImport
-# spec at all, see 01-keycloak-realm.yaml's own header comment for the
-# full why. both are create or update, safe to run on every install,
-# live admin api calls against the already imported realm, adapted
-# from the reference project's own sync_spiffe_federated_auth and
-# enable_federated_jwt_client_auth (rhoai-agentic-demo/scripts/20-install-security.sh).
-# without the idp, spear-coordinator-workload's federated-jwt
-# token_grant 400s client_not_found, without the auth flow bound it
-# 401s invalid_client instead, confirmed live both ways. this used to
-# be a live admin api only fix with no accompanying automation, found
-# missing again after the 2026-10-04 rebuild, same gap as
-# ensure_sso_realm_demo_users below originally had, see
-# NAMESPACE_MIGRATION_PLAN.md
+# spire idp and clients-federated flow (not in KeycloakRealmImport); see 01-keycloak-realm.yaml
 ensure_spiffe_federated_auth() {
   local kc_host admin_user admin_pass admin_token kc spire_oidc_host bundle_endpoint
   kc_host="$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
@@ -99,9 +37,7 @@ ensure_spiffe_federated_auth() {
   fi
   kc="https://${kc_host}/admin/realms/${AGENTS_NS}"
 
-  # the realm import job runs async off the oc apply just above this
-  # call in main, wait for the realm to actually exist before hitting
-  # its own admin sub api, a short, bounded poll, not assumed instant
+  # realm import job runs async, poll with a bounded wait before using the admin sub api
   local tries=30
   while (( tries > 0 )); do
     curl -sk -o /dev/null -H "Authorization: Bearer ${admin_token}" "${kc}" && break
@@ -120,12 +56,7 @@ ensure_spiffe_federated_auth() {
   fi
   bundle_endpoint="https://${spire_oidc_host}/keys"
 
-  # trustDomain is the one real spire server already live on this
-  # cluster, a cluster wide singleton the reference project's own
-  # install created, immutable once set, confirmed live, never this
-  # project's own spiffe://spear-shield.internal PHASE2_PLAN.md
-  # originally called for, see 01-keycloak-realm.yaml's own comment on
-  # spear-coordinator-workload for the full story
+  # cluster spire trust domain (see 01-keycloak-realm.yaml)
   local idp_body idp_status
   idp_body="{\"alias\":\"spire\",\"providerId\":\"spiffe\",\"enabled\":true,\"config\":{\"trustDomain\":\"spiffe://agent-pack.internal\",\"bundleEndpoint\":\"${bundle_endpoint}\",\"supportsClientAssertions\":\"true\"}}"
   idp_status="$(curl -sk -o /dev/null -w '%{http_code}' "${kc}/identity-provider/instances/spire" -H "Authorization: Bearer ${admin_token}")"
@@ -139,14 +70,7 @@ ensure_spiffe_federated_auth() {
       -H "Authorization: Bearer ${admin_token}" -H "Content-Type: application/json" -d "${idp_body}"
   fi
 
-  # the federated-jwt client authenticator is never wired into the
-  # realm's own client authentication flow by default, confirmed live,
-  # every spiffe token_grant call 400s client_not_found otherwise no
-  # matter how correct the idp/client config already is. copy the
-  # builtin clients flow once, this keycloak version (26.6+) already
-  # ships federated-jwt in it, confirmed live, no explicit execution
-  # add needed, older versions might, so still checked for below, then
-  # bind the realm to the copy
+  # bind clients-federated flow so federated-jwt authenticator runs
   local flow_alias="clients-federated" existing
   existing="$(curl -sk "${kc}/authentication/flows/${flow_alias}/executions" -H "Authorization: Bearer ${admin_token}")"
   if ! printf '%s' "${existing}" | grep -q '"federated-jwt"'; then
@@ -191,9 +115,7 @@ resolve_hosts() {
     echo "could not resolve spire's own oidc discovery route (route 'spire-oidc-discovery-provider' in namespace 'zero-trust-workload-identity-manager')" >&2
     exit 1
   fi
-  # the two cidrs every openshell sandbox network policy in this project
-  # allowlists, read from the real cluster config, not typed in, same
-  # values confirmed live earlier this session via this exact command
+  # cluster and service network cidrs for sandbox network policies
   CLUSTER_NETWORK_CIDR="$(oc get network.config.openshift.io cluster -o jsonpath='{.spec.clusterNetwork[0].cidr}')"
   SERVICE_NETWORK_CIDR="$(oc get network.config.openshift.io cluster -o jsonpath='{.spec.serviceNetwork[0]}')"
   if [[ -z "${CLUSTER_NETWORK_CIDR}" || -z "${SERVICE_NETWORK_CIDR}" ]]; then
@@ -209,10 +131,7 @@ resolve_hosts() {
   MCP_PUBLIC_HOST="mcp-${AGENTS_NS}.${CLUSTER_DOMAIN}"
   ISSUER_URL="https://${SSO_HOST}/realms/${AGENTS_NS}"
 
-  # the real in process mlflow tracing in both agents, PHASE3_PLAN.md
-  # section 4. same resolution scripts/08-install-console.sh already
-  # uses for the console backend, read from the real Mlflow CR's own
-  # status field, never hardcoded or re-derived some other way
+  # mlflow url from Mlflow CR status
   MLFLOW_URL="$(oc get mlflow mlflow -n "${SHARED_NS}" -o jsonpath='{.status.url}' 2>/dev/null || true)"
   if [[ -z "${MLFLOW_URL}" ]]; then
     echo "could not resolve the mlflow cr's own route (mlflow 'mlflow' in namespace '${SHARED_NS}'), run scripts/08-install-console.sh first" >&2
@@ -243,16 +162,11 @@ apply_templated() {
     "${file}" | oc apply -f -
 }
 
-# same placeholder convention as apply_templated above, but for files the
-# openshell cli consumes directly from a local path rather than oc apply,
-# manifests/spear-agents/openshell/policies/coordinator-policy.yaml
-# and openshell/providers/coordinator-a2a-token-grant.yaml. writes the
-# substituted copy to a tmp path and prints it, caller passes that path to
-# the relevant openshell command. SSO_HOST_PLACEHOLDER is the bare host
-# (no scheme), the policy's own network_policies entries need a bare host,
-# not a url. this only substitutes, deploy_sandboxed_agents below is what
-# actually runs the real openshell sandbox create / provider import /
-# policy set sequence against the rendered output
+# same placeholder convention as apply_templated, but for files the
+# openshell cli consumes directly from a local path rather than oc apply
+# (policies/coordinator-policy.yaml, providers/coordinator-a2a-token-grant.yaml).
+# only substitutes; deploy_sandboxed_agents below runs the actual sandbox
+# create / provider import / policy set sequence
 render_openshell_file() {
   local src="$1" dest="$2"
   sed \
@@ -266,24 +180,7 @@ render_openshell_file() {
   log "rendered ${src} -> ${dest}"
 }
 
-# same known limitation as the reference project's own
-# patch_mcp_ext_proc_buffered (see its ARCHITECTURE.md, "Known operator
-# limitation: ext_proc body mode"): the installed mcp-gateway-controller
-# (v0.7.1 preview) always regenerates its ext_proc EnvoyFilter with
-# request_body_mode: STREAMED, which a plain stdlib http backend's
-# tools/call can't parse ("Bad request syntax"), no CRD field exists to
-# change it. fix found and confirmed live during this build, section 4:
-# let the controller run once to reconcile every MCPServerRegistration to
-# Ready, pause it, then hand patch both EnvoyFilters (this gateway's own,
-# and agent-pack's, since the controller is shared cluster wide and briefly
-# reverts agent-pack's back to STREAMED too while it runs) to BUFFERED,
-# and leave the controller paused.
-#
-# NAMESPACE_MIGRATION_PLAN.md: the envoyfilter itself is still keyed to
-# the gateway's own namespace (spear-agents, unchanged), but the
-# real MCPServerRegistration to wait on now lives in spear-worktracker,
-# not spear-agents, since spear-openproject-mcp's own HTTPRoute
-# moved there
+# mcp gateway ext_proc defaults to STREAMED; pause controller and patch to BUFFERED
 patch_mcp_ext_proc_buffered() {
   local filter="mcp-ext-proc-${AGENTS_NS}-gateway"
   log "unpausing mcp-gateway-controller just long enough to reconcile registrations"
@@ -313,22 +210,15 @@ patch_mcp_ext_proc_buffered() {
   fi
 }
 
-# recreates everything a wiped openproject database needs beyond the
-# admin account itself (that part is handled by OPENPROJECT_SEED_ADMIN_USER_*
-# env vars on the deployment): both personas' native accounts, the
-# data-governance project with its work_package_tracking module actually
-# enabled (a plain Project.new.save! skips that, found live, left
-# view_work_packages silently false for every member until fixed), its
-# three work packages, and each persona's personal api token. every step
-# is guarded by a find_by check so reruns against an already seeded
-# instance are a no-op, and an existing api token is never destroyed and
-# reissued, only minted the first time.
+# recreates everything a wiped database needs beyond the admin account
+# (OPENPROJECT_SEED_ADMIN_USER_* env vars handle that): both personas,
+# the data-governance project with work_package_tracking actually
+# enabled (plain Project.new.save! skips that), its three work packages,
+# and each persona's api token. every step is find_by guarded, reruns are a no-op
 seed_openproject_demo_data() {
   local pod bala_pw sidde_pw script_file out_file bala_token sidde_token
   pod="$(oc get pod -n "${WORKTRACKER_NS}" -l app=spear-openproject -o jsonpath='{.items[0].metadata.name}')"
-  # generated fresh every run, cheap, only ever actually used below if
-  # ensure_user decides that persona doesn't exist yet, never read back
-  # out of a secret that may not have these keys yet
+  # generated fresh every run, cheap; only used below if ensure_user decides the persona is new
   bala_pw="$(gen_openproject_password)"
   sidde_pw="$(gen_openproject_password)"
 
@@ -454,14 +344,7 @@ RUBY
   fi
 }
 
-# mirrors the reference's own detect_agent_runtime_class: kata needs a
-# real /dev/kvm underneath, not just the RuntimeClass object existing,
-# confirmed live there that cloud instance types without nested virt
-# fail at pod sandbox creation with no software fix available. checks
-# one real kata-oc node directly rather than assuming the cluster's own
-# install notes are still accurate. only the retrieval agent is ever a
-# candidate for kata, the coordinator is runc always, see the comment
-# above main() for why
+# use kata only when a kata-oc node has /dev/kvm (retrieval agent only)
 detect_agent_runtime_class() {
   local node
   node="$(oc get nodes -l node-role.kubernetes.io/kata-oc -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
@@ -476,16 +359,7 @@ detect_agent_runtime_class() {
   fi
 }
 
-# the Sandbox controller's own pod template defaults restartPolicy: Never,
-# confirmed live on the v1beta1 CRD: a Never pod on a drained or rebooted
-# node is never restarted by the kubelet, the pod object just sits
-# ContainerStatusUnknown / Failed while the sandbox's operatingMode still
-# says Running, exactly the "sat Failed for a full day" state the
-# delete-before-provider comment above already recorded after the last
-# cluster restart. patching Always lets the kubelet restart the container
-# itself on an in-place node reboot, no manual re-run of this script.
-# best_effort on purpose: if the v1beta1 schema ever rejects the field,
-# a warning here beats a failed install over a non critical patch.
+# default sandbox restartPolicy Never does not survive node reboot; patch Always
 patch_sandbox_restart_policy() {
   local sandbox="$1"
   if oc patch sandbox "${sandbox}" -n "${AGENTS_NS}" \
@@ -582,14 +456,7 @@ run_agents_deploy_job() {
   patch_sandbox_restart_policy default--spear-coordinator
 }
 
-# builds both agent images in cluster, creates the two real openshell
-# sandboxes, and exposes each one's a2a listener through the gateway
-# relay. the exact service names below ("a2a", "coordinator-http") and
-# sandbox names ("spear-retrieval", "spear-coordinator", the 19
-# character cap already found live per PHASE2_PLAN.md section 2) are
-# not free choices here, manifests/spear-agents/07-a2a-gateway.yaml's
-# own HTTPRoute Host header rewrites already hardcode the exact strings
-# openshell service expose has to print for those routes to ever match
+# build agent images and openshell sandboxes; names must match 07-a2a-gateway.yaml
 deploy_sandboxed_agents() {
   log "building spear-coordinator-agent and spear-retrieval-agent images in cluster"
   oc apply -f "${AGENTS_MANIFESTS}/openshell/agent-builds.yaml"
@@ -617,11 +484,8 @@ main() {
   command -v oc >/dev/null 2>&1 || { echo "oc is required" >&2; exit 1; }
   command -v openssl >/dev/null 2>&1 || { echo "openssl is required" >&2; exit 1; }
 
-  # both already applied once by scripts/07-install-guardrails.sh's own
-  # ensure_early_gateway, the nemoguardrails cr needs the gateway object
-  # to exist before this script ever runs, see that script's comment.
-  # harmless no-ops here on a normal full chain run, kept so this script
-  # still stands on its own if ever run in isolation
+  # already applied once by 07-install-guardrails.sh's ensure_early_gateway;
+  # harmless no-op here, kept so this script stands alone if run in isolation
   log "spear-agents namespace, keycloak realm import"
   oc apply -f "${AGENTS_MANIFESTS}/00-namespace.yaml"
   oc apply -f "${AGENTS_MANIFESTS}/01-keycloak-realm.yaml"
@@ -639,12 +503,8 @@ main() {
     --from-literal=dbname=openproject
   ensure_secret spear-openproject-app-secrets "${WORKTRACKER_NS}" \
     --from-literal=secret_key_base="$(openssl rand -hex 32)"
-  # admin-password is read straight into OPENPROJECT_SEED_ADMIN_USER_PASSWORD
-  # by 02-openproject.yaml below, has to exist before that manifest applies.
-  # the two persona passwords are not generated here on purpose, see
-  # seed_openproject_demo_data, that step owns generating and persisting
-  # those itself, the same way it already owns minting api tokens, so it
-  # never depends on a key existing in this secret ahead of it
+  # admin-password feeds OPENPROJECT_SEED_ADMIN_USER_PASSWORD below, must
+  # exist first; persona passwords are owned by seed_openproject_demo_data instead
   ensure_secret spear-openproject-login-creds "${WORKTRACKER_NS}" \
     --from-literal=admin-username=admin \
     --from-literal=admin-password="$(gen_openproject_password)"
@@ -692,10 +552,10 @@ main() {
   # a brand new install
   oc rollout restart deployment/spear-mcp-guard-proxy -n "${AGENTS_NS}"
 
-  log "spear-coordinator-agent's own credential for calling spear-guardrails directly, a dedicated sa plus a long lived token (sandboxes never automount one, confirmed live)"
+  log "coordinator guardrails sa and long lived token (sandboxes do not automount sa tokens)"
   oc apply -f "${AGENTS_MANIFESTS}/openshell/coordinator-guardrails-sa.yaml"
 
-  log "each sandbox's own credential for real in process mlflow tracing, PHASE3_PLAN.md section 4"
+  log "mlflow tracing credentials for sandbox agents"
   oc apply -f "${AGENTS_MANIFESTS}/openshell/agents-mlflow-sa.yaml"
   oc apply -f "${ROOT_DIR}/manifests/spear-pipelines/06-agents-mlflow-rbac.yaml"
 

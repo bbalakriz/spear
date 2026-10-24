@@ -1,13 +1,4 @@
-# spire server, agent, spiffe csi driver, and oidc discovery provider, all
-# managed by the ztwim operator installed in
-# manifests/platform/05-ztwim.yaml. sandboxes get jwt-svids through the
-# openshell supervisor (providerTokenGrants.spiffe), which asserts to
-# keycloak via token_grant; keycloak access tokens stay on the wire for a2a.
-#
-# sqlite3 keeps this to one project, one pvc, no second postgres instance to
-# run alongside keycloak's. a production spire server would point
-# datastore at postgres/mysql with its own credentials, same as keycloak
-# does today.
+# spire server, agent, CSI, OIDC discovery (ztwim operator). sqlite for demo single node
 apiVersion: operator.openshift.io/v1alpha1
 kind: ZeroTrustWorkloadIdentityManager
 metadata:
@@ -49,7 +40,7 @@ metadata:
 spec:
   # k8s workload attestation is the whole point: it is what lets spire tie
   # an svid to "this exact pod, in this namespace, with this service
-  # account" instead of to a bearer token the pod happened to be handed.
+  # account" instead of to a bearer token the pod happened to be handed
   nodeAttestor:
     k8sPSATEnabled: "true"
   workloadAttestors:
@@ -73,9 +64,8 @@ spec:
   jwtIssuer: https://SPIRE_OIDC_HOSTNAME_PLACEHOLDER
   managedRoute: "true"
 ---
-# deploy job stamps app=<name> on the pod at create (--label app=...).
-# openshell.ai/sandbox-name lands on the Sandbox CR only, not the pod, so
-# ClusterSPIFFEID must key off app (confirmed live).
+# deploy job stamps app=<name> on the pod directly; openshell.ai/sandbox-name
+# lands on the Sandbox CR only, not the pod, so this keys off the app label instead
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID
 metadata:
@@ -85,7 +75,7 @@ metadata:
 spec:
   # controller-manager-config configmap pins className to this value; a
   # ClusterSPIFFEID without it is watched but silently never rendered into
-  # a registration entry (confirmed live: zero "created entry" log lines).
+  # className must match controller config or entries are never created
   className: zero-trust-workload-identity-manager-spire
   spiffeIDTemplate: "spiffe://agent-pack.internal/ns/{{ .PodMeta.Namespace }}/sandbox/{{ index .PodMeta.Labels \"app\" }}"
   namespaceSelector:
@@ -104,7 +94,7 @@ spec:
     - "k8s:pod-label:app:{{ index .PodMeta.Labels \"app\" }}"
 ---
 # openshell gateway needs a workload api socket when provider token grants
-# are enabled (helm mounts csi); identity is namespaced to its sa.
+# are enabled (helm mounts csi); identity is namespaced to its sa
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID
 metadata:

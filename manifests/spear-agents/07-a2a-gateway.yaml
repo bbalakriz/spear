@@ -1,7 +1,4 @@
-# the a2a gateway, agent to agent calls between the coordinator and the
-# retrieval agent flow through here. the mcp gateway every tool call
-# flows through is a separate object entirely, 02-mcp-gateway.yaml, own
-# listeners, own httproutes, not shared with this one.
+# a2a gateway for coordinator and retrieval agents (separate from 02-mcp-gateway.yaml)
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -35,14 +32,7 @@ spec:
       port: 80
       targetPort: 80
 ---
-# the coordinator's own inbound a2a route, PHASE2_PLAN.md section 8, never
-# built until the console backend needed to reach it from outside its own
-# sandbox exec. every earlier test this session went straight into the
-# sandbox, this is the first real external caller. same gateway, same
-# shape as spear-retrieval-a2a above, a distinct hostname so the gateway
-# can route to it, and the openshell service name differs, confirmed live
-# via "openshell service list": the coordinator's own exposed service is
-# named coordinator-http, not a2a, the retrieval agent's own naming choice
+# coordinator inbound a2a route; host must match openshell expose (coordinator-http)
 apiVersion: v1
 kind: Service
 metadata:
@@ -81,7 +71,7 @@ spec:
             value: /
       filters:
         # host must match the exact string openshell service expose
-        # prints, confirmed live: default--spear-coordinator--coordinator-http.
+        # prints
         # openshell.localhost, not default--spear-coordinator--a2a, the
         # service's own real name wins here, not a copy paste guess
         - type: RequestHeaderModifier
@@ -93,24 +83,7 @@ spec:
         - name: spear-openshell-a2a-backend
           port: 8080
 ---
-# openshell service expose publishes the retrieval agent's a2a listener
-# through the openshell gateway relay (confirmed live this session: a
-# plain ClusterIP hit at the sandbox's own pod ip dies on the supervisor
-# sidecar's nftables skuid gate, same finding the reference project
-# already documented for its own specialist sandbox, manifests/20-security/
-# 06-a2a-gateway.yaml's own comment). this ExternalName lets the a2a
-# HTTPRoute live in spear-agents while its real backend is the
-# single shared openshell release this project reuses, same as the
-# reference's own openshell-a2a-backend.
-#
-# NAMESPACE_MIGRATION_PLAN.md: an earlier draft of this file pointed at
-# a second, independent release in its own spear-shield-openshell
-# namespace, that namespace never actually got created on this cluster,
-# confirmed live via `oc get ns spear-shield-openshell` (not found).
-# what is actually live, confirmed via `helm list -n openshell`, is the
-# single shared release, release name openshell, namespace openshell,
-# reconfigured to this project's own server.sandboxNamespace:
-# spear-agents. fixed to point at the real thing.
+# ExternalName to shared openshell release in openshift namespace (not a second helm release)
 apiVersion: v1
 kind: Service
 metadata:
@@ -150,7 +123,7 @@ spec:
         # host must match the exact string openshell service expose
         # prints (workspace--sandbox--service.openshell.localhost), the
         # retrieval agent sandbox is named spear-retrieval (19 char
-        # sandbox name limit, confirmed live), exposed as service name
+        # sandbox name limit
         # "a2a" under workspace "default"
         - type: RequestHeaderModifier
           requestHeaderModifier:
@@ -174,14 +147,9 @@ spec:
     kind: Gateway
     name: spear-a2a-gateway
     sectionName: http
-  # authorino accepts the request if either issuer validates, same
-  # dual path shape as the reference's own specialist-a2a-auth: a
-  # keycloak jwt for spear-coordinator-workload's own client credentials
-  # grant, or a spire issued jwt-svid asserted straight from the
-  # coordinator sandbox's own token_grant provider, confirmed live end
-  # to end this session, gateway policy engine logs show ALLOWED on the
-  # coordinator's real a2a call using a token minted through this exact
-  # path, not just the realm's own federated-jwt authenticator in isolation
+  # authorino accepts the request if either issuer validates: a keycloak
+  # jwt for spear-coordinator-workload's client credentials grant, or a
+  # spire issued jwt-svid asserted from the coordinator's token_grant provider
   rules:
     authentication:
       spear-shield-keycloak:

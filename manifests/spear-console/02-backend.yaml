@@ -1,60 +1,12 @@
-# backend for the spear-console ConsolePlugin's spec.proxy,
-# PHASE1_PLAN.md section 6, plus the "trigger and business value" addendum,
-# plus the spear shield chat/architecture/under the hood tabs, PHASE2_PLAN.md
-# section 8. one file now: service account, its node reader rbac, and the
-# deployment/service that actually run as that account, merged together
-# since all three only ever get applied as one unit, see git history for
-# the three file version if the split history is ever needed again.
-#
-# no longer a configmap mounted stdlib script: reading a completed autorag
-# run's per pattern scores needs a real signed s3 get (boto3), and triggering
-# kfp runs correctly needs the real kfp rest field names (not a hand rolled
-# json body), so this ships as a built image, source lives in
-# console-backend/ at the repo root, built and pushed the same way the
-# console plugin's own frontend image is (oc new-build/oc start-build
-# --from-dir, into this namespace's own internal registry image stream, see
-# PHASE1_PLAN.md).
-#
-# mlflow reads still use this pod's own service account token (unchanged
-# rbac, its own mlflow grant lives in
-# manifests/spear-pipelines/04-console-backend-mlflow-rbac.yaml instead,
-# not here). anything that touches the kfp pipeline server uses the signed
-# in user's own forwarded token instead, since the consoleplugin proxy
-# alias is authorization: UserToken now, not None, see
-# charts/openshift-console-plugin/templates/consoleplugin.yaml. that keeps
-# this backend's own service account from ever gaining kfp trigger power
-# just by existing, only a real signed in user with real rbac on this
-# project's own pipeline resources can actually trigger or inspect a run
-# through it.
-#
-# MLFLOW_URL, DSPA_ROUTE, GUARDRAILS_ROUTE, MINIO_CONSOLE_URL and
-# RHOAI_DASHBOARD_URL are deliberately not set here: all five are openshift
-# route hostnames, unique per cluster, so baking one in would silently break
-# on any cluster other than the one this was first written against.
-# scripts/08-install-console.sh resolves them live via
-# `oc get route`/`oc get mlflow` and injects them with `oc set env` after
-# this manifest is applied, safe to rerun.
-#
-# every pipeline/experiment name, bucket, secret name and autorag knob
-# server.py uses (RAG_WORKSPACE, AUTORAG_GENERATION_MODELS and so on) is
-# also an env var now, not a baked in constant, so this deployment can be
-# retuned with `oc set env` alone, no rebuild. see server.py's own module
-# level defaults for the full list and scripts/08-install-console.sh
-# for where this project sets them explicitly.
+# console plugin backend: SA, node reader RBAC, deployment (image from console-backend/)
+# route URLs injected by scripts/08-install-console.sh; kfp calls use the signed in user token, not this SA
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: spear-console-backend
   namespace: spear-console
 ---
-# the kata-vs-runc demo's node level capacity step: the backend reads the
-# real worker each sandbox actually landed on (its cpu/memory capacity,
-# the node level equivalent of the sandbox's own nproc / free -h).
-# cluster scoped ClusterRole + Binding on the service account above, read
-# only get on nodes, see console-backend/server.py's _node_status. no
-# resourceNames pin possible here: node placement is dynamic, the scheduler
-# decides, the worker a sandbox lands on is never a fixed pod name like the
-# sandbox reader Role over in spear-agents pins
+# node reader for kata vs runc demo (_node_status); no resourceNames pin (dynamic placement)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -102,7 +54,7 @@ spec:
             # read only use of the same shared minio credential every other
             # pipeline component in this project already uses, see
             # pipelines/corpus_prepare/pipeline.py's _use_minio_creds. this
-            # backend only ever calls get_object/list_objects_v2 with it.
+            # backend only ever calls get_object/list_objects_v2 with it
             - name: MINIO_ACCESS_KEY
               valueFrom:
                 secretKeyRef:

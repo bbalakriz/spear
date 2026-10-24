@@ -1,12 +1,4 @@
-# openshift sandboxed containers (kata): optional vm isolation for openshell
-# sandboxes via RuntimeClass kata. the guest kernel needs nf_tables modules
-# for openshell network-init; 08-kata-nftables-patch.yaml adds them.
-#
-# KataConfig is applied by scripts/00-a-install-platform.sh after this
-# Subscription is ready. that script picks worker vs master (sno), pre
-# labels only the target nodes with node-role.kubernetes.io/kata-oc
-# (skipping control planes that also stamp the worker role), and sets
-# kataConfigPoolSelector to that kata-oc label so masters are not enrolled.
+# optional kata RuntimeClass; network-init needs nf_tables (08-kata-nftables-patch.yaml)
 apiVersion: v1
 kind: Namespace
 metadata:

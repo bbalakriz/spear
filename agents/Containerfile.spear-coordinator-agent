@@ -1,8 +1,6 @@
-# spear-coordinator-agent for openshell sandboxes, same base image and
-# shape as the reference's Containerfile.openshell.coordinator: iproute
-# and nftables are genuinely needed inside the image, not optional, the
-# openshell supervisor's own network policy enforcement depends on them
-# being present in the sandbox's own filesystem.
+# spear-coordinator-agent for openshell sandboxes. iproute and nftables
+# are required, not optional, the openshell supervisor's network policy
+# enforcement depends on them being present in the sandbox filesystem.
 #
 # build in cluster:
 #   oc start-build spear-coordinator-agent --from-dir=agents --wait -n spear-agents
@@ -16,9 +14,7 @@ RUN dnf install -y --nodocs iproute nftables && dnf clean all && rm -rf /var/cac
 RUN install -d -o 1001 -g 0 -m 775 /sandbox
 WORKDIR /sandbox
 
-# mlflow-skinny, for the real in process tracing in main.py,
-# PHASE3_PLAN.md section 4. installed as root, same as retrieval's own
-# requirements.txt install below, before dropping to 1001
+# mlflow-skinny for in process tracing in main.py; installed as root before dropping to 1001
 COPY spear-coordinator-agent/requirements.txt /sandbox/requirements.txt
 RUN pip install --no-cache-dir -r /sandbox/requirements.txt
 

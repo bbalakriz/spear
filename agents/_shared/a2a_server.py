@@ -63,10 +63,7 @@ def serve(host: str, port: int, on_rpc: JsonHandler, on_card: Callable[[], dict[
                 # a plain Authorization header on this request, not inside
                 # the json-rpc body, that is how an ordinary http caller
                 # like spear-console-backend actually sends a bearer token.
-                # the full header map rides along too now, PHASE3_PLAN.md
-                # section 4: it is the only way retrieval ever sees the
-                # coordinator's own outbound traceparent header to stitch
-                # its own mlflow spans onto the same real trace
+                # full header map so retrieval can read traceparent for mlflow stitching
                 result = on_rpc(body, self.headers.get("authorization", ""), dict(self.headers))
             except Exception as exc:  # noqa: BLE001
                 result = {
@@ -102,14 +99,11 @@ def text_from_message(payload: dict[str, Any]) -> str:
 
 
 def caller_token_from_message(payload: dict[str, Any]) -> str | None:
-    """pulls out the one extra field this project's own a2a envelope
-    carries beyond the plain a2a spec, params.callerToken, the real end
-    user's own keycloak jwt, section 7's own point of having two agents
-    at all: the coordinator's outbound Authorization header on this hop
-    proves which workload is calling (spire svid -> keycloak access
-    token, via openshell token_grant), not which end user, so the end
-    user's own token has to travel as application level payload instead,
-    not a real a2a spec field, ours to add since we write both ends
+    """params.callerToken, the one extra field this project's a2a
+    envelope carries beyond the plain a2a spec: the end user's keycloak
+    jwt. the outbound Authorization header on this hop already proves
+    which workload is calling, not which end user, so the end user's
+    token travels as application level payload instead.
     """
     params = payload.get("params") or {}
     token = params.get("callerToken")

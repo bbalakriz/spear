@@ -2,52 +2,29 @@
 """stdlib reverse proxy that puts externalized, gateway side guardrail
 checks in front of any mcp backend, no backend code changes needed.
 
-sits between the httproute and the real mcp server, see
-manifests/spear-agents/04-mcp-guard-proxy.yaml, replacing the
-backend service as the httproute's own backendref, then reissuing every
-request to the real backend itself over the cluster network. tools/call
-requests are inspected on the way in (request guard) and the real
-backend's own response is inspected on the way out (response guard),
-everything else (initialize, tools/list, ping, notifications) passes
-through untouched.
+sits between the httproute and the real mcp server (see
+manifests/spear-agents/04-mcp-guard-proxy.yaml), replacing the backend
+as the httproute's backendref. tools/call is inspected on the way in
+(request guard) and the response on the way out (response guard),
+everything else passes through untouched.
 
-one shared deployment fronts every mcp server, not one per server. found
-live, not guessed: mcp-gateway's own ext_proc filter already stamps
-x-mcp-servername on every request, "<namespace>/<server-name>", the same
-value kuadrant's own tool-access-check AuthPolicy already keys its rbac
-off, see manifests/spear-agents/02-mcp-gateway.yaml. every
-mcp server built here follows the same shape, a Service named after the
-server on port 8000 serving /mcp, so the real upstream is derivable from
-that one header, no per server env var, no mapping file to maintain.
-onboarding a new server is a one line httproute backendref change to
-this same shared proxy service, nothing else.
+one shared deployment fronts every mcp server: mcp-gateway's ext_proc
+filter stamps x-mcp-servername ("<namespace>/<server-name>") on every
+request, the same value kuadrant's tool-access-check keys its rbac off,
+and every mcp server here follows the same Service/port/path shape, so
+the real upstream derives from that one header, no mapping file needed.
+mcp-manager's internal discovery calls bypass that filter though and
+carry gateway-server-id instead, same pair, see resolve_upstream.
 
-a second source for that same namespace/name pair, found live, not
-documented anywhere: mcp-gateway's own internal mcp-manager component
-dials this proxy directly to discover each registered server's own
-tools, bypassing the envoy listener and its ext_proc filter entirely for
-that one connection, so x-mcp-servername is never present on it. it does
-carry a gateway-server-id header instead, same namespace/name pair as
-its own prefix, see resolve_upstream's own comment for the full story.
-this is what makes the shared deployment actually scale past one mcp
-server, a single UPSTREAM_URL fallback cannot tell two servers' own
-discovery connections apart.
+exists instead of wiring nemo guardrails as envoy ext_proc filters
+because of an open upstream bug: a second ext_proc filter hangs reading
+a request body a first one already read, independent of body mode. see
+llm-d/llm-d-inference-payload-processor#209 and
+opendatahub-io/ai-gateway-payload-processing#377, both open as of this
+writing. plain http proxying has none of that fragility.
 
-why this exists instead of wiring nemo-request-guard/nemo-response-guard
-as envoy ext_proc filters: a real, open upstream bug hangs a second
-ext_proc filter trying to read a request body that a first ext_proc
-filter already read, confirmed live on this cluster this same
-investigation, independent of body mode (BUFFERED or FULL_DUPLEX_STREAMED)
-and independent of whether mcp-gateway's own ext_proc filter is present
-at all. see llm-d/llm-d-inference-payload-processor#209 and
-opendatahub-io/ai-gateway-payload-processing#377, both open, no merged
-fix as of this writing. plain http proxying has none of that fragility,
-same pattern this project already uses everywhere else, this file is
-close kin to spear-openproject-mcp's own server.py on purpose.
-
-happy path (both checks pass) is a byte for byte pass through of the
-real backend's own response, we only ever re encode a response when
-overriding a blocked tool call's result.
+happy path is a byte for byte pass through of the real response, we
+only re encode when overriding a blocked tool call's result.
 """
 
 from __future__ import annotations

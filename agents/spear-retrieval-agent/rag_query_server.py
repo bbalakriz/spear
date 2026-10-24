@@ -3,18 +3,9 @@
 abac_filtered_search, deployed inside spear-data itself, not inside the
 kata sandboxed retrieval agent.
 
-exists for one concrete reason, confirmed live: this cluster's openshell
-build does not advertise transparent tcp support ("candidate policy
-introduces protocol: tcp, but the runtime does not advertise transparent
-tcp support"), so the raw postgres connection rag_query.py's own
-connect() needs cannot be made from inside the sandboxed retrieval
-agent at all, sql protocol hit the same unsupported transparent tcp
-layer underneath and failed the same way with a silent connection
-refused. this relay runs the same two calls unsandboxed, in a plain
-pod with ordinary network access, and the sandboxed retrieval agent's
-own main.py calls this over plain http (the one transport the sandbox's
-rest protocol policy already proves works) instead of importing
-rag_query.py's db functions directly.
+openshell here has no transparent tcp, so the kata retrieval agent cannot
+reach postgres directly. this relay runs embed_query and abac_filtered_search
+in a normal pod; retrieval calls it over http.
 """
 
 from __future__ import annotations
@@ -27,10 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.append(os.path.dirname(__file__))
 from rag_query import abac_filtered_search, connect, embed_query  # noqa: E402
 
-# NAMESPACE_MIGRATION_PLAN.md: this pod lives in spear-data, a different
-# namespace than ogx (spear-inference) now, ogx's own NetworkPolicy needs
-# an explicit namespaceSelector rule for spear-data to still allow this
-# call, see manifests/spear-inference/01-ogxserver.yaml
+# pod in spear-data; ogx NetworkPolicy must allow that namespace for /v1/embeddings
 OGX_BASE_URL = os.environ.get("OGX_BASE_URL", "http://spear-ogx-service.spear-inference.svc.cluster.local:8321")
 
 

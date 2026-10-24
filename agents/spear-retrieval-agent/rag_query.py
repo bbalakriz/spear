@@ -1,29 +1,18 @@
 #!/usr/bin/env python3
-"""abac filtered rag query, the retrieval half of spear-retrieval-agent's
-own RAG tool, PHASE2_PLAN.md section 3.
+"""abac filtered rag query for spear-retrieval-agent rag_search.
 
-checked live before writing this, not assumed either way per that
-section's own instruction: OGX's own File Search / Vector Stores api
+OGX File Search / Vector Stores api
 (confirmed this is llama-stack under the OGX branding, port 8321) only
 knows about vector stores it manages itself, 32 of them found live on
 this cluster, each backed by its own private "vs_vs_<uuid>" table in
 ragdb. rag_chunks, the real abac tagged table phase1_apply_pattern writes
 to directly, is a separate hand rolled table outside that abstraction
 entirely, never registered as one of OGX's own vector stores, so File
-Search has no mechanism to reach it at all. OGX is therefore used here
-purely as the embedding model provider, /v1/embeddings only, the honest
-fallback that section already called out, not a shortcut.
+Search has no mechanism to reach it at all. OGX is used here purely as
+the embedding model provider, /v1/embeddings only.
 
-the pre retrieval ABAC filter itself was reverse checked against
-PHASE2_PLAN.md section 6's own worked persona example on the real live
-data, not copied verbatim from section 3's looser prose, since a literal
-reading of that prose (clearance_level = 'general' alone granting cross
-dept visibility) would have let both demo personas see doc-001 (hr,
-general), which section 6 explicitly says neither should see. the real
-signal distinguishing the one doc both personas do see outside their own
-dept (POLICY-DG-042) from the one neither sees despite also being general
-(doc-001) is project_scope = 'enterprise-wide', confirmed against the
-live rows, not clearance_level alone.
+abac filter uses clearance rank plus dept/team and project_scope enterprise wide,
+not clearance_level alone (see persona examples in docs).
 
 the filter lives once, on rag_chunks itself
 (pipelines/corpus_index/pipeline.py, the schema owner). this
@@ -49,12 +38,7 @@ OGX_BASE_URL_DEFAULT = "http://spear-ogx-service.spear-inference.svc.cluster.loc
 # embedded with a different model would not even be comparable
 EMBEDDING_MODEL = "vllm-embedding/nomic-embed-text-v1.5"
 
-# general is the floor every real persona here has, confirmed live
-# against rag_chunks only general/restricted exist today, kept as a rank
-# rather than hardcoded to two values so a future confidential/top_secret
-# tier slots in without touching the query itself. a clearance_level this
-# project does not recognize ranks above everything, fail closed rather
-# than open
+# clearance as rank; unknown levels fail closed
 CLEARANCE_RANK = {"general": 0, "restricted": 1, "confidential": 2, "top_secret": 3}
 
 
@@ -64,9 +48,7 @@ def allowed_clearance_levels(caller_clearance: str) -> list[str]:
 
 
 def embed_query(text: str, ogx_base_url: str = OGX_BASE_URL_DEFAULT) -> list[float]:
-    # same call shape phase1_apply_pattern's own embed_chunks already
-    # uses, no auth header, confirmed live that this cluster's internal
-    # embeddings route does not require one
+    # same shape as corpus_index embed_chunks; internal route needs no auth header
     resp = requests.post(
         f"{ogx_base_url}/v1/embeddings",
         json={"model": EMBEDDING_MODEL, "input": [text]},
@@ -146,8 +128,7 @@ def connect():
 
 
 def main() -> None:
-    # manual test harness for now, spear-retrieval-agent's own server
-    # will call embed_query/abac_filtered_search directly once it exists
+    # manual test harness; main.py calls embed_query/abac_filtered_search directly
     parser = argparse.ArgumentParser(description="abac filtered rag query, manual test harness")
     parser.add_argument("question")
     parser.add_argument("--clearance", required=True)

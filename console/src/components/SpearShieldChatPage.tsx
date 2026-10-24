@@ -31,11 +31,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './spear-shield-chat.css';
 
-// PHASE2_PLAN.md section 8: no persona picker here, this page always asks
-// as whoever is actually signed into the console right now. the backend
-// resolves that real identity from the forwarded token itself, this page
-// never sends a username anywhere, see console-backend/server.py's
-// ask_spear_shield.
+// no persona picker; backend resolves identity from the forwarded token
 const PROXY_PATH = '/api/proxy/plugin/spear-console/backend';
 
 interface TraceStep {
@@ -45,17 +41,13 @@ interface TraceStep {
   from: string;
   to: string;
   protocol: string;
-  // false only for a hop that was genuinely refused or failed, missing
-  // entirely on older cached turns, treated as ok in that case so this
-  // stays backward compatible rather than flagging everything red
+  // false when a hop was refused or failed; missing on older traces means ok
   ok?: boolean;
-  // real wall clock moment this hop finished, epoch ms, missing on
-  // older cached turns from before the backend started sending it
+  // epoch ms when the hop finished; missing on older traces
   timestamp_ms?: number;
 }
 
-// hh:mm:ss.mmm in the browser's own local time, short enough to sit
-// next to the duration without crowding the step name above it
+// local time with ms for hop labels
 function formatHopTime(ms?: number): string | null {
   if (!ms) return null;
   const d = new Date(ms);
@@ -64,9 +56,7 @@ function formatHopTime(ms?: number): string | null {
   return `${time}.${millis}`;
 }
 
-// every real component name the backend trace can ever name on either
-// side of a hop, mapped to an icon, so the timeline reads as actual
-// named infrastructure rather than generic numbered steps
+// trace node names to icons
 const NODE_ICON: Record<string, ComponentType> = {
   'owner-console-backend': OutlinedUserIcon,
   'coordinator-agent (runc sandbox)': ShieldAltIcon,
@@ -76,12 +66,7 @@ const NODE_ICON: Record<string, ComponentType> = {
   'rag-query-relay': DatabaseIcon,
 };
 
-// one real hop in the live trace, rendered as a single row on a running
-// vertical rail rather than a pair of boxes with an arrow between them,
-// a continuous timeline of what the request actually did in order. a
-// hop the backend marked ok: false was a genuine refusal or failure,
-// the dot, the step name and the detail line all turn red for it, so
-// the exact point a blocked request stopped is obvious at a glance
+// one hop on a vertical timeline; ok false styles as blocked
 const TimelineHop = ({ hop, isLast }: { hop: TraceStep; isLast: boolean }) => {
   const isBlocked = hop.ok === false;
   const ToIcon = NODE_ICON[hop.to] ?? CubesIcon;
@@ -149,11 +134,7 @@ const TimelineHop = ({ hop, isLast }: { hop: TraceStep; isLast: boolean }) => {
           style={{
             display: 'block',
             color: isBlocked ? dangerColor : undefined,
-            // detail now carries real multi line evidence for mcp tool call
-            // hops (caller claims, the authorino rule, the mcp server's own
-            // outcome), each on its own line, pre wrap keeps those line
-            // breaks and the mono font keeps the label columns aligned,
-            // a plain one line detail still renders exactly as before
+            // pre-wrap for multi line mcp evidence in detail
             whiteSpace: 'pre-wrap',
             fontFamily: 'var(--pf-t--global--font--family--mono, monospace)',
           }}
@@ -172,9 +153,7 @@ interface ChatTurn {
   trace?: TraceStep[];
 }
 
-// a small typing indicator, three dots cycling through, rendered while a
-// question is in flight, same spirit as any modern chat product's own
-// "assistant is typing" affordance rather than a plain generic spinner
+// typing indicator while ask is in flight
 const TypingIndicator = () => {
   const [dots, setDots] = useState(1);
   useEffect(() => {
@@ -201,9 +180,7 @@ const UserAvatar = () => (
 );
 
 const RequestTrace = ({ trace }: { trace: TraceStep[] }) => {
-  // a blocked turn starts expanded, not collapsed behind an extra click,
-  // and names the one real reason inline rather than leaving the viewer
-  // to open the timeline just to find out something was refused at all
+  // expand when a hop was blocked
   const blockedHop = trace.find((h) => h.ok === false);
   const [isExpanded, setIsExpanded] = useState(Boolean(blockedHop));
   const toggleText = isExpanded
@@ -234,8 +211,7 @@ export default function SpearShieldChatPage() {
   const [draft, setDraft] = useState('');
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [busy, setBusy] = useState(false);
-  // scrolls the latest turn into view once it lands, a chat page reads
-  // oddest when a new answer appears below the fold
+  // scroll new turns into view
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const ask = () => {
@@ -311,12 +287,7 @@ export default function SpearShieldChatPage() {
                       {!turn.error && turn.answer === undefined && <TypingIndicator />}
                       {!turn.error && turn.answer !== undefined && (
                         <>
-                          {/* the coordinator's own system prompt pins the answer to
-                              markdown, so it renders here through a real markdown
-                              renderer, not a pre-wrap text blob that shows raw ##,
-                              *, | syntax, this holds regardless of which model sits
-                              behind the prompt since react-markdown handles the full
-                              commonmark plus gfm surface, tables included */}
+                          {/* coordinator answers are markdown */}
                           <div className="coordinator-answer-md">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.answer}</ReactMarkdown>
                           </div>

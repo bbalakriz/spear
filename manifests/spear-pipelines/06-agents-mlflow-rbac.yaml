@@ -1,16 +1,4 @@
-# real in process mlflow tracing for both sandboxed agents,
-# PHASE3_PLAN.md section 4. same cross namespace shape 02-mlflow-rbac.yaml
-# and 04-console-backend-mlflow-rbac.yaml already use and for the same
-# reason: mlflow authorizes a request by running its own kubernetes
-# SubjectAccessReview against the namespace the request's own
-# X-MLflow-Workspace header names, spear-pipelines here, not whatever
-# namespace the calling service account actually lives in
-# (spear-agents for both of these).
-#
-# confirmed live this is the real shape needed, not the generic
-# "get services" oauth-proxy style grant the existing guardrails caller
-# token uses, that shape authenticates fine but a real experiment or
-# trace write still comes back 403 PERMISSION_DENIED without this
+# agent sandboxes mlflow tracing RBAC (cross namespace like 02-mlflow-rbac.yaml)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

@@ -1,18 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# ogx server, foundation models plus embedding model wired in from the
-# start (manifests/spear-inference/01-ogxserver.yaml). used to be a two
-# stage deploy, a provider free probe cr applied first, then a second cr
-# replacing it once the api key secrets existed, consolidated into one
-# step on 2026-09-28: that split only existed while the real fix (the
-# image's own generic env var driven provider slots) was still being
-# found, it was never actually required. see 01-ogxserver.yaml's header
-# comment for the full history of the three operator bugs that shaped
-# this. needs pgvector (03-install-data.sh), run that first.
+# ogx server, embed server, judge proxy. needs 03-install-data.sh first.
 #
-# create the three api key secrets yourself first, in your own
-# terminal, so the raw keys never have to be shared with an assistant
-# or land in a chat transcript:
+# create api key secrets locally (do not paste keys into chat):
 #
 #   oc create secret generic ogx-glm-key -n spear-inference \
 #     --from-literal=apiKey='<the maas gateway key for glm-53-flash>'
@@ -26,10 +16,7 @@ set -euo pipefail
 #     --from-literal=apiKey='not-required-auth-disabled-on-tei'
 #   oc label secret ogx-embedding-key -n spear-inference ogx.io/watch=true
 #
-# litemaas scopes keys per model server side, confirmed live via a 401
-# when the chat model's key was reused for the embedding model, the
-# embedding key above is only a placeholder since the self hosted tei
-# server has no auth of its own, see 02-embed-server.yaml.
+# litemaas keys are per model; embedding uses tei with no auth (placeholder key ok)
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=./lib-common.sh
@@ -87,12 +74,7 @@ main() {
   require_secret ogx-glm-key
   require_secret ogx-litemaas-key
   require_secret ogx-embedding-key
-  # corpus_prepare's own eval dataset task (pipeline.py's _use_ogx_creds,
-  # running as a pod in spear-pipelines) reads ogx-glm-key via a
-  # secretKeyRef, which only ever resolves within the pod's own
-  # namespace. same cross namespace gap already fixed for pgvector-creds
-  # in 04-install-pipelines.sh, mirrored here too, confirmed live via
-  # "Error: secret ogx-glm-key not found" on a real sanitization run.
+  # corpus_prepare pods in spear-pipelines need ogx-glm-key locally
   log "mirroring ogx-glm-key into ${PIPELINES_NS}, corpus_prepare's own eval dataset task needs its own local copy"
   mirror_secret ogx-glm-key "${INFERENCE_NS}" "${PIPELINES_NS}"
 
@@ -115,7 +97,7 @@ main() {
   echo "${out}"
   if echo "${out}" | grep -q "glm-53-flash" && echo "${out}" | grep -q "vllm-inference/" \
     && echo "${out}" | grep -q "nomic-embed"; then
-    log "both foundation models and the embedding model confirmed live"
+    log "foundation and embedding models listed under /v1/models"
   else
     echo "warning: could not confirm all three model ids in /v1/models output above, inspect manually" >&2
   fi

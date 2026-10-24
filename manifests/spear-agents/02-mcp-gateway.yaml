@@ -1,20 +1,4 @@
-# the mcp gateway plus its own authpolicies, every mcp tool call
-# (worktracker, future tool servers) flows through here. the a2a gateway
-# each agent talks over is a separate object entirely, 07-a2a-gateway.yaml,
-# own listeners, own httproutes, not shared with this one. kept gateway
-# and authpolicy together in one file now, same inline shape the a2a
-# gateway already uses, instead of a gateway file and a separate
-# auth-policies file that only ever got applied back to back anyway.
-#
-# same two listener shape as the reference's own
-# manifests/10-agent-pack/02-mcp-gateway.yaml, own instance, own
-# namespace, agent-pack's gateway is not touched or shared, section 2.
-#
-# NAMESPACE_MIGRATION_PLAN.md: allowedRoutes.namespaces.from changed
-# from Same to All on both listeners. spear-openproject-mcp's own
-# HTTPRoute now lives in spear-worktracker, a different namespace than
-# this gateway, Same would silently reject that cross namespace
-# parentRef, re verify live once applied, not assumed
+# istio mcp gateway and routes for tool servers
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -59,10 +43,7 @@ spec:
     namespace: spear-agents
     sectionName: mcp
 ---
-# same two authpolicy shape as the reference's own
-# manifests/20-security/03-auth-policies.yaml, rebuilt against
-# spear-mcp-gateway and the spear-agents realm, own instance,
-# nothing shared with agent-pack, section 2.
+# kuadrant AuthPolicy for mcp gateway (spear-agents realm, not agent-pack)
 apiVersion: kuadrant.io/v1
 kind: AuthPolicy
 metadata:
@@ -112,12 +93,7 @@ spec:
       spear-shield-keycloak:
         jwt:
           issuerUrl: ISSUER_URL_PLACEHOLDER
-    # tool level rbac, same mcp-gateway-guide pattern the reference uses:
-    # the caller's resource_access claim, keyed by the mcp server's
-    # registration namespace/name, must contain "tool:<name>" for the
-    # tool named in x-mcp-toolname. matches the two real roles already
-    # on the spear-agents realm's spear-openproject-mcp resource
-    # client, section 6: tool:search_work_packages, tool:update_work_package
+    # tool RBAC: resource_access[x-mcp-servername] must include tool:<x-mcp-toolname>
     authorization:
       tool-access-check:
         when:

@@ -1,13 +1,4 @@
-# openproject's own postgres, separate from pgvector in spear-data and
-# from keycloak's own postgres, same plain Deployment plus PVC shape
-# manifests/spear-data/01-pgvector.yaml already uses in this repo.
-#
-# openproject uses structure.sql which sets transaction_timeout, a
-# postgres 17+ only configuration parameter, so we use
-# rhel9/postgresql-18
-#
-# spear-openproject-db-creds is generated once, out of band, same
-# generate-once-never-touch pattern pgvector-creds already uses
+# postgres for openproject
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# thin wrapper that runs the whole install chain in order, 01 through 09, then
-# 90-verify. every script in the chain is idempotent by design (safe to rerun),
-# so this is too: a rerun against an already installed cluster re-applies and
-# moves on. stops at the first failing script, unlike 90-verify's own deliberate
-# keep-going behavior, a broken prerequisite should not let the chain continue.
-# the manual steps this does NOT cover: a real ingestion run still needs a real
-# batch_id and a winning pattern from a completed autorag run, see
-# NAMESPACE_MIGRATION_PLAN.md section 10's own note.
+# runs install scripts 01 through 09, then 90-verify; stops on first failure.
+# autorag apply pattern still needs a manual batch_id and winning pattern.
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=./lib-common.sh

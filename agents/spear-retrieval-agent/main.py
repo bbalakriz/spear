@@ -1,41 +1,23 @@
 #!/usr/bin/env python3
-"""spear-retrieval-agent, PHASE2_PLAN.md section 7, steps 3 to 5.
+"""spear-retrieval-agent.
 
-the one that actually touches retrieved chunks and live work package
-data, kata isolated for exactly that reason, section 2. receives a
-batch of already model chosen tool calls from spear-coordinator-agent
-over a2a, plus the real end user's own jwt (params.callerToken, not
-its own inbound Authorization header, see _shared/a2a_server.py's own
-comment on why), and executes each one for real:
+executes rag and work tracker tool calls in a kata sandbox. receives a
+batch of tool calls from spear-coordinator-agent over a2a, plus the end
+user's own jwt (params.callerToken, see _shared/a2a_server.py), then:
 
-- rag_search: decodes the caller's own clearance_level/dept/team out of
-  their real jwt and forwards them to rag-query-relay, a small
-  unsandboxed http wrapper around rag_query.py's own abac_filtered_search
-  deployed inside spear-data itself, not called directly from in here:
-  this cluster's openshell build does not advertise transparent tcp
-  support, confirmed live, so the raw postgres connection
-  abac_filtered_search needs cannot be made from inside this sandbox at
-  all, see rag_query_server.py's own module docstring
-- search_work_packages / update_work_package: forwards the caller's own
-  jwt as the Authorization header on a real tools/call against
-  spear-mcp-gateway, the same full path PHASE2_PLAN.md section 4
-  already live tested end to end (siddhartha.de's own real tool rbac
-  and assignee=self results), this code is just the first thing to
-  actually call it as a real a2a delegated action instead of a one off
-  curl
+- rag_search: decodes clearance_level/dept/team from the jwt and forwards
+  them to rag-query-relay, a small unsandboxed wrapper around
+  rag_query.py's abac_filtered_search in spear-data. this cluster's
+  openshell build has no transparent tcp, so no direct postgres from here
+- search_work_packages / update_work_package: forwards the jwt as the
+  Authorization header on a tools/call against spear-mcp-gateway
 
-honest note on what is, and is not, independently re verified at this
-hop: the caller's jwt here is read without a local signature check,
-same rationale spear-openproject-mcp's own caller_username() already
-documents, extended one hop further. this hop's own inbound
-Authorization (the coordinator's workload identity) is what
-authorino's a2a gateway authpolicy actually checks, not
-params.callerToken, that field is invisible to a header based jwt
-check entirely. the callerToken's own signature still gets checked for
-real at the next hop, spear-mcp-gateway's own tool rbac authpolicy,
-exactly the same as if it had been sent there directly, so a forged or
-tampered token still fails there with a real 401/403, not silently
-accepted here and laundered through.
+the jwt is read here without a local signature check, same rationale as
+spear-openproject-mcp's caller_username(). authorino's a2a gateway
+authpolicy checks this hop's own inbound Authorization instead, not
+callerToken, that field is invisible to a header based check. the
+signature still gets checked for real at the mcp gateway hop, so a
+forged token still fails there with a real 401/403.
 """
 
 from __future__ import annotations
@@ -60,48 +42,27 @@ NAME = os.environ.get("AGENT_NAME", "spear-retrieval-agent")
 VERSION = os.environ.get("AGENT_VERSION", "0.1.0")
 PUBLIC_URL = os.environ.get("AGENT_PUBLIC_URL", f"http://{NAME}:{PORT}/")
 
-# the gateway's own istio service directly, same dual mechanism
-# PHASE2_PLAN.md section 4's own live test used: connect to the service
-# by its real cluster dns name, but override the http Host header to
-# the gateway's actual listener hostname so its own HTTPRoute matches,
-# a plain ClusterIP hit without that header override does not route
-# anywhere, confirmed live in that section, not re-guessed here
+# cluster dns to the istio service plus Host header for HTTPRoute match
 MCP_GATEWAY_URL = os.environ.get(
     "MCP_GATEWAY_URL", "http://spear-mcp-gateway-istio.spear-agents.svc.cluster.local:8080/mcp"
 )
-# no cluster specific fallback on purpose, nothing in this source tree
-# should bake in one cluster's own hostname, this always comes from the
-# --env the sandbox was created with (scripts/08-install-spear-agents.sh's
-# own resolve_hosts, MCP_PUBLIC_HOST)
+# no cluster specific fallback; always comes from the sandbox's own --env (MCP_PUBLIC_HOST)
 MCP_GATEWAY_HOST_HEADER = os.environ["MCP_GATEWAY_HOST_HEADER"]
-# the broker prefixes every federated tool name with the registered mcp
-# server's own short name, confirmed live in section 4,
-# openproject_search_work_packages / openproject_update_work_package,
-# not the bare names spear-openproject-mcp's own tools/list returns
+# broker prefixes tool names with the mcp server short name, not the bare
+# names spear-openproject-mcp's own tools/list returns
 MCP_TOOL_PREFIX_MAP = {
     "search_work_packages": "openproject_search_work_packages",
     "update_work_package": "openproject_update_work_package",
 }
-# the real resource client id authorino's own tool-access-check predicate
-# keys resource_access off, straight out of 01-keycloak-realm.yaml's own
-# spear-openproject-mcp tool roles client, not re-typed as a guess, this
-# is the exact key a caller's own token carries its tool:<name> roles
-# under for this one mcp server
+# resource client id authorino's tool-access-check keys resource_access
+# off, from 01-keycloak-realm.yaml's spear-openproject-mcp tool roles client
 MCP_SERVER_RESOURCE_KEY = "spear-worktracker/spear-openproject-mcp"
-# the exact prefixes mcp-servers/spear-mcp-guard-proxy/server.py's
-# own blocked_result() writes, "tool call blocked by guardrails" for its
-# request side check, "tool response blocked by guardrails" for its
-# response side one, the one honest way from here to tell a guard proxy
-# block apart from spear-openproject-mcp's own assignee=self refusal,
-# both come back as a plain isError result, nothing else distinguishes them
+# exact prefixes spear-mcp-guard-proxy/server.py's blocked_result() writes;
+# the only way to tell a guard proxy block apart from an assignee=self
+# refusal, both come back as a plain isError result otherwise
 GUARD_PROXY_BLOCK_PREFIXES = ("tool call blocked by guardrails", "tool response blocked by guardrails")
 
-# rag-query-relay, not pgvector or ogx directly, see rag_query_server.py's
-# own module docstring: this cluster's openshell build does not
-# advertise transparent tcp support, so the sandboxed retrieval agent
-# cannot open a raw postgres connection itself at all, a plain http
-# call to this relay is the one transport the rest protocol policy
-# already proves works from inside this sandbox
+# http wrapper, not pgvector/ogx directly, no transparent tcp from this sandbox
 RAG_QUERY_RELAY_URL = os.environ.get(
     "RAG_QUERY_RELAY_URL", "http://spear-shield-rag-query-relay.spear-data.svc.cluster.local:8080/search"
 )
@@ -155,14 +116,8 @@ def _trace_step(
     protocol: str,
     ok: bool = True,
 ) -> None:
-    # same shape as spear-coordinator-agent's own helper, real wall clock
-    # timing per hop, spliced into the coordinator's own trace one level
-    # up so spear-console's chat page shows the whole chain as one
-    # timeline. ok is false only for a hop that was genuinely refused or
-    # failed, so the timeline can render exactly that step red instead
-    # of leaving the viewer to guess which one actually blocked the
-    # request. timestamp_ms is wall clock (time.time()), duration_ms
-    # stays on time.monotonic() so it can't be skewed by a clock jump
+    # same shape as spear-coordinator-agent's own helper, spliced into the
+    # coordinator's trace so the chat page shows one unified timeline
     trace.append(
         {
             "step": step,
@@ -179,10 +134,8 @@ def _trace_step(
 
 @mlflow_tracing.trace(name="rag_search", span_type=mlflow_tracing.SPAN_TYPE_RETRIEVER)
 def run_rag_search(arguments: dict[str, Any], claims: dict[str, Any], trace: list[dict[str, Any]]) -> str:
-    # no bearer token in this function's own arguments, safe to let the
-    # decorator above auto capture them as the span's real input,
-    # unlike run_work_tracker_tool below, which closes over caller_token
-    # in a nested function instead for exactly that reason
+    # no bearer token in these arguments, safe to let the decorator auto
+    # capture them; run_work_tracker_tool below closes over caller_token instead
     query = str(arguments.get("query", "")).strip()
     if not query:
         return json.dumps({"error": "rag_search needs a query"})
@@ -215,12 +168,7 @@ def run_rag_search(arguments: dict[str, Any], claims: dict[str, Any], trace: lis
     )
     if "error" in response:
         return json.dumps({"error": response["error"]})
-    # was content[:800], an arbitrary preview length that happened to cut
-    # off before a real chunk's own sensitive content in a live trace,
-    # confirmed via rag_chunks directly: every chunk in this corpus is
-    # written at a fixed 2048 char size (phase1_apply_pattern's own
-    # chunk_size), so trimming to that instead of a shorter guess means
-    # the model always sees a whole chunk, never a silent partial one
+    # trim to corpus chunk_size so the model sees whole chunks, not a short preview
     trimmed = [
         {"doc_id": r["doc_id"], "source": r["source"], "content": r["content"][:2048]}
         for r in documents
@@ -259,12 +207,8 @@ def run_work_tracker_tool(
     name: str, arguments: dict[str, Any], caller_token: str, trace: list[dict[str, Any]]
 ) -> str:
     started_at = time.monotonic()
-    # decoded once, up front, same helper rag_search already uses below,
-    # this is the one real fact every branch's own evidence line needs:
-    # what tool roles did the caller's own token actually carry. 'held'
-    # mirrors authorino's own tool-access-check predicate exactly, so it
-    # is a live computed answer, not a label chosen to match whichever
-    # branch the real call happened to land in
+    # held mirrors authorino's own tool-access-check predicate exactly,
+    # computed live, not a label chosen to match whichever branch fired
     claims = decode_claims(caller_token)
     roles = (claims.get("resource_access") or {}).get(MCP_SERVER_RESOURCE_KEY, {}).get("roles", [])
     held = f"tool:{name}" in roles
@@ -281,16 +225,9 @@ def run_work_tracker_tool(
         )
 
     def _guardrails_evidence(stage: str, verdict_text: str) -> str:
-        # a response guard block, not a request guard one, see
-        # mcp-servers/spear-mcp-guard-proxy/server.py: the real
-        # spear-openproject-mcp already ran and already returned the
-        # real, now malicious, work package text, the assignee=self
-        # check never even ran, there was nothing wrong with who asked.
-        # verdict_text looks like "blocked (regex check input)", that
-        # rail name is nemoguardrails' own name for it, describing the
-        # text it was handed, not which side of this proxy called it.
-        # the guard proxy line below already states the real side,
-        # response guard, so the rail name needs no extra caveat
+        # a response guard block (spear-mcp-guard-proxy/server.py): the
+        # tool already ran and returned the malicious text, the
+        # assignee=self check never ran, nothing was wrong with who asked
         status_word, _, rail_name = verdict_text.partition("(")
         status_word = status_word.strip()
         rail_name = rail_name.rstrip(")").strip()
@@ -303,16 +240,10 @@ def run_work_tracker_tool(
 
     @mlflow_tracing.trace(name=f"mcp tool call: {name}", span_type=mlflow_tracing.SPAN_TYPE_TOOL)
     def _call(tool_name: str, tool_arguments: dict[str, Any]) -> dict[str, Any]:
-        # caller_token reaches mcp_call only through this closure, never
-        # as one of this function's own bound arguments, same rule as
-        # delegate_tool_calls' own _delegate in the coordinator: a
-        # bearer token must never land in a trace
+        # caller_token stays in this closure, never a bound argument, same
+        # rule as delegate_tool_calls' _delegate in the coordinator
         span = mlflow_tracing.current_span()
-        # the gateway's own per tool rbac authpolicy rejects a disallowed
-        # tool call with a real http error status before spear-openproject-mcp
-        # ever sees it, which urllib raises as an exception rather than
-        # handing back a normal response body, confirmed live for a caller
-        # lacking the update_work_package role
+        # gateway tool rbac raises HTTPError before openproject mcp sees the call
         try:
             response = mcp_call(tool_name, tool_arguments, caller_token)
         except urllib.error.HTTPError as exc:
@@ -332,13 +263,9 @@ def run_work_tracker_tool(
         result = response.get("result") or {}
         content = result.get("content") or []
         text = content[0].get("text") if content else json.dumps(result)
-        # a refusal that reaches this point came back as a normal http 200,
-        # spear-openproject-mcp's own assignee=self check for example, see
-        # its server.py, "error" in the jsonrpc body or isError on the mcp
-        # result are both still a real block even with no exception at all.
-        # the gateway's own guard proxy writes this exact same isError
-        # shape for its own, entirely different, response guard block, see
-        # GUARD_PROXY_BLOCK_PREFIXES above for how this tells them apart
+        # a refusal (assignee=self, server.py) comes back as a normal http
+        # 200 with "error" or isError set, same shape the guard proxy uses
+        # for its own response block, see GUARD_PROXY_BLOCK_PREFIXES
         blocked = "error" in response or bool(result.get("isError"))
         category = "assignee-self"
         if blocked and result.get("isError") and text.startswith(GUARD_PROXY_BLOCK_PREFIXES):
@@ -347,8 +274,7 @@ def run_work_tracker_tool(
             span.set_attribute("ok", not blocked)
             if blocked:
                 span.set_attribute("category", category)
-            # the real mcp result, not just whether it was blocked, this
-            # is what a reviewer or an eval judge actually needs to see
+            # the real mcp result, not just blocked/ok, is what a reviewer needs
             span.set_outputs({"error": response["error"]} if "error" in response else result)
         if "error" in response:
             return {"kind": "assignee-self", "detail": response["error"]}
@@ -372,9 +298,8 @@ def run_work_tracker_tool(
         )
         return json.dumps({"error": outcome["detail"]})
     if kind == "hop-failure":
-        # a real infra failure, not a security decision, the claims and
-        # policy evidence above has nothing to say about a timeout or a
-        # dropped connection, so it stays out of this one branch only
+        # a real infra failure, not a security decision, so the claims and
+        # policy evidence above stays out of this branch
         _trace_step(
             trace,
             f"mcp tool call: {name}",
@@ -387,17 +312,10 @@ def run_work_tracker_tool(
         )
         return json.dumps({"error": outcome["detail"]})
     if kind == "guardrails":
-        # the gateway's own guard proxy caught this on the way out, see
-        # _guardrails_evidence above for why this is a response guard
-        # block, not the tool-rbac or assignee-self evidence shape, a
-        # genuinely different mechanism fired here. outcome['detail'] is
-        # the guard proxy's own full sentence, "tool response blocked by
-        # guardrails, verdict: ...", the evidence line below only needs
-        # the verdict part, not that same sentence twice. the stage word
-        # is real too, GUARD_PROXY_BLOCK_PREFIXES's own two literal
-        # strings, "tool call ..." for the request guard, "tool
-        # response ..." for the response guard, this one is always the
-        # latter for a search/update refusal, call never gets this far
+        # the gateway's guard proxy caught this on the way out, a
+        # genuinely different mechanism than tool-rbac/assignee-self.
+        # detail is "tool response blocked by guardrails, verdict: ...",
+        # the evidence line only needs the verdict part
         verdict_text = outcome["detail"].rsplit("verdict:", 1)[-1].strip()
         stage = "response" if outcome["detail"].startswith("tool response") else "call"
         _trace_step(
@@ -453,18 +371,11 @@ def run_tool_call(
 
 def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> dict[str, Any] | None:
     method = body.get("method")
-    # demo only method, spear-console's security demo page uses this to
-    # prove the coordinator's workload identity hop live. confirmed this
-    # session that reading our own inbound authorization header here is
-    # not a useful proof: the openshell a2a router that forwards traffic
-    # into this sandbox strips any caller presented authorization header
-    # before it lands here, for every caller, not just this one, a sound
-    # anti spoofing property since a2a itself has no per hop auth of its
-    # own. this handler just confirms the call reached us at all, the
-    # actual proof is the contrast spear-console-backend builds: the
-    # identical naked call from outside any sandbox gets a clean 401 from
-    # the retrieval a2a gateway's own authpolicy, the real coordinator
-    # process making the same call with no token of its own succeeds
+    # demo only: console's security page proves the workload identity hop.
+    # openshell strips any caller presented authorization header before
+    # it lands here, so this just confirms the call reached us; the real
+    # proof is the contrast console-backend builds between a naked outside
+    # call (401) and the coordinator's identical call with no token (succeeds)
     if method == "whoami":
         return completed_task(body.get("id"), json.dumps({"reached": True}))
     if method not in ("message/send", "tasks/send", "tasks/sendSubscribe"):
@@ -490,20 +401,15 @@ def on_rpc(body: dict[str, Any], auth_header: str, headers: dict[str, str]) -> d
     except json.JSONDecodeError:
         calls = []
     trace: list[dict[str, Any]] = []
-    # headers come in whatever case the coordinator's own http client sent
-    # them with, a plain case folded lookup here is cheaper than trusting
-    # one exact spelling, same traceparent mlflow's own distributed
-    # tracing helper puts on the coordinator's outbound call
+    # headers arrive in whatever case the coordinator's http client sent,
+    # case fold rather than trust one exact spelling
     lowered_headers = {k.lower(): v for k, v in headers.items()}
     inbound_trace_headers = {"traceparent": lowered_headers["traceparent"]} if "traceparent" in lowered_headers else {}
 
     @mlflow_tracing.trace(name="retrieval-agent", span_type=mlflow_tracing.SPAN_TYPE_AGENT)
     def _handle(caller: str, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        # caller_token and the mutable trace list reach run_tool_call
-        # only through this closure, never as this function's own bound
-        # arguments: a bearer token must never land in a trace, and
-        # trace is a side output being appended to, not worth logging
-        # again as an input
+        # caller_token and trace reach run_tool_call only through this
+        # closure, never as bound arguments; a bearer token must never land in a trace
         return [{"id": call.get("id"), "result": run_tool_call(call, claims, caller_token, trace)} for call in tool_calls]
 
     with mlflow_tracing.continue_trace_from_headers(inbound_trace_headers):

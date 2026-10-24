@@ -1,44 +1,22 @@
-# wraps scripts/11-submit-evalhub-jobs.sh as a real in cluster image, so
-# the recurring cycle manifests/spear-eval/07-cycle-runner-cronjob.yaml
-# defines can actually run it on a schedule instead of only by hand from a
-# laptop. see PHASE3_PLAN.md section 7's own "recurring cycle" note, the
-# plan was always this same script, same cadence, just not left running
-# unattended by default.
+# wraps scripts/11-submit-evalhub-jobs.sh so
+# manifests/spear-eval/07-cycle-runner-cronjob.yaml can run it on a
+# schedule instead of only by hand from a laptop.
 #
-# this Containerfile lives in evalhub/, not scripts/, that directory is
-# pure numbered orchestration scripts, not a place for build artifacts,
-# kept separate once that got pointed out on review. the real script and
-# its lib/ helpers it copies below still live in scripts/ on purpose
-# though, not duplicated here, they are genuinely dual purpose, the exact
-# same files run by hand from a laptop and get baked into this image, so
-# the build context for this one is the whole repo root, not evalhub/
-# itself:
+# lives in evalhub/, not scripts/, that directory is pure orchestration
+# scripts, not build artifacts. the script and its lib/ helpers stay in
+# scripts/ since they are genuinely dual purpose, run by hand and baked
+# into this image, so the build context is the whole repo root:
 #
 #   oc start-build evalhub-cycle-runner --from-dir=. \
 #     --exclude='(^|/)(\.git|\.venv-kfp|\.venv|venv|node_modules|__pycache__|archive)(/|$)|\.(docx|pptx|rtf|excalidraw|pyc)$' \
 #     --wait -n spear-eval
 #
-# that --exclude is doing the real work here, confirmed live the hard
-# way: the repo root's own .dockerignore is NOT read by oc start-build at
-# all, it only ever applies server side to COPY/ADD once a build is
-# already running, by then the upload already happened. without
-# --exclude, oc tars up the whole repo root client side first, including
-# .venv-kfp and console/node_modules at over 1gb combined, and the
-# upload hangs for many minutes. the .dockerignore file is still kept,
-# harmless, and correct if this Containerfile ever grows a `COPY . .`,
-# but it is not what keeps this particular upload small
+# --exclude avoids a multi gb upload, oc start-build ignores .dockerignore
 #
-# built off the real openshift/cli imagestream this cluster already
-# ships, confirmed live via a throwaway probe pod: oc, bash, python3 and
-# curl are all already there. jq is the one thing missing, installed from
-# the same ubi repos already configured in that image, no new
-# subscription or entitlement needed, confirmed live the install just
-# works.
+# openshift/cli base has oc, bash, python3, curl; jq from ubi repos
 #
-# no oc login step anywhere below: running inside a pod, oc and kubectl
-# both pick up the mounted service account token and the in cluster
-# server address automatically, the same way every other k8s client in
-# this repo already does, nothing to configure here.
+# no oc login needed, running in a pod picks up the mounted sa token and
+# in cluster server address automatically
 FROM image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
 
 USER 0
@@ -55,9 +33,8 @@ COPY --chown=1001:0 scripts/lib/log_eval_to_mlflow.py /app/scripts/lib/log_eval_
 RUN chmod +x /app/scripts/11-submit-evalhub-jobs.sh
 
 USER 1001
-# the base image's own default $HOME (/root) is not writable by a non
-# root uid, oc still wants somewhere to write a small plugin/preferences
-# cache on first use even for non interactive commands, confirmed live
+# base image's default $HOME (/root) is not writable by a non root uid,
+# oc still wants somewhere to write its plugin cache
 ENV HOME=/app
 
 ENTRYPOINT ["/app/scripts/11-submit-evalhub-jobs.sh"]

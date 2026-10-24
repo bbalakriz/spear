@@ -1,12 +1,4 @@
-# bala: self hosted openproject, the real work tracker spear-openproject-mcp wraps,
-# login is through openproject's own native login, the admin and both
-# personas already have native accounts and personal api tokens, nothing
-# here does oidc against the sso realm.
-#
-# NAMESPACE_MIGRATION_PLAN.md: moved here from spear-agents, no
-# cross namespace change needed inside this file itself, DATABASE_URL
-# already uses a bare service name and spear-openproject-db moved into
-# this same namespace alongside it
+# openproject deployment in spear-worktracker
 apiVersion: v1
 kind: ServiceAccount
 metadata:

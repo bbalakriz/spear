@@ -1,20 +1,12 @@
 #!/usr/bin/env bash
 set -uo pipefail
-# tears down everything scripts 01 through 09 create. does not touch
-# anything that was already on the cluster before we got here: rhoai
-# itself, the dsc/dsci, the odh-dashboard-config cr (only the two feature
-# flags it added are worth mentioning, and turning them back off is
-# deliberately left as a manual step since other projects on this cluster
-# may have started depending on gen ai studio/autorag being on in the
-# meantime), mlflow itself (a shared, cluster wide instance that predates
-# this project, only this project's own rbac grant on it is ours to
-# remove, done implicitly by deleting spear-pipelines below).
+# tears down everything scripts 01 through 09 create, leaves anything
+# that predates this project alone: rhoai, the dsc/dsci, mlflow itself
+# (only our own rbac grant on it goes, implicitly, by deleting
+# spear-pipelines). turning off the dashboard feature flags is left as a
+# manual step since other projects may depend on them by now.
 #
-# NAMESPACE_MIGRATION_PLAN.md section 3's own teardown order: delete
-# consumers before the things they depend on, so nothing errors out
-# waiting on a resource that is already gone. namespace deletion below
-# follows that same order, sandboxes and gateways first, pgvector and
-# minio last.
+# delete consumers before dependencies; namespaces in dependency order
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=./lib-common.sh
@@ -33,7 +25,7 @@ main() {
     confirm || { echo "aborted"; exit 1; }
   fi
 
-  log "deleting the two sandbox openshell releases/sandboxes (manual, see PHASE2_PLAN.md section 7, not scripted here)"
+  log "delete openshell sandboxes manually before namespace delete (not scripted here)"
 
   log "deleting ${AGENTS_NS} and ${WORKTRACKER_NS} (gateways, guard proxy, openproject, spear-openproject-mcp, both sandboxes' k8s side)"
   oc delete namespace "${AGENTS_NS}" --ignore-not-found=true

@@ -1,12 +1,4 @@
-# pulls a small real ragas dataset (user_input, response, retrieved_contexts)
-# straight out of spear-shield-security-trace's own mlflow traces. runs as
-# the init container of the job scripts/11-submit-evalhub-jobs.sh builds,
-# a plain pod talking to mlflow's own internal service address directly,
-# no agent sandbox involved, mlflow is just a normal server the same way
-# evalhub's own job pods already read it. only needs a real mlflow sa
-# bearer token (MLFLOW_TRACKING_TOKEN), the real service ca bundle
-# (SSL_CERT_FILE/REQUESTS_CA_BUNDLE, a self signed cert otherwise), and
-# the workspace header mlflow.kubeflow.org experiments rbac is scoped to.
+# export mlflow traces to jsonl for ragas (init container in 11-submit-evalhub-jobs job)
 import json
 import os
 
@@ -30,15 +22,6 @@ class WorkspaceHeader(RequestHeaderProvider):
         return True
 
     def request_headers(self):
-        # the real constant mlflow's own rest_utils.WORKSPACE_HEADER_NAME
-        # uses is this exact casing, all caps mlflow, confirmed live
-        # reading the installed source. this registration has actually
-        # been a no-op the whole time this script worked, this job's own
-        # MLFLOW_WORKSPACE env var below already feeds the same value
-        # through mlflow's own env fallback, masking the wrong casing
-        # entirely, found while chasing the same bug for real in
-        # evalhub/spear-confidential-data-provider/adapter.py, where no
-        # such masking env var existed and it broke visibly
         return {"X-MLFLOW-WORKSPACE": WORKSPACE}
 
 

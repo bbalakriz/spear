@@ -1,10 +1,4 @@
-# ImageStream + BuildConfig per agent, same binary docker strategy shape
-# as the reference's own agent-builds.yaml, built with
-# `oc start-build <name> --from-dir=agents --wait -n spear-agents`
-# so the resulting image lands in this cluster's own internal registry,
-# where openshell's own k8s driver can actually pull it. a locally built
-# docker image on a laptop has no path into this cluster's pods, this
-# step is not optional.
+# imagestreams for agent container builds
 apiVersion: image.openshift.io/v1
 kind: ImageStream
 metadata:

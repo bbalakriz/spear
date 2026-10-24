@@ -43,14 +43,7 @@ import {
 } from '@patternfly/react-icons';
 import { useEffect, useState } from 'react';
 
-// PHASE1_PLAN.md section 6/7: reads the real log-ingestion-report mlflow
-// artifact, lists and triggers real kfp runs, and reads a completed
-// autorag run's real per pattern scores, all through this plugin's own
-// spec.proxy backend (manifests/spear-console plus
-// console-backend/). this component never recomputes or fabricates
-// any of the numbers it shows, everything here is either a direct read of
-// something the pipelines themselves already wrote, or a direct kfp api
-// call made on the signed in user's own behalf.
+// pipeline and kfp reads via proxy backend; numbers come from backend only
 const PROXY_PATH = '/api/proxy/plugin/spear-console/backend';
 
 interface QuarantinedDoc {
@@ -82,10 +75,7 @@ interface IngestionReport {
     documents_blocked: number;
     audit: GuardrailsAuditEntry[];
   };
-  // as of 2026-09-28 the sanitization pipeline never writes to rag_chunks
-  // itself anymore, see PHASE1_PLAN.md, so a fresh report only ever carries
-  // status/note here. the older chunks_created/pattern_name shape is kept
-  // optional purely so a report generated before that change still renders.
+  // fresh reports only carry status/note; older chunk fields kept for legacy reports
   abac_tagging?: { status?: string; note?: string; chunks_created?: number; pattern_name?: string };
   sdg_hub_eval_dataset?: { qa_pairs_created: number };
   autorag_trigger?: string;
@@ -94,10 +84,7 @@ interface IngestionReport {
   _mlflow_run_url?: string;
 }
 
-// one row per batch_id, merging kfp's own run list (has an in flight run
-// the moment it is triggered) with mlflow's run list (only ever has a run
-// once log_ingestion_report, the pipeline's last step, writes it). see
-// server.py's merged_ingestion_runs for how the two are correlated.
+// kfp runs merged with mlflow report rows per batch_id
 interface IngestionRunSummary {
   batch_id: string;
   mlflow_run_id: string | null;
@@ -116,8 +103,7 @@ interface KfpRunSummary {
   created_at: string;
   finished_at?: string;
   dashboard_url: string;
-  // only ever present when this run came from /kfp/autorag-runs, see
-  // recent_kfp_runs() in server.py.
+  // present for /kfp/autorag-runs entries
   autorag_results_url?: string;
 }
 
@@ -133,17 +119,12 @@ interface AutoragLeaderboard {
       embedding?: { model_id?: string };
       generation?: { model_id?: string };
     };
-    // every metric pattern.json's own evaluation carries for the winner,
-    // the optimization_metric one included, not just the single score
-    // used to pick it. see autorag_leaderboard() in server.py.
+    // all metrics from the winner pattern evaluation
     all_metrics?: { name: string; score: number }[];
   } | null;
 }
 
-// read-only view of where sanitization reads its sources from, served by
-// the backend's /ingestion/source-config. no secret name, no credential
-// material, the values are the pipeline's own view of its intake path,
-// not anything this component guesses
+// sanitization intake path from /ingestion/source-config (no secrets)
 interface SourceConfig {
   minio_endpoint: string;
   bucket: string;
@@ -152,10 +133,7 @@ interface SourceConfig {
   console_url: string;
 }
 
-// simple red/amber/green style status for the kpi gallery below, each
-// caller decides its own thresholds (a quarantined count of zero is good,
-// an eval qa pair count of zero is not, the color can never be a single
-// shared rule), this just centralizes what each status actually looks like.
+// kpi color tokens; each caller picks status from its own thresholds
 type KpiStatus = 'success' | 'warning' | 'danger' | 'neutral';
 
 const KPI_STATUS_STYLE: Record<KpiStatus, { color: string; Icon: typeof CheckCircleIcon }> = {
@@ -183,7 +161,7 @@ const Kpi = ({
   const { color, Icon } = KPI_STATUS_STYLE[status];
   return (
     <Card style={{ borderLeft: `4px solid ${color}` }}>
-      {/* bala: ux - fixed min height to keep the value lined up */}
+      {/* min height keeps kpi values aligned */}
       <CardTitle style={{ minHeight: '3rem', display: 'flex', alignItems: 'center' }}>
         {title}
       </CardTitle>
@@ -205,20 +183,13 @@ const Kpi = ({
   );
 };
 
-// bala: deliberately static, not wired to live data. the point of this strip is
-// to give the user one glance at the shape of the pipeline before
-// diving into the real numbers below it..
+// static pipeline overview strip, not live data
 interface FlowStep {
   label: string;
   detail: string;
 }
 
-// bala:names call out the actual component doing the work, not a generic
-// phase name, hover each one for what it actually does.
-// pipelines/corpus_prepare/pipeline.py,
-// pipelines/autorag/run_autorag.py and
-// pipelines/corpus_index/pipeline.py for the real implementations,
-// and FLOW.md for the full end to end diagram.
+// component names in pipeline order; tooltips carry detail
 const FLOW_STEPS: FlowStep[] = [
   {
     label: 'ABAC metadata checks',
@@ -284,9 +255,7 @@ export default function KnowledgeBasePage() {
   const [selectedBatchId, setSelectedBatchId] = useState<string>('');
   const [report, setReport] = useState<IngestionReport | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
-  // the read-only source strip in the sanitization run card, where
-  // sanitization reads from. informational only, a failure here never
-  // blocks the page, the strip just does not render
+  // optional source strip; fetch failure just hides it
   const [sourceConfig, setSourceConfig] = useState<SourceConfig | null>(null);
 
   useEffect(() => {
@@ -307,10 +276,7 @@ export default function KnowledgeBasePage() {
   );
   const [triggerMessage, setTriggerMessage] = useState<string | null>(null);
   const [triggerDashboardUrl, setTriggerDashboardUrl] = useState<string | null>(null);
-  // bala: apply pattern gets its own confirmation state, not the shared
-  // triggerMessage above, because that alert renders next to the ingestion
-  // and autorag buttons near the top of the page, far from the "apply this
-  // pattern to production" button down in the retrieval optimization card.
+  // apply pattern alert sits far from the top trigger buttons
   const [applyPatternMessage, setApplyPatternMessage] = useState<string | null>(null);
   const [applyPatternDashboardUrl, setApplyPatternDashboardUrl] = useState<string | null>(null);
 
@@ -318,8 +284,7 @@ export default function KnowledgeBasePage() {
     consoleFetchJSON(`${PROXY_PATH}/runs`)
       .then((data: { runs: IngestionRunSummary[] }) => setRuns(data.runs ?? []))
       .catch(() => {
-        // the run picker is a convenience on top of the always working
-        // latest run view below, a failure here should not block the page.
+        // run picker failure should not block the page
       });
   };
 
@@ -327,10 +292,7 @@ export default function KnowledgeBasePage() {
     refreshRuns();
   }, []);
 
-  // a selected batch with no mlflow run yet has nothing for /report to
-  // read, log_ingestion_report simply has not run yet, the pending banner
-  // below covers that case instead of firing a request that would just
-  // 404 or fall back to a different batch's data.
+  // skip /report until log_ingestion_report has written a run
   const selectedRun = selectedBatchId
     ? runs.find((r) => r.batch_id === selectedBatchId)
     : undefined;
@@ -360,22 +322,7 @@ export default function KnowledgeBasePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBatchId, runs]);
 
-  // once the ingestion report is known, look for an autorag run that
-  // scored the eval dataset this exact batch produced, matching the same
-  // job_name convention run_autorag.py itself uses (pipeline name plus
-  // batch_id). never guesses a leaderboard, only ever shows one once a
-  // matching, succeeded run is actually found.
-  //
-  // clearing all four autorag flavored states up front, before the early
-  // return below, matters: without it a freshly triggered or freshly
-  // selected batch that has no report yet (report is still null while
-  // sanitization runs) would just skip this effect body entirely and leave
-  // whatever state a previously viewed batch left behind on screen, e.g.
-  // showing a stale FAILED from an old batch as if it belonged to the
-  // batch the user just started. batch_id reuse (the same string used
-  // across more than one console triggered run) makes the same thing
-  // possible even once a real report does exist, so the effect always
-  // starts from a clean slate rather than only clearing on the empty path.
+  // match autorag run to batch; reset state first so stale ui does not linger
   useEffect(() => {
     setAutoragRunId(null);
     setAutoragRunState(null);
@@ -385,14 +332,7 @@ export default function KnowledgeBasePage() {
     if (!report?.batch_id) return;
     let cancelled = false;
     const expectedName = `documents-rag-optimization-pipeline-${report.batch_id}`;
-    // a batch_id can be reused across more than one console triggered
-    // sanitization run (e.g. the same string typed twice), and each reuse
-    // overwrites the same eval dataset s3 key, so an autorag run started
-    // before the currently selected sanitization run began can only ever
-    // have scored a now overwritten, stale eval dataset. requiring the
-    // autorag run to have started at or after this sanitization run's own
-    // start_time keeps a genuinely old run under a reused batch_id from
-    // being shown as if it belongs to the batch currently selected.
+    // reused batch_id: ignore autorag runs that predate this sanitization start
     const sanitizationStartedAt = selectedRun?.start_time ?? 0;
     consoleFetchJSON(`${PROXY_PATH}/kfp/autorag-runs`)
       .then((data: { runs: KfpRunSummary[] }) => {
@@ -424,17 +364,12 @@ export default function KnowledgeBasePage() {
         });
       })
       .catch(() => {
-        // no rbac or the pipeline server is unreachable, the business value
-        // section below just falls back to the sanitization level numbers.
+        // autorag fetch failure; page keeps sanitization level numbers
       });
     return () => {
       cancelled = true;
     };
-    // selectedBatchId is in this dependency list on purpose, not just
-    // report?.batch_id: a freshly selected or freshly triggered batch with
-    // no report yet leaves report?.batch_id unchanged (still null), which
-    // would otherwise skip this effect entirely and leave a previous
-    // batch's autorag state on screen, see the comment above.
+    // selectedBatchId needed so we reset when report batch_id is still null
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report?.batch_id, selectedBatchId]);
 
@@ -450,9 +385,7 @@ export default function KnowledgeBasePage() {
           setTriggerMessage(`Started sanitization run ${result.run_id}, state ${result.state}`);
           setTriggerDashboardUrl(result.dashboard_url);
           setIngestionBatchId('');
-          // jump the picker straight to the batch just started, refreshRuns
-          // pulls it in from kfp's own run list immediately, it does not
-          // wait for mlflow to have a report yet.
+          // select the batch just started; kfp list updates before mlflow report
           setSelectedBatchId(result.batch_id);
           refreshRuns();
         },
@@ -519,11 +452,7 @@ export default function KnowledgeBasePage() {
         <Card style={{ marginTop: '1rem' }}>
           <CardTitle>Sanitization run</CardTitle>
           <CardBody>
-            {/* read-only source strip: where sanitization reads from, shown
-                before the run inputs so the user can see what "sources"
-                means. every value is the backend's own config read, the
-                manifest link opens minio's console browser. no secret name,
-                no credential material on purpose. */}
+            {/* read-only intake path from backend config */}
             {sourceConfig && (
               <DescriptionList isCompact isHorizontal style={{ marginBottom: '1rem' }}>
                 <DescriptionListGroup>
@@ -549,10 +478,7 @@ export default function KnowledgeBasePage() {
                 </DescriptionListGroup>
               </DescriptionList>
             )}
-            {/* first row: starting a brand new run, the primary action on this
-                card. second row: jumping back to look at an already started
-                one. new before existing reads better top to bottom, and
-                keeps the buttons next to the input they actually act on. */}
+            {/* new run row, then existing run picker */}
             <Flex alignItems={{ default: 'alignItemsFlexEnd' }} gap={{ default: 'gapMd' }}>
               <FlexItem>
                 <FormGroup label="New batch ID" fieldId="new-batch-id">
@@ -683,9 +609,7 @@ export default function KnowledgeBasePage() {
                 value={report.ingestion.documents_scanned}
                 status={report.ingestion.documents_scanned > 0 ? 'neutral' : 'warning'}
               />
-              {/* quarantined and threats caught are risk metrics, zero is
-                  the good outcome here, so their color logic is inverted
-                  relative to a plain volume metric like scanned/sanitized. */}
+              {/* risk kpis: zero quarantined or blocked is success */}
               <Kpi
                 title="Documents quarantined"
                 value={report.ingestion.documents_quarantined}
@@ -763,10 +687,7 @@ export default function KnowledgeBasePage() {
               </CardBody>
             </Card>
 
-            {/* last on purpose: this is the pipeline's eventual outcome,
-                everything above it (kpis, quarantine, guardrails audit) is
-                what actually produced the eval set this result is scored
-                against, reads better read top to bottom in that order. */}
+            {/* autorag outcome after ingestion kpis and audits */}
             <Card style={{ marginTop: '1rem' }}>
               <CardTitle>Retrieval optimization result</CardTitle>
               <CardBody>

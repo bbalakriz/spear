@@ -1,10 +1,4 @@
-# rag-query-relay (manifests/spear-data/02-rag-query-relay.yaml) runs the
-# exact same image as spear-retrieval-agent, but its deployment lives in
-# spear-data, not this namespace. openshift's internal registry refuses
-# any cross namespace image pull without an explicit grant, found live
-# during the 2026-10-04 rebuild as an ErrImagePull on that deployment,
-# see NAMESPACE_MIGRATION_PLAN.md. this never came up before the
-# migration split rag-query-relay out into its own namespace
+# lets rag-query-relay pull agent images from openshift internal registry
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:

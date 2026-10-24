@@ -48,22 +48,11 @@ main() {
     "[[ \"\$(oc get dspa spear-dspa -n ${PIPELINES_NS} -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}')\" == 'True' ]]"
 
   log "guardrails (${GUARDRAILS_NS})"
-  # reverted back to .status.phase, see scripts/07-install-guardrails.sh's
-  # own wait_guardrails_ready comment, an earlier pass here wrongly
-  # believed this field could never reach Ready
+  # poll nemoguardrails .status.phase
   check "nemoguardrails reports Ready" bash -c \
     "[[ \"\$(oc get nemoguardrails spear-guardrails -n ${GUARDRAILS_NS} -o jsonpath='{.status.phase}')\" == 'Ready' ]]"
   check "guardrails route exists" oc get route spear-guardrails -n "${GUARDRAILS_NS}"
-  # kube-rbac-proxy in front of this route reads its own resourceName
-  # scoping from an operator generated configmap whose yaml key
-  # ("resourceName") the real proxy binary does not actually recognize
-  # (the real field is "name"), so that scoping is silently dropped and
-  # a plain unscoped "get services" grant is what the live proxy actually
-  # checks, see manifests/spear-guardrails/06-pipeline-rbac.yaml and
-  # 07-caller-rbac.yaml's own comments. this check exercises the
-  # pipeline runner sa's real call, not just rbac can-i, confirmed to
-  # genuinely fail before that fix (every document gets tagged "error")
-  # and pass after it
+  # real pipeline sa call (kube-rbac-proxy checks unscoped get services)
   check "pipeline runner sa can actually call the guardrails /v1/guardrail/checks endpoint (not just rbac can-i)" bash -c \
     "source '${ROOT_DIR}/scripts/lib-common.sh'; run_restricted_probe guardrails-verify-probe '${PIPELINES_NS}' pipeline-runner-spear-dspa \
       \"curl -sfk -X POST https://spear-guardrails.${GUARDRAILS_NS}.svc.cluster.local/v1/guardrail/checks \
@@ -77,16 +66,7 @@ main() {
   check "ogxserver service responds healthy" oc run ogx-verify-probe --rm -i --restart=Never \
     --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n "${INFERENCE_NS}" --command -- \
     bash -c "curl -sf http://spear-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/health | grep -q '\"OK\"'"
-  # every other ogx check in this file runs its probe pod inside
-  # ${INFERENCE_NS} itself, always allowed by the cr's own podSelector:
-  # {} ingress rule regardless of what cross namespace rules exist, so
-  # none of them could ever catch a missing cross namespace
-  # NetworkPolicy ingress entry. confirmed live, 2026-10-04: the
-  # ingestion pipeline's own generate_eval_dataset step, calling this
-  # same service from spear-pipelines, got a silently dropped connection
-  # (full curl timeout, not a fast refusal) for exactly this reason,
-  # see manifests/spear-inference/01-ogxserver.yaml's own networkpolicy
-  # section. this check reproduces the real caller's own namespace
+  # probe from spear-pipelines (cross namespace networkpolicy ingress)
   check "ogxserver reachable from spear-pipelines, not just ${INFERENCE_NS} itself (networkpolicy ingress)" \
     oc run ogx-netpol-verify-probe --rm -i --restart=Never \
     --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n "${PIPELINES_NS}" --command -- \
@@ -99,35 +79,13 @@ main() {
     --restart=Never --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n "${INFERENCE_NS}" --command -- \
     bash -c "out=\$(curl -sf http://spear-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/models); \
       echo \"\${out}\" | grep -q vllm-inference/ && echo \"\${out}\" | grep -q nomic-embed"
-  # a real failed autorag run on 2026-09-28 (see PHASE1_PLAN.md) proved
-  # this is the check that actually matters for run_autorag.py's own
-  # GENERATION_MODELS: ai4rag's search space preparation step only ever
-  # checks /v1/models presence, it never calls /v1/chat/completions
-  # itself, so a model missing from this listing fails every autorag run
-  # with a SearchSpaceValueError regardless of whether it would have
-  # routed a real completion correctly. check exactly the models
-  # run_autorag.py configures, not a stand in.
+  # autorag only checks /v1/models listing for generation models
   check "ogx registers both autorag generation models" oc run ogx-models-registered-verify-probe --rm -i \
     --restart=Never --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n "${INFERENCE_NS}" --command -- \
     bash -c "out=\$(curl -sf http://spear-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/models); \
       echo \"\${out}\" | grep -q 'vllm-inference/Qwen3.6-35B-A3B' && \
       echo \"\${out}\" | grep -q 'openai/publishers/prelude-maas/models/glm-53-flash'"
-  # glm-53-flash genuinely does still route a real completion, confirmed
-  # both on 2026-09-27 and again while diagnosing the failure above. it is
-  # also still present and ready on the upstream maas gateway's own
-  # /v1/models right now, confirmed live 2026-09-28, so it was never truly
-  # deregistered anywhere: ogx's own /v1/models is just missing it because
-  # correction, 2026-10-04: this comment and the check title below used to
-  # say ogx's own /v1/models was missing glm-53-flash, caused by ogx only
-  # discovering the upstream's model list once at pod startup and that
-  # pod's last boot getting an incomplete response (9 of 10 models), see
-  # PHASE1_PLAN.md. confirmed live now, after a pod restart somewhere
-  # along the way, glm-53-flash is present and listed normally, same as
-  # every other model. kept this as its own check regardless: a real
-  # chat completion is still a stronger, different signal than just
-  # appearing in the listing, so a future listing only regression here
-  # still would not get confused with an autorag capable model actually
-  # going down, they remain two different things worth checking separately
+  # chat completion is a stronger check than /v1/models listing alone
   check "ogx routes a real chat completion through openai/glm-53-flash" \
     oc run ogx-chat-verify-probe --rm -i \
     --restart=Never --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n "${INFERENCE_NS}" --command -- \
@@ -152,19 +110,11 @@ main() {
       https://mlflow.redhat-ods-applications.svc:8443/mlflow/api/2.0/mlflow/experiments/search | grep -q spear-corpus-prepare"
 
   log "spear-corpus-prepare-pipeline"
-  # rag_chunks is deliberately left empty for a batch until a winning
-  # autorag pattern is applied to it, see PHASE1_PLAN.md's sequencing
-  # writeup, 2026-09-28: ingestion itself no longer writes to this table
-  # at all, that only happens once pipelines/corpus_index/
-  # pipeline.py runs, so a row count check here would be meaningless on a
-  # freshly ingested batch that has not had a pattern applied yet.
+  # rag_chunks is populated only after apply pattern pipeline runs
   check "rag_chunks table exists (created lazily by either pipeline on first write)" \
     oc exec deploy/pgvector -n "${DATA_NS}" -- \
     psql -U raguser -d ragdb -tAc "select 1 from information_schema.tables where table_name='rag_chunks'"
-  # written by pipelines/corpus_prepare/pipeline.py's generate-eval-dataset
-  # step, a real sdg hub run against the sanitized corpus, see
-  # PHASE1_PLAN.md's "SDG Hub eval dataset generation and real AutoRAG
-  # trigger" section for the run that produced this.
+  # sdg hub eval dataset from corpus_prepare generate-eval-dataset step
   check "sdg hub generated a real eval dataset with at least one qa pair" oc run eval-dataset-verify-probe \
     --rm -i --restart=Never --image=registry.access.redhat.com/ubi9/python-312:latest -n "${PIPELINES_NS}" \
     --overrides="{\"spec\":{\"containers\":[{\"name\":\"eval-dataset-verify-probe\",\"image\":\"registry.access.redhat.com/ubi9/python-312:latest\",\"stdin\":true,\"env\":[{\"name\":\"MINIO_ACCESS_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-dsp-creds\",\"key\":\"accesskey\"}}},{\"name\":\"MINIO_SECRET_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-dsp-creds\",\"key\":\"secretkey\"}}}]}]}}" \
@@ -219,13 +169,7 @@ assert len(rows) > 0 and 'question' in rows[0] and 'correct_answer_document_ids'
 
   log "spear-console"
   check "spear-console-backend deployment available" oc wait --for=condition=Available deployment/spear-console-backend -n "${CONSOLE_NS}" --timeout=5s
-  # exercises the backend's own real sa token against mlflow, not
-  # pipeline-runner's, the earlier version of this check used
-  # pipeline-runner's sa and missed a real cross namespace rbac gap:
-  # mlflow checks rbac in the namespace matching the X-MLflow-Workspace
-  # header, spear-pipelines, not the caller's own home namespace, so this
-  # backend's own grant has to live in manifests/spear-pipelines/04-console-backend-mlflow-rbac.yaml,
-  # not anywhere in spear-console itself
+  # console backend sa mlflow rbac is in spear-pipelines workspace namespace
   check "console backend's own sa can see the spear-corpus-prepare experiment in mlflow (not just pipeline-runner's)" bash -c \
     "oc exec -n ${CONSOLE_NS} deploy/spear-console-backend -- bash -c \"curl -sfk -H \\\"Authorization: Bearer \\\$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\\\" -H 'X-MLflow-Workspace: ${PIPELINES_NS}' -X POST -H 'Content-Type: application/json' -d '{\\\"max_results\\\":50}' https://mlflow.redhat-ods-applications.svc:8443/mlflow/api/2.0/mlflow/experiments/search\" | grep -q '\"name\": \"spear-corpus-prepare\"'"
 

@@ -191,32 +191,18 @@ deploymentSpec:
           , \"TEXT\"), (\"autorag_run_id\", \"TEXT\"),\n        (\"chunk_size\", \"\
           INT\"), (\"chunk_overlap\", \"INT\"),\n    ):\n        cur.execute(f\"ALTER\
           \ TABLE rag_chunks ADD COLUMN IF NOT EXISTS {column} {coltype}\")\n\n  \
-          \  # row level security, same table this function already owns the\n   \
-          \ # schema of. the real abac decision used to live only in\n    # rag_query.py's\
-          \ own WHERE clause, one layer, a bug there or a future\n    # code path\
-          \ that forgets to call it would have seen every row. this\n    # is the\
-          \ second, independent layer: rag_reader (the only role\n    # rag-query-relay\
-          \ ever connects as) has no bypassrls, so a row only\n    # ever comes back\
-          \ if this policy itself says so, regardless of what\n    # sql runs against\
-          \ it. rag_reader is created by\n    # scripts/03-install-data.sh, not here,\
-          \ a grant against a role that\n    # does not exist yet should never be\
-          \ what blocks a real indexing run\n    # tagged dollar quote ($rls$, not\
-          \ the bare $$ form), kubernetes'\n    # own $(VAR_NAME) env expansion on\
-          \ container args treats a literal\n    # $$ as an escaped single $ regardless\
-          \ of what follows, and\n    # lightweight kfp components embed this whole\
-          \ source as a literal\n    # arg, confirmed live: a bare $$ here reached\
-          \ postgres as a single\n    # $ and failed with \"syntax error at or near\
-          \ $\". a tagged delimiter\n    # never has two dollar signs adjacent, so\
-          \ it survives untouched.\n    cur.execute(\n        \"\"\"\n        DO $rls$\n\
-          \        BEGIN\n            IF EXISTS (SELECT FROM pg_roles WHERE rolname\
-          \ = 'rag_reader') THEN\n                GRANT SELECT ON rag_chunks TO rag_reader;\n\
-          \            END IF;\n        END\n        $rls$;\n\n        ALTER TABLE\
-          \ rag_chunks ENABLE ROW LEVEL SECURITY;\n        ALTER TABLE rag_chunks\
-          \ FORCE ROW LEVEL SECURITY;\n\n        DROP POLICY IF EXISTS rag_chunks_abac\
-          \ ON rag_chunks;\n        CREATE POLICY rag_chunks_abac ON rag_chunks\n\
-          \            FOR SELECT\n            USING (\n                clearance_level\
-          \ = ANY(string_to_array(current_setting('app.allowed_levels', true), ','))\n\
-          \                AND (\n                    dept = current_setting('app.dept',\
+          \  # postgres RLS: second abac layer beside rag_query.py; rag_reader has\
+          \ no bypassrls\n    # tagged dollar quote; bare $$ is collapsed by kubelet\
+          \ arg expansion (see docs/decisions.md D15)\n    cur.execute(\n        \"\
+          \"\"\n        DO $rls$\n        BEGIN\n            IF EXISTS (SELECT FROM\
+          \ pg_roles WHERE rolname = 'rag_reader') THEN\n                GRANT SELECT\
+          \ ON rag_chunks TO rag_reader;\n            END IF;\n        END\n     \
+          \   $rls$;\n\n        ALTER TABLE rag_chunks ENABLE ROW LEVEL SECURITY;\n\
+          \        ALTER TABLE rag_chunks FORCE ROW LEVEL SECURITY;\n\n        DROP\
+          \ POLICY IF EXISTS rag_chunks_abac ON rag_chunks;\n        CREATE POLICY\
+          \ rag_chunks_abac ON rag_chunks\n            FOR SELECT\n            USING\
+          \ (\n                clearance_level = ANY(string_to_array(current_setting('app.allowed_levels',\
+          \ true), ','))\n                AND (\n                    dept = current_setting('app.dept',\
           \ true)\n                    OR team = NULLIF(current_setting('app.team',\
           \ true), '')\n                    OR project_scope = 'enterprise-wide'\n\
           \                )\n            )\n        \"\"\"\n    )\n\n    def embed_chunks(texts:\
@@ -226,49 +212,35 @@ deploymentSpec:
           \  )\n        resp.raise_for_status()\n        data = resp.json()[\"data\"\
           ]\n        return [row[\"embedding\"] for row in sorted(data, key=lambda\
           \ r: r[\"index\"])]\n\n    def embed_chunks_with_retry(texts: list[str],\
-          \ attempts: int = 3) -> list[list[float]]:\n        # a null embedding row\
-          \ can never be found by any vector search\n        # again, ever, regardless\
-          \ of who is asking, so a transient blip\n        # is worth a couple retries\
-          \ rather than writing a dead row into a\n        # live rag index. this\
-          \ is the real fix for the doc-001/doc-002\n        # null embedding incident,\
-          \ found and repaired live on 2026-10-02:\n        # both rows turned out\
-          \ to predate this pipeline entirely, from an\n        # older ingestion\
-          \ path with the same swallow-and-null behavior,\n        # never caught\
-          \ because nothing downstream ever read the old\n        # embedding_failures\
-          \ counter\n        last_exc = None\n        for attempt in range(attempts):\n\
-          \            try:\n                return embed_chunks(texts)\n        \
-          \    except requests.RequestException as exc:\n                last_exc\
-          \ = exc\n                if attempt < attempts - 1:\n                  \
-          \  time.sleep(2 ** attempt)\n        raise last_exc\n\n    total_chunks\
-          \ = 0\n    documents_indexed = 0\n    # per doc_id, not just a count: a\
-          \ bare number nobody downstream reads\n    # is not a real safety net, this\
-          \ list is what actually ends up in\n    # apply_report.json and is small\
-          \ enough to always include in full\n    embedding_failures = []\n    for\
-          \ row in sanitized_rows:\n        doc = docs_by_id.get(row[\"doc_id\"])\n\
-          \        if doc is None:\n            print(f\"  {row['doc_id']}: no abac\
-          \ tags found in ingestion report, skipping\")\n            continue\n  \
-          \      content = s3.get_object(\n            Bucket=bucket, Key=f\"{sanitized_prefix}{row['filename']}\"\
+          \ attempts: int = 3) -> list[list[float]]:\n        # retry transient embed\
+          \ failures; null vectors are unsearchable\n        last_exc = None\n   \
+          \     for attempt in range(attempts):\n            try:\n              \
+          \  return embed_chunks(texts)\n            except requests.RequestException\
+          \ as exc:\n                last_exc = exc\n                if attempt <\
+          \ attempts - 1:\n                    time.sleep(2 ** attempt)\n        raise\
+          \ last_exc\n\n    total_chunks = 0\n    documents_indexed = 0\n    # per\
+          \ doc_id, not just a count, this is what lands in apply_report.json\n  \
+          \  embedding_failures = []\n    for row in sanitized_rows:\n        doc\
+          \ = docs_by_id.get(row[\"doc_id\"])\n        if doc is None:\n         \
+          \   print(f\"  {row['doc_id']}: no abac tags found in ingestion report,\
+          \ skipping\")\n            continue\n        content = s3.get_object(\n\
+          \            Bucket=bucket, Key=f\"{sanitized_prefix}{row['filename']}\"\
           \n        )[\"Body\"].read().decode(\"utf-8\")\n\n        chunks = []\n\
           \        start = 0\n        while start < len(content):\n            chunks.append(content[start:start\
           \ + chunk_size])\n            start += chunk_size - chunk_overlap\n\n  \
           \      try:\n            embeddings = embed_chunks_with_retry(chunks)\n\
           \        except requests.RequestException as exc:\n            # embed before\
-          \ delete: whatever rows this doc_id already has\n            # from a previous\
-          \ successful run stay exactly as they are,\n            # a failed embed\
-          \ here must never make a previously working\n            # doc worse off.\
-          \ skip the doc entirely rather than writing a\n            # permanently\
-          \ unsearchable null vector row\n            print(f\"  {doc['doc_id']}:\
+          \ delete: a failed embed must never make a\n            # previously working\
+          \ doc worse off, skip it entirely\n            print(f\"  {doc['doc_id']}:\
           \ embedding failed after {3} attempts ({exc}), leaving existing rows untouched,\
           \ skipping\")\n            embedding_failures.append({\"doc_id\": doc[\"\
           doc_id\"], \"error\": str(exc)})\n            continue\n\n        # only\
-          \ now that the new embeddings are actually in hand: chunk\n        # boundaries\
-          \ move whenever chunk_size/overlap change, so any rows\n        # this doc\
-          \ had under a previous pattern are stale, drop them\n        # before writing\
-          \ the fresh ones rather than leaving orphaned tails\n        cur.execute(\"\
-          DELETE FROM rag_chunks WHERE doc_id = %s\", (doc[\"doc_id\"],))\n\n    \
-          \    for idx, chunk in enumerate(chunks):\n            vector_literal =\
-          \ \"[\" + \",\".join(repr(v) for v in embeddings[idx]) + \"]\"\n       \
-          \     cur.execute(\n                \"\"\"\n                INSERT INTO\
+          \ now that embeddings are in hand: chunk boundaries move\n        # with\
+          \ chunk_size/overlap, so rows under a previous pattern are stale\n     \
+          \   cur.execute(\"DELETE FROM rag_chunks WHERE doc_id = %s\", (doc[\"doc_id\"\
+          ],))\n\n        for idx, chunk in enumerate(chunks):\n            vector_literal\
+          \ = \"[\" + \",\".join(repr(v) for v in embeddings[idx]) + \"]\"\n     \
+          \       cur.execute(\n                \"\"\"\n                INSERT INTO\
           \ rag_chunks\n                    (doc_id, chunk_index, content, content_sha256,\
           \ source,\n                     clearance_level, dept, team, project_scope,\
           \ data_owner,\n                     embedding, pattern_name, autorag_run_id,\
@@ -288,16 +260,14 @@ deploymentSpec:
           \ not autorag's own splitting algorithm, see this file's module docstring)\"\
           ,\n        \"chunk_size\": chunk_size,\n        \"chunk_overlap\": chunk_overlap,\n\
           \        \"embedding_model\": embedding_model,\n        # list of {doc_id,\
-          \ error}, not a count: an empty list here is the\n        # only thing that\
-          \ actually means every sanitized doc got indexed\n        # and is really\
-          \ searchable, a doc_id in this list was left alone,\n        # not written\
-          \ with a dead row\n        \"embedding_failures\": embedding_failures,\n\
-          \        \"documents_indexed\": documents_indexed,\n        \"chunks_created\"\
-          : total_chunks,\n    }\n    with open(apply_report.path, \"w\") as f:\n\
-          \        json.dump(report_out, f, indent=2)\n\n    cur.close()\n    conn.close()\n\
-          \n    outputs = NamedTuple(\"Outputs\", [(\"chunks_created\", int), (\"\
-          documents_indexed\", int), (\"embedding_failures\", int)])\n    return outputs(total_chunks,\
-          \ documents_indexed, len(embedding_failures))\n\n"
+          \ error}; empty means every sanitized doc is really searchable\n       \
+          \ \"embedding_failures\": embedding_failures,\n        \"documents_indexed\"\
+          : documents_indexed,\n        \"chunks_created\": total_chunks,\n    }\n\
+          \    with open(apply_report.path, \"w\") as f:\n        json.dump(report_out,\
+          \ f, indent=2)\n\n    cur.close()\n    conn.close()\n\n    outputs = NamedTuple(\"\
+          Outputs\", [(\"chunks_created\", int), (\"documents_indexed\", int), (\"\
+          embedding_failures\", int)])\n    return outputs(total_chunks, documents_indexed,\
+          \ len(embedding_failures))\n\n"
         image: registry.access.redhat.com/ubi9/python-311:latest
     exec-log-apply-report:
       container:
@@ -365,10 +335,8 @@ deploymentSpec:
           \            ],\n            \"metrics\": [\n                {\"key\": \"\
           chunks_created\", \"value\": chunks_created, \"timestamp\": metrics_ts},\n\
           \                {\"key\": \"documents_indexed\", \"value\": documents_indexed,\
-          \ \"timestamp\": metrics_ts},\n                # a real mlflow metric now,\
-          \ not just a field buried in the\n                # json artifact nobody\
-          \ downstream was reading, so a non\n                # zero value actually\
-          \ shows up in the run view\n                {\"key\": \"embedding_failures\"\
+          \ \"timestamp\": metrics_ts},\n                # a real mlflow metric, not\
+          \ just buried in the json artifact\n                {\"key\": \"embedding_failures\"\
           , \"value\": embedding_failures, \"timestamp\": metrics_ts},\n         \
           \   ],\n        },\n        verify=False, timeout=30,\n    )\n\n    assert\
           \ artifact_uri.startswith(\"s3://\"), artifact_uri\n    _, path = artifact_uri[len(\"\

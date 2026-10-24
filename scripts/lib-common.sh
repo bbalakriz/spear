@@ -1,24 +1,10 @@
 #!/usr/bin/env bash
-# shared by every numbered script below, not meant to run on its own.
-# small, phase 1 only needs a fraction of what the sibling agent-pack
-# project's lib-olm.sh does since every operator subscription phase 1
-# depends on (rhods-operator, trustyai via the dsc, mcplifecycleoperator,
-# mlflowoperator) is already installed and Managed on this cluster,
-# confirmed live 2026-09-25, there is no new operator subscription to
-# approve here.
+# shared helpers for numbered install scripts (do not run alone).
 
-# stderr, not stdout: scripts/11-submit-evalhub-jobs.sh pipes a function's
-# own stdout straight into python3 -m json.tool as real data, a log line
-# mixed into that same stream breaks the parse, confirmed live,
-# "Expecting value: line 1 column 1"
+# stderr only: 11-submit-evalhub-jobs.sh pipes stdout to json.tool
 log() { printf '== %s ==\n' "$*" >&2; }
 
-# NAMESPACE_MIGRATION_PLAN.md: the one place every namespace name this
-# project owns is defined, replacing the 11 separate copies of
-# RAG_NS="rag-phase1" every script used to carry on its own. rag-phase1
-# itself is retired, nothing left needs it to exist. minio keeps its own
-# plain name rather than becoming spear-storage, see the plan's own
-# section 8 for why.
+# canonical namespace names for this project
 DATA_NS="spear-data"
 STORAGE_NS="minio"
 INFERENCE_NS="spear-inference"
@@ -27,15 +13,10 @@ PIPELINES_NS="spear-pipelines"
 CONSOLE_NS="spear-console"
 WORKTRACKER_NS="spear-worktracker"
 AGENTS_NS="spear-agents"
-# evalhub's own namespace, a dedicated tenant rather than redhat-ods-applications,
-# per that namespace's own restrictive NetworkPolicy, confirmed live against
-# this cluster's real rhods-operator 3.5 docs, see scripts/10-install-evalhub.sh
+# evalhub tenant namespace (see 10-install-evalhub.sh)
 EVAL_NS="spear-eval"
 
-# generates a random secret once, never regenerates against an already
-# provisioned one. same pattern as agent-pack's ensure_keycloak_db_secret,
-# reused here for minio and pgvector so a rerun of these scripts never
-# locks anyone out of an already running instance.
+# create secret once; reruns must not rotate existing credentials
 ensure_secret() {
   local name="$1" ns="$2"; shift 2
   if oc get secret "${name}" -n "${ns}" >/dev/null 2>&1; then
@@ -46,12 +27,7 @@ ensure_secret() {
   oc create secret generic "${name}" -n "${ns}" "$@"
 }
 
-# oc wait --for=condition=Available fails fast with NotFound when the
-# deployment does not exist yet, it never actually waits for creation.
-# an operator reconciling a cr into a real deployment (evalhub off its
-# own EvalHub cr, for one) needs a few seconds for that deployment to
-# even show up, so this polls for existence first, then hands off to
-# the real oc wait for the rest of the given timeout.
+# poll until deployment exists, then oc wait for Available
 wait_deploy_ready() {
   local name="$1" ns="$2" timeout="${3:-300s}" tries=30
   while ! oc get "deployment/${name}" -n "${ns}" >/dev/null 2>&1; do
@@ -65,24 +41,13 @@ wait_deploy_ready() {
   oc wait --for=condition=Available "deployment/${name}" -n "${ns}" --timeout="${timeout}"
 }
 
-# forces a controller to re-reconcile an already applied cr by bumping a
-# throwaway annotation, cheaper than deleting/recreating the object.
-# some operators (evalhub's, confirmed live) only reconcile on a change
-# to the cr itself, never on their own when a resource they depend on
-# shows up later, so a rerun against a cr stuck on a stale failed
-# reconcile needs this nudge, not just a repeat of the same apply.
+# bump annotation so operators re reconcile stuck crs
 nudge_reconcile() {
   local kind="$1" name="$2" ns="$3"
   oc annotate "${kind}" "${name}" -n "${ns}" "spear.io/reconcile-nonce=$(date +%s)" --overwrite >/dev/null
 }
 
-# one shot curl/bash probe under the restricted scc. openshift's
-# restricted-v2 (and any namespace with pod-security restricted warn)
-# rejects pods that omit container seccompProfile, and the moment
-# --overrides sets containers[] oc run's own --command is dropped, so
-# both the securityContext and the bash -c script have to live inside
-# the override. stdout of the probe is printed; exit status matches the
-# container's. sa may be empty to keep the namespace default.
+# one shot probe pod under restricted scc; script lives in --overrides
 run_restricted_probe() {
   local name="$1" ns="$2" sa="$3" script="$4"
   local img="registry.access.redhat.com/ubi9/ubi-minimal:latest"
@@ -124,14 +89,7 @@ run_restricted_probe() {
   [[ "${exit_code}" == "0" ]]
 }
 
-# a secretKeyRef only resolves within the pod's own namespace, so a
-# consumer in one namespace reading a secret owned by another (ogxserver
-# in spear-inference reading pgvector-creds, owned by spear-data) needs
-# its own local copy. found live during the 2026-10-04 rebuild, see
-# NAMESPACE_MIGRATION_PLAN.md, this never came up pre migration since
-# everything lived in 00-platform together. always re-synced on rerun,
-# unlike ensure_secret, since this is a derived copy of the source, not
-# a secret owned/generated here.
+# copy secret into consumer namespace (secretKeyRef is namespace local)
 mirror_secret() {
   local name="$1" src_ns="$2" dest_ns="$3"
   oc get secret "${name}" -n "${src_ns}" -o json \

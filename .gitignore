@@ -4,6 +4,7 @@
 !seed-data/raw-intake/*.md
 !Detailed architecture.md
 !README.md
+!docs/decisions.md
 *.rtf
 *.pptx
 .venv-kfp/

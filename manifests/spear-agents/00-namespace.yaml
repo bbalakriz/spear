@@ -1,8 +1,4 @@
-# the phase 2 namespace, spear-agents. holds spear-mcp-guard-proxy
-# and both agent sandboxes. the work tracker itself moved out to its own
-# spear-worktracker namespace, see NAMESPACE_MIGRATION_PLAN.md. entirely
-# separate from agent-pack, which stays reference only, see PHASE2_PLAN.md
-# section 2
+# spear-agents namespace (gateways, sandboxes, realm import). worktracker is spear-worktracker
 apiVersion: v1
 kind: Namespace
 metadata:

@@ -1,29 +1,8 @@
 #!/usr/bin/env python3
-"""real, durable mlflow tracing for both sandboxed agents, PHASE3_PLAN.md
-section 4. lives alongside, not instead of, each agent's own existing
-_trace_step list, that one keeps feeding the chat page's synchronous
-box and arrow view exactly as before, this one gives every request a
-real, queryable, nested trace in mlflow that survives past the one
-http response it used to be stuck in.
+"""mlflow tracing for both sandboxed agents alongside each _trace_step list.
 
-three things make this possible without hand rolling any rest calls,
-all confirmed live against the real installed server before writing
-this, not assumed:
-
-- the custom X-MLflow-Workspace header this dspa install needs on
-  every call is a real, documented mlflow extension point,
-  RequestHeaderProvider, not something to bolt onto every call by hand
-- the rbac this needs is get/list/create/update on the mlflow.kubeflow.org
-  experiments resource in spear-pipelines, not the generic "get services"
-  shape OGX_API_KEY's own guardrails caller token uses
-- the coordinator to retrieval a2a hop stitches into one real trace
-  through a single standard traceparent header, mlflow's own
-  distributed tracing helpers read and write it, nothing to invent
-
-configure() is safe to call even when MLFLOW_URL is unset or the
-server is unreachable, tracing just stays off and every trace() call
-below becomes a plain passthrough, the real request never fails
-because telemetry did.
+uses RequestHeaderProvider for X-MLflow-Workspace, traceparent on a2a hops,
+and degrades to passthrough when MLFLOW_URL is unset or configure fails.
 """
 
 from __future__ import annotations
@@ -37,19 +16,9 @@ MLFLOW_URL = os.environ.get("MLFLOW_URL", "")
 MLFLOW_WORKSPACE = os.environ.get("MLFLOW_WORKSPACE", "spear-pipelines")
 MLFLOW_EXPERIMENT = os.environ.get("MLFLOW_EXPERIMENT", "spear-shield-security-trace")
 
-# plain strings, not mlflow.entities.SpanType itself: main.py in both
-# agents imports this module and nothing else from mlflow, the whole
-# point of trace() degrading to a plain passthrough is that neither
-# agent needs a real mlflow import on the disabled path. confirmed live
-# against the pinned mlflow-skinny==3.16.1 that start_span's own
-# span_type parameter just takes a plain string, these are the same
-# values SpanType's real members hold
+# plain span_type strings so agents need no mlflow import when tracing is off
 SPAN_TYPE_AGENT = "AGENT"
-# CHAT_MODEL, not the more generic LLM: confirmed live against a real
-# ibm-clear evalhub job, its own mlflow trace parser only ever treats
-# CHAT_MODEL/MODEL/GENERATION as an actual model call span, LLM is a
-# real mlflow.entities.SpanType member too but every trace tagged with
-# it came back "no LLM calls found" from clear's own preprocessor, 9 for 9
+# CHAT_MODEL not LLM: clear/ragas trace parsers only treat CHAT_MODEL as model spans
 SPAN_TYPE_LLM = "CHAT_MODEL"
 SPAN_TYPE_RETRIEVER = "RETRIEVER"
 SPAN_TYPE_TOOL = "TOOL"
@@ -67,17 +36,10 @@ def configure() -> bool:
     if not MLFLOW_URL:
         print("mlflow_tracing: MLFLOW_URL not set, tracing stays off")
         return False
-    # the coordinator and retrieval sandboxes are two separate processes
-    # on two ends of a real network hop, each only ever flushing its own
-    # half of one shared trace. mlflow's default async export batches
-    # spans in a background thread on its own timer, so retrieval's
-    # child span can genuinely reach the server after the coordinator's
-    # own root span has already closed that trace out, and the late
-    # arrival gets dropped, confirmed live this is exactly what was
-    # happening across repeated real runs. forcing synchronous export
-    # means a span is durably written before the function that created
-    # it ever returns, no ordering race left between the two sides of
-    # the hop
+    # coordinator and retrieval are two processes flushing one shared
+    # trace; async export can let a late child span arrive after the
+    # root has already closed. sync export writes each span durably
+    # before its function returns, no ordering race across the hop
     os.environ.setdefault("MLFLOW_ENABLE_ASYNC_TRACE_LOGGING", "false")
     try:
         import mlflow
@@ -88,9 +50,7 @@ def configure() -> bool:
             _request_header_provider_registry,
         )
 
-        # the one header every real call against this dspa install needs,
-        # confirmed live, a plain search without it comes back 400
-        # "workspace context is required for this request"
+        # X-MLflow-Workspace required on this dspa install (400 without it)
         class _SpearShieldWorkspaceHeader(RequestHeaderProvider):
             def in_context(self) -> bool:
                 return True
@@ -106,37 +66,27 @@ def configure() -> bool:
         print(f"mlflow_tracing: on, url={MLFLOW_URL} workspace={MLFLOW_WORKSPACE}")
         return True
     except Exception as exc:  # noqa: BLE001
-        # a telemetry failure never takes the real request down with it,
-        # same fallback discipline spear-console-backend's own
-        # ingestion_source_config already uses
+        # a telemetry failure never takes the real request down with it
         print(f"mlflow_tracing: failed to configure, tracing stays off: {exc}")
         _enabled = False
         return False
 
 
 def trace(name: str, span_type: str = "UNKNOWN"):
-    """no-op safe @mlflow.trace: wraps the whole decorated function in
-    one real mlflow span, inputs and outputs auto captured straight
-    from the function's own bound arguments and return value, a plain
-    passthrough otherwise, so main.py never has to branch on _enabled
-    itself. this is the recommended shape for custom code per mlflow's
-    own shipped tracing guide.
+    """no-op safe @mlflow.trace: wraps the function in one real mlflow
+    span, inputs/outputs auto captured from bound arguments and return
+    value, plain passthrough when tracing is off.
 
-    span_type is one of the SPAN_TYPE_* constants above, left as
-    "UNKNOWN" (mlflow's own default) for spans that are not an agent
-    step, a model call, or a tool/retriever hop, this is what lets
-    evalhub's own ragas/clear scoring tell a retrieval span's contexts
-    apart from a plain llm span's prompt and completion later, rather
-    than every span in the tree looking the same shape.
+    span_type is one of the SPAN_TYPE_* constants, so evalhub's
+    ragas/clear scoring can tell a retrieval span's contexts apart from
+    an llm span's prompt and completion later.
 
-    a bearer token must never sit in a function argument this wraps,
-    mlflow has no per argument redaction, a caller holding one closes
-    over it in a nested function instead, see run_rag_search's own
-    callers for the shape.
+    a bearer token must never sit in a wrapped argument, mlflow has no
+    per argument redaction; callers holding one close over it in a
+    nested function instead, see run_rag_search's callers.
 
-    checked lazily inside wrapper(), not here: a decorator runs at
-    import time, before main() ever calls configure(), so _enabled is
-    always still false at the moment python evaluates this one
+    _enabled is checked lazily inside wrapper(), not here: this
+    decorator runs at import time, before configure() ever runs
     """
 
     def decorator(func):
@@ -144,11 +94,9 @@ def trace(name: str, span_type: str = "UNKNOWN"):
         def wrapper(*args, **kwargs):
             if not _enabled:
                 return func(*args, **kwargs)
-            # only the wrapping step itself is guarded, never the real
-            # call below: a telemetry bug here must fall back to the
-            # plain function, but a real exception from the function's
-            # own body still has to propagate exactly once, retrying it
-            # unwrapped would mean calling a real http hop twice
+            # only the wrapping step is guarded; a real exception from
+            # the function body must still propagate exactly once,
+            # retrying unwrapped would mean calling a real http hop twice
             try:
                 traced = _mlflow.trace(name=name, span_type=span_type)(func)
             except Exception as exc:  # noqa: BLE001
@@ -162,11 +110,9 @@ def trace(name: str, span_type: str = "UNKNOWN"):
 
 
 def current_span():
-    """the real active span inside a function wrapped by trace() above,
-    or None if tracing is off, same no-op contract everywhere else in
-    this module. for the handful of spans that need one branch specific
-    attribute, a category on only one of several outcomes a function
-    can return, set on top of what the decorator already auto captures.
+    """the active span inside a function wrapped by trace() above, or
+    None if tracing is off. for the handful of spans that need one
+    extra attribute set on top of what the decorator already captures.
     """
     if not _enabled:
         return None
@@ -178,10 +124,8 @@ def current_span():
 
 
 def outgoing_trace_headers() -> dict[str, str]:
-    """the real traceparent header for the coordinator's own outbound
-    a2a call to spear-retrieval-agent, confirmed live this is the only
-    header the distributed tracing helper actually needs to hand over.
-    empty when tracing is off, nothing for the caller to merge in then.
+    """traceparent header for the coordinator's outbound a2a call to
+    spear-retrieval-agent. empty when tracing is off.
     """
     if not _enabled:
         return {}
@@ -196,18 +140,15 @@ def outgoing_trace_headers() -> dict[str, str]:
 
 @contextlib.contextmanager
 def continue_trace_from_headers(headers: dict[str, str]):
-    """retrieval agent side of the same hop: picks the inbound traceparent
-    back up so its own spans land as real children of the coordinator's
-    delegating span instead of starting a second, disconnected trace.
-    a plain no-op if tracing is off or the header never arrived.
+    """retrieval agent side of the same hop: picks the inbound
+    traceparent back up so its spans land as children of the
+    coordinator's delegating span instead of a second, disconnected trace.
     """
     if not _enabled:
         yield
         return
-    # a contextlib generator may only ever yield once, confirmed live the
-    # hard way, "generator didn't stop after throw()", only the setup
-    # below is allowed to fail quietly, the caller's own body must
-    # propagate normally
+    # generator may only yield once; setup below can fail quietly, but
+    # the caller's own body must still propagate normally
     try:
         from mlflow.tracing import set_tracing_context_from_http_request_headers
 

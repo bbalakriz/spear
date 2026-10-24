@@ -4,8 +4,7 @@ corpus_prepare/compile_and_run.py (the caller's own `oc whoami -t`
 token, no separate pipeline server credential).
 
 this script does not look up the winning pattern itself: minio's s3 api
-is only reachable in cluster (confirmed live, this cluster has no
-external route for it, only the console ui route), and this script runs
+is only reachable in cluster (no external s3 route here), and this script runs
 from a caller's own machine. the spear console backend already runs in
 cluster and already does this exact lookup for real, in
 autorag_leaderboard() (console-backend/server.py), so the settings

@@ -193,50 +193,35 @@ deploymentSpec:
           \ dsl.Input[dsl.Dataset],\n    sanitize_report: dsl.Input[dsl.Dataset],\n\
           \    eval_dataset: dsl.Output[dsl.Dataset],\n) -> NamedTuple(\"Outputs\"\
           , [(\"qa_pairs_created\", int), (\"eval_dataset_key\", str)]):\n    \"\"\
-          \"PHASE1_PLAN.md section 3, step 3: real sdg hub eval dataset\n    generation,\
-          \ replacing the old autorag_status_stub. uses sdg hub's\n    built in \"\
-          RAG Evaluation Dataset\" flow (registry id loud-dawn-245,\n    required\
-          \ columns document + document_outline, output columns\n    question/response/ground_truth_context)\
-          \ against every document that\n    passed guardrails sanitization, one document\
-          \ per row so each\n    generated question can still be traced back to the\
-          \ doc_id it came\n    from.\n\n    document_outline is not a separate authored\
-          \ field anywhere upstream,\n    so this uses each document's manifest title\
-          \ as a lightweight stand\n    in, honest simplification, not sdg hub's fault.\n\
-          \n    talks to spear-ogx over its in cluster service url. one real,\n  \
-          \  empirically confirmed gotcha: sdg hub calls litellm's `openai/`\n   \
-          \ custom api_base provider routing, which strips exactly one leading\n \
-          \   path segment (up to the first '/') before sending the model field\n\
-          \    to ogx, so the model string passed in here always needs one extra\n\
-          \    leading \"openai/\" over whatever id ogx itself expects. ogx's own\n\
-          \    foundation model id for glm-53-flash is\n    \"openai/publishers/prelude-maas/models/glm-53-flash\"\
-          \ (the long form\n    is maas's own body based routing id, see\n    pipelines/autorag/run_autorag.py\
-          \ and PHASE1_PLAN.md for why),\n    so this needs a double prefixed\n  \
-          \  \"openai/openai/publishers/prelude-maas/models/glm-53-flash\" to\n  \
-          \  survive the strip.\n\n    writes the AutoRAG test-data json schema\n\
-          \    (question/correct_answers/correct_answer_document_ids) both as this\n\
-          \    step's own kfp artifact and to minio under eval_prefix, so\n    pipelines/autorag/run_autorag.py\
-          \ can point the real AutoRAG\n    kfp pipeline's test_data_key straight\
-          \ at it.\n    \"\"\"\n    import json\n    import os\n\n    import boto3\n\
-          \    from datasets import Dataset\n    from sdg_hub import Flow, FlowRegistry\n\
-          \n    s3 = boto3.client(\n        \"s3\",\n        endpoint_url=f\"http://{minio_endpoint}\"\
-          ,\n        aws_access_key_id=os.environ[\"MINIO_ACCESS_KEY\"],\n       \
-          \ aws_secret_access_key=os.environ[\"MINIO_SECRET_KEY\"],\n    )\n\n   \
-          \ with open(valid_docs.path) as f:\n        docs_by_id = {d[\"doc_id\"]:\
-          \ d for d in json.load(f)}\n    with open(sanitize_report.path) as f:\n\
-          \        report = json.load(f)\n\n    sanitized_docs = []\n    for row in\
-          \ report:\n        if row[\"verdict\"] != \"success\":\n            continue\n\
-          \        doc = docs_by_id[row[\"doc_id\"]]\n        content = s3.get_object(\n\
-          \            Bucket=bucket, Key=f\"{sanitized_prefix}{row['filename']}\"\
+          \"sdg hub's built in \"RAG Evaluation Dataset\" flow (registry id\n    loud-dawn-245,\
+          \ columns document + document_outline in, question/\n    response/ground_truth_context\
+          \ out) against every sanitized document,\n    one row per document so each\
+          \ question traces back to its doc_id.\n\n    document_outline is not authored\
+          \ anywhere upstream, uses the\n    manifest title as a lightweight stand\
+          \ in instead.\n\n    sdg hub calls litellm's `openai/` custom api_base routing,\
+          \ which\n    strips one leading path segment before sending the model field\
+          \ to\n    ogx, so the model string here needs an extra leading \"openai/\"\
+          \ over\n    whatever id ogx itself expects (glm-53-flash's long form id,\
+          \ see\n    pipelines/autorag/run_autorag.py, becomes double prefixed here).\n\
+          \n    writes the AutoRAG test-data json schema both as this step's kfp\n\
+          \    artifact and to minio under eval_prefix, so run_autorag.py can\n  \
+          \  point test_data_key straight at it.\n    \"\"\"\n    import json\n  \
+          \  import os\n\n    import boto3\n    from datasets import Dataset\n   \
+          \ from sdg_hub import Flow, FlowRegistry\n\n    s3 = boto3.client(\n   \
+          \     \"s3\",\n        endpoint_url=f\"http://{minio_endpoint}\",\n    \
+          \    aws_access_key_id=os.environ[\"MINIO_ACCESS_KEY\"],\n        aws_secret_access_key=os.environ[\"\
+          MINIO_SECRET_KEY\"],\n    )\n\n    with open(valid_docs.path) as f:\n  \
+          \      docs_by_id = {d[\"doc_id\"]: d for d in json.load(f)}\n    with open(sanitize_report.path)\
+          \ as f:\n        report = json.load(f)\n\n    sanitized_docs = []\n    for\
+          \ row in report:\n        if row[\"verdict\"] != \"success\":\n        \
+          \    continue\n        doc = docs_by_id[row[\"doc_id\"]]\n        content\
+          \ = s3.get_object(\n            Bucket=bucket, Key=f\"{sanitized_prefix}{row['filename']}\"\
           \n        )[\"Body\"].read().decode(\"utf-8\")\n        sanitized_docs.append({\n\
-          \            \"doc_id\": doc[\"doc_id\"],\n            # ai4rag's own docling\
-          \ chunker sets each retrieved chunk's\n            # document_id metadata\
-          \ to the raw filename (doc.name), never\n            # our abac manifest's\
-          \ doc_id. correct_answer_document_ids\n            # has to be written in\
-          \ that same namespace or\n            # context_correctness is deterministically\
-          \ 0 regardless of\n            # retrieval quality, confirmed by reading\n\
-          \            # ai4rag/rag/chunking/docling_chunker.py and\n            #\
-          \ ai4rag/core/experiment/utils.py directly out of the\n            # odh-autorag-rhel9\
-          \ image.\n            \"filename\": row[\"filename\"],\n            \"document\"\
+          \            \"doc_id\": doc[\"doc_id\"],\n            # ai4rag's docling\
+          \ chunker sets document_id to the raw\n            # filename, never our\
+          \ abac manifest doc_id;\n            # correct_answer_document_ids must\
+          \ use that same namespace\n            # or context_correctness is deterministically\
+          \ 0\n            \"filename\": row[\"filename\"],\n            \"document\"\
           : content,\n            \"document_outline\": doc.get(\"title\", doc[\"\
           doc_id\"]),\n        })\n\n    eval_rows = []\n    if not sanitized_docs:\n\
           \        print(\"no sanitized documents available, writing an empty eval\
@@ -255,15 +240,12 @@ deploymentSpec:
           \        # answer as not grounded in the context. on a small batch that\n\
           \        # can legitimately empty the whole dataset out, sdg hub raises\n\
           \        # EmptyDatasetError rather than returning zero rows. a couple of\n\
-          \        # retries absorb ordinary llm sampling variance (confirmed live:\n\
-          \        # the exact same single-document flow succeeded cleanly in an\n\
-          \        # earlier standalone run), if every attempt still comes back\n\
-          \        # empty this is reported as a real zero, never faked, not a\n \
-          \       # pipeline crash.\n        result = None\n        attempts = 3\n\
-          \        for attempt in range(1, attempts + 1):\n            try:\n    \
-          \            result = flow.generate(ds, max_concurrency=4)\n           \
-          \     break\n            except EmptyDatasetError:\n                print(f\"\
-          attempt {attempt}/{attempts}: every row failed sdg hub's groundedness filter\"\
+          \        # retries absorb llm sampling variance; all empty is a real zero,\
+          \ not a crash\n        result = None\n        attempts = 3\n        for\
+          \ attempt in range(1, attempts + 1):\n            try:\n               \
+          \ result = flow.generate(ds, max_concurrency=4)\n                break\n\
+          \            except EmptyDatasetError:\n                print(f\"attempt\
+          \ {attempt}/{attempts}: every row failed sdg hub's groundedness filter\"\
           )\n                if attempt == attempts:\n                    print(\"\
           giving up after all retries, reporting zero qa pairs for this batch\")\n\
           \n        if result is not None and len(result) > 0:\n            result_cols\
@@ -318,43 +300,42 @@ deploymentSpec:
           \ quarantined_docs: dsl.Output[dsl.Dataset],\n) -> NamedTuple(\"Outputs\"\
           , [(\"valid_count\", int), (\"quarantined_count\", int)]):\n    \"\"\"reads\
           \ the batch manifest and the actual objects under raw-intake/,\n    then\
-          \ applies the abac validation gate from PHASE1_PLAN.md section 4:\n    doc_id,\
-          \ title, source, clearance_level always required, dept or team\n    required\
-          \ once clearance_level isn't general, data_owner always\n    required. anything\
-          \ failing that, missing its file in the bucket\n    entirely, or sharing\
-          \ a doc_id with another entry in the same\n    manifest, gets quarantined\
-          \ with a reason rather than silently\n    defaulted open or hidden.\n  \
-          \  \"\"\"\n    import hashlib\n    import json\n    import os\n\n    import\
-          \ boto3\n\n    s3 = boto3.client(\n        \"s3\",\n        endpoint_url=f\"\
-          http://{minio_endpoint}\",\n        aws_access_key_id=os.environ[\"MINIO_ACCESS_KEY\"\
-          ],\n        aws_secret_access_key=os.environ[\"MINIO_SECRET_KEY\"],\n  \
-          \  )\n\n    manifest_key = f\"{prefix}manifest.json\"\n    manifest_obj\
-          \ = s3.get_object(Bucket=bucket, Key=manifest_key)\n    manifest = json.loads(manifest_obj[\"\
-          Body\"].read())\n\n    listed = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)\n\
-          \    present_files = {\n        obj[\"Key\"][len(prefix):] for obj in listed.get(\"\
-          Contents\", [])\n    } - {\"manifest.json\"}\n\n    # pre pass across the\
-          \ whole manifest before any per entry check, so a\n    # duplicate doc_id\
-          \ is caught even if every other field on both entries\n    # is otherwise\
-          \ perfectly valid. apply_winning_pattern deletes rag_chunks\n    # by doc_id\
-          \ before inserting, so two entries sharing one doc_id would\n    # otherwise\
-          \ silently let whichever gets processed last win with no\n    # trace, not\
-          \ something this pipeline should guess its way through\n    doc_id_counts\
-          \ = {}\n    for entry in manifest.get(\"documents\", []):\n        doc_id\
-          \ = entry.get(\"doc_id\")\n        if doc_id:\n            doc_id_counts[doc_id]\
-          \ = doc_id_counts.get(doc_id, 0) + 1\n\n    valid, quarantined = [], []\n\
-          \    for entry in manifest.get(\"documents\", []):\n        reasons = []\n\
-          \        for field in (\"doc_id\", \"title\", \"source\", \"clearance_level\"\
-          ):\n            if not entry.get(field):\n                reasons.append(f\"\
-          missing required field '{field}'\")\n        doc_id = entry.get(\"doc_id\"\
-          )\n        if doc_id and doc_id_counts[doc_id] > 1:\n            reasons.append(f\"\
-          doc_id '{doc_id}' appears {doc_id_counts[doc_id]} times in this manifest,\
-          \ quarantining all of them rather than guessing which one is correct\")\n\
-          \        clearance = entry.get(\"clearance_level\")\n        if clearance\
-          \ and clearance != \"general\" and not (entry.get(\"dept\") or entry.get(\"\
-          team\")):\n            reasons.append(\"clearance_level is not general but\
-          \ neither dept nor team is set\")\n        if not entry.get(\"data_owner\"\
-          ):\n            reasons.append(\"missing required field 'data_owner'\")\n\
-          \        filename = entry.get(\"filename\")\n        if not filename or\
+          \ applies the abac validation gate:\n    doc_id, title, source, clearance_level\
+          \ always required, dept or team\n    required once clearance_level isn't\
+          \ general, data_owner always\n    required. anything failing that, missing\
+          \ its file in the bucket\n    entirely, or sharing a doc_id with another\
+          \ entry in the same\n    manifest, gets quarantined with a reason rather\
+          \ than silently\n    defaulted open or hidden.\n    \"\"\"\n    import hashlib\n\
+          \    import json\n    import os\n\n    import boto3\n\n    s3 = boto3.client(\n\
+          \        \"s3\",\n        endpoint_url=f\"http://{minio_endpoint}\",\n \
+          \       aws_access_key_id=os.environ[\"MINIO_ACCESS_KEY\"],\n        aws_secret_access_key=os.environ[\"\
+          MINIO_SECRET_KEY\"],\n    )\n\n    manifest_key = f\"{prefix}manifest.json\"\
+          \n    manifest_obj = s3.get_object(Bucket=bucket, Key=manifest_key)\n  \
+          \  manifest = json.loads(manifest_obj[\"Body\"].read())\n\n    listed =\
+          \ s3.list_objects_v2(Bucket=bucket, Prefix=prefix)\n    present_files =\
+          \ {\n        obj[\"Key\"][len(prefix):] for obj in listed.get(\"Contents\"\
+          , [])\n    } - {\"manifest.json\"}\n\n    # pre pass across the whole manifest\
+          \ before any per entry check, so a\n    # duplicate doc_id is caught even\
+          \ if every other field on both entries\n    # is otherwise perfectly valid.\
+          \ apply_winning_pattern deletes rag_chunks\n    # by doc_id before inserting,\
+          \ so two entries sharing one doc_id would\n    # otherwise silently let\
+          \ whichever gets processed last win with no\n    # trace, not something\
+          \ this pipeline should guess its way through\n    doc_id_counts = {}\n \
+          \   for entry in manifest.get(\"documents\", []):\n        doc_id = entry.get(\"\
+          doc_id\")\n        if doc_id:\n            doc_id_counts[doc_id] = doc_id_counts.get(doc_id,\
+          \ 0) + 1\n\n    valid, quarantined = [], []\n    for entry in manifest.get(\"\
+          documents\", []):\n        reasons = []\n        for field in (\"doc_id\"\
+          , \"title\", \"source\", \"clearance_level\"):\n            if not entry.get(field):\n\
+          \                reasons.append(f\"missing required field '{field}'\")\n\
+          \        doc_id = entry.get(\"doc_id\")\n        if doc_id and doc_id_counts[doc_id]\
+          \ > 1:\n            reasons.append(f\"doc_id '{doc_id}' appears {doc_id_counts[doc_id]}\
+          \ times in this manifest, quarantining all of them rather than guessing\
+          \ which one is correct\")\n        clearance = entry.get(\"clearance_level\"\
+          )\n        if clearance and clearance != \"general\" and not (entry.get(\"\
+          dept\") or entry.get(\"team\")):\n            reasons.append(\"clearance_level\
+          \ is not general but neither dept nor team is set\")\n        if not entry.get(\"\
+          data_owner\"):\n            reasons.append(\"missing required field 'data_owner'\"\
+          )\n        filename = entry.get(\"filename\")\n        if not filename or\
           \ filename not in present_files:\n            reasons.append(f\"file '{filename}'\
           \ not found under {prefix} in bucket {bucket}\")\n\n        if reasons:\n\
           \            quarantined.append({**entry, \"quarantine_reasons\": reasons})\n\
@@ -403,44 +384,39 @@ deploymentSpec:
           \ int,\n    passed_count: int,\n    blocked_count: int,\n    qa_pairs_created:\
           \ int,\n    eval_dataset_key: str,\n    valid_docs: dsl.Input[dsl.Dataset],\n\
           \    quarantined_docs: dsl.Input[dsl.Dataset],\n    sanitize_report: dsl.Input[dsl.Dataset],\n\
-          \    eval_dataset: dsl.Input[dsl.Dataset],\n) -> str:\n    \"\"\"PHASE1_PLAN.md\
-          \ section 3, step 8: one json artifact aggregating\n    every earlier step's\
-          \ real output, logged to the shared mlflow\n    instance under the spear-pipelines\
-          \ workspace (X-MLflow-Workspace header,\n    see manifests/spear-pipelines/03-mlflow.yaml\
-          \ for why that header is\n    required on this build). this is what the\
-          \ eventual console plugin\n    backend reads, nothing there should ever\
-          \ recompute anything this\n    step already produced.\n\n    uses raw rest\
-          \ calls plus a direct boto3 artifact write instead of the\n    mlflow client\
-          \ package: the client's http layer doesn't have a clean\n    way to attach\
-          \ the workspace header this build requires per request,\n    and we already\
-          \ have the minio credentials this run's artifact_uri\n    resolves into\
-          \ on this bucket, so writing directly there is simpler\n    than adding\
-          \ a whole client dependency for one file.\n    \"\"\"\n    import json\n\
-          \    import os\n    import time\n\n    import boto3\n    import requests\n\
-          \n    with open(valid_docs.path) as f:\n        valid = json.load(f)\n \
-          \   with open(quarantined_docs.path) as f:\n        quarantined = json.load(f)\n\
-          \    with open(sanitize_report.path) as f:\n        sanitize = json.load(f)\n\
-          \    with open(eval_dataset.path) as f:\n        eval_rows = json.load(f)\n\
-          \n    report = {\n        \"batch_id\": batch_id,\n        \"generated_at\"\
-          : time.strftime(\"%Y-%m-%dT%H:%M:%SZ\", time.gmtime()),\n        \"ingestion\"\
-          : {\n            \"documents_scanned\": valid_count + quarantined_count,\n\
-          \            \"documents_valid\": valid_count,\n            \"documents_quarantined\"\
-          : quarantined_count,\n            \"quarantined_detail\": quarantined,\n\
-          \        },\n        \"guardrails\": {\n            \"documents_sanitized\"\
-          : passed_count,\n            \"documents_blocked\": blocked_count,\n   \
-          \         \"audit\": sanitize,\n        },\n        \"abac_tagging\": {\n\
-          \            \"status\": \"pending\",\n            \"note\": (\n       \
-          \         \"this batch is not indexed into rag_chunks yet. indexing now\
-          \ \"\n                \"happens after a winning pattern is selected, see\
-          \ \"\n                \"pipelines/corpus_index/pipeline.py, not as part\
-          \ of \"\n                \"ingestion. trigger an apply pattern run against\
-          \ this \"\n                \"batch's autorag run once it has a winner.\"\
-          \n            ),\n        },\n        \"sdg_hub_eval_dataset\": {\n    \
-          \        \"qa_pairs_created\": qa_pairs_created,\n            \"s3_key\"\
-          : eval_dataset_key,\n            \"sample\": eval_rows[:3],\n        },\n\
-          \        \"autorag_trigger\": (\n            \"not run from inside this\
-          \ pipeline, see \"\n            \"pipelines/autorag/run_autorag.py, which\
-          \ triggers the \"\n            \"real documents-rag-optimization-pipeline\
+          \    eval_dataset: dsl.Input[dsl.Dataset],\n) -> str:\n    \"\"\"one json\
+          \ artifact aggregating every earlier step's output, logged\n    to mlflow\
+          \ under the spear-pipelines workspace (X-MLflow-Workspace\n    header, see\
+          \ manifests/spear-pipelines/03-mlflow.yaml). this is what\n    the console\
+          \ backend reads, nothing there recomputes this.\n\n    uses raw rest calls\
+          \ plus a direct boto3 artifact write instead of\n    the mlflow client package:\
+          \ the client's http layer has no clean way\n    to attach the workspace\
+          \ header, and we already have the minio\n    credentials artifact_uri resolves\
+          \ into.\n    \"\"\"\n    import json\n    import os\n    import time\n\n\
+          \    import boto3\n    import requests\n\n    with open(valid_docs.path)\
+          \ as f:\n        valid = json.load(f)\n    with open(quarantined_docs.path)\
+          \ as f:\n        quarantined = json.load(f)\n    with open(sanitize_report.path)\
+          \ as f:\n        sanitize = json.load(f)\n    with open(eval_dataset.path)\
+          \ as f:\n        eval_rows = json.load(f)\n\n    report = {\n        \"\
+          batch_id\": batch_id,\n        \"generated_at\": time.strftime(\"%Y-%m-%dT%H:%M:%SZ\"\
+          , time.gmtime()),\n        \"ingestion\": {\n            \"documents_scanned\"\
+          : valid_count + quarantined_count,\n            \"documents_valid\": valid_count,\n\
+          \            \"documents_quarantined\": quarantined_count,\n           \
+          \ \"quarantined_detail\": quarantined,\n        },\n        \"guardrails\"\
+          : {\n            \"documents_sanitized\": passed_count,\n            \"\
+          documents_blocked\": blocked_count,\n            \"audit\": sanitize,\n\
+          \        },\n        \"abac_tagging\": {\n            \"status\": \"pending\"\
+          ,\n            \"note\": (\n                \"this batch is not indexed\
+          \ into rag_chunks yet. indexing now \"\n                \"happens after\
+          \ a winning pattern is selected, see \"\n                \"pipelines/corpus_index/pipeline.py,\
+          \ not as part of \"\n                \"ingestion. trigger an apply pattern\
+          \ run against this \"\n                \"batch's autorag run once it has\
+          \ a winner.\"\n            ),\n        },\n        \"sdg_hub_eval_dataset\"\
+          : {\n            \"qa_pairs_created\": qa_pairs_created,\n            \"\
+          s3_key\": eval_dataset_key,\n            \"sample\": eval_rows[:3],\n  \
+          \      },\n        \"autorag_trigger\": (\n            \"not run from inside\
+          \ this pipeline, see \"\n            \"pipelines/autorag/run_autorag.py,\
+          \ which triggers the \"\n            \"real documents-rag-optimization-pipeline\
           \ against this \"\n            \"batch's eval dataset separately\"\n   \
           \     ),\n        \"valid_documents\": valid,\n    }\n\n    headers = {\"\
           X-MLflow-Workspace\": mlflow_workspace, \"Content-Type\": \"application/json\"\
@@ -525,13 +501,13 @@ deploymentSpec:
           , int)]):\n    \"\"\"calls the already deployed NemoGuardrails cr's /v1/guardrail/checks\n\
           \    per document, picking internal-docs-config (the default, omit\n   \
           \ config_id) or vendor-submission-config based on the manifest's\n    source\
-          \ field, exactly the config_id switch PHASE1_PLAN.md section 2\n    describes.\
-          \ documents that pass get copied to sanitized/, the one\n    thing autorag\
-          \ is ever allowed to sample from. the seeded vendor dpa\n    document with\
-          \ its embedded override attempt is expected to end up in\n    blocked, not\
-          \ sanitized/, that is this step working as designed, not\n    a failure.\n\
-          \n    auth: the pod's own projected service account token, the in cluster\n\
-          \    equivalent of `oc whoami -t`, works here because\n    manifests/spear-guardrails/06-pipeline-rbac.yaml\
+          \ field (internal vs vendor config_id). documents that pass get copied to\
+          \ sanitized/, the one\n    thing autorag is ever allowed to sample from.\
+          \ the seeded vendor dpa\n    document with its embedded override attempt\
+          \ is expected to end up in\n    blocked, not sanitized/, that is this step\
+          \ working as designed, not\n    a failure.\n\n    auth: the pod's own projected\
+          \ service account token, the in cluster\n    equivalent of `oc whoami -t`,\
+          \ works here because\n    manifests/spear-guardrails/06-pipeline-rbac.yaml\
           \ grants this pipeline's\n    service account get on exactly the one service\
           \ the guardrails route's\n    kube-rbac-proxy checks for, confirmed by reading\
           \ its config live.\n    \"\"\"\n    import json\n    import os\n\n    import\

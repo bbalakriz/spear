@@ -1,6 +1,4 @@
-# ossm3 control plane, required for gatewayClassName: istio used by
-# manifests/10-agent-pack/02-mcp-gateway.yaml and
-# manifests/20-security/06-a2a-gateway.yaml
+# istio/gateway api prerequisites for mcp and a2a gateways
 apiVersion: v1
 kind: Namespace
 metadata:

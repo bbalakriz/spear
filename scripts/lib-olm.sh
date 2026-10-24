@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# shared by 00-a-install-platform.sh, not meant to run on its own. every
-# Subscription in this repo pins installPlanApproval: Manual, olm creates
-# an InstallPlan sitting in RequiresApproval and never moves past it on
-# its own, so every operator install needs the same "find the plan,
-# approve it once, wait for the pinned csv to succeed" sequence. kept in
-# one place so the approval logic can't drift between call sites.
+# olm manual install plan approval for 00-a-install-platform.sh
 
 # find an InstallPlan in ns whose clusterServiceVersionNames list
 # contains csv. subscription.status.installPlanRef always tracks the
@@ -19,18 +14,7 @@ find_install_plan_for_csv() {
 # resolves a Subscription's install plan and approves it if it is not
 # already approved. idempotent, an already approved plan is left alone.
 #
-# olm keeps proposing new install plans for whatever the channel's current
-# head is even under installPlanApproval: Manual, that setting only stops
-# olm auto approving them, it does not stop it from generating them. an
-# earlier version of this function approved whatever plan a subscription
-# was currently pointed at with no regard for which csv it targeted, so a
-# second run of the same install script after olm had proposed a newer
-# plan silently approved the upgrade instead of the pinned startingCSV,
-# confirmed live: rhbk-operator drifted from the pinned v26.4.15-opr.1 to
-# v26.4.16-opr.1 this way, two install plans existed, both approved, one
-# for each csv. only ever approving a plan that carries the pinned csv
-# closes that gap, bumping the pin is a deliberate edit to the
-# manifest, never an accidental side effect of rerunning the script.
+# only approve the install plan that carries spec.startingCSV, not channel head
 approve_install_plan() {
   local name="$1" ns="$2" tries=60 plan="" starting_csv="" plan_csvs="" installed_csv=""
   starting_csv=$(oc get subscription "${name}" -n "${ns}" -o jsonpath='{.spec.startingCSV}' 2>/dev/null || true)

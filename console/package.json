@@ -1,7 +1,7 @@
 {
   "name": "spear-console",
   "version": "0.0.1",
-  "description": "Spear console plugin for spear-corpus-prepare-pipeline: read only view of guardrails, ABAC tagging, and AutoRAG leaderboard status per project, see PHASE1_PLAN.md section 6",
+  "description": "Spear console plugin: guardrails, ABAC tagging, and AutoRAG leaderboard status per project",
   "private": true,
   "license": "Apache-2.0",
   "repository": {

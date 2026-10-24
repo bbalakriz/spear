@@ -27,14 +27,9 @@ plugin:
   basePath: /
   backendProxy:
     alias: backend
-    # UserToken so the console forwards the signed in user's own openshift
-    # bearer token to the backend, needed once the backend started calling
-    # the kfp pipeline server on the caller's own behalf (run picker, trigger
-    # buttons, autorag leaderboard read). mlflow reads still use the
-    # backend's own service account regardless of this setting.
+    # forward signed in user token for kfp calls; mlflow still uses backend sa
     authorization: UserToken
     serviceName: spear-console-backend
-    # NAMESPACE_MIGRATION_PLAN.md: moved from rag-phase1 to spear-console
     namespace: spear-console
     port: 8443
   certificateSecretName: ""

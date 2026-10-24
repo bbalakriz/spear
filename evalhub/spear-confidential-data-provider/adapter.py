@@ -1,39 +1,24 @@
-"""spear-confidential-data-provider: a custom evalhub provider scoring
-the real coordinator agent's own already generated answers for
-confidential business data leaks, not its input side. see
-PHASE3_PLAN.md section 7, the honest finding behind this file: nemo
-guardrails' own sensitive_data_detection rail only ever runs on the way
-in, nothing on this cluster checks what the model actually says back,
-and the agent's own rag retrieval can surface restricted content
-ingestion never screened for.
+"""spear-confidential-data-provider: scores the coordinator agent's
+already generated answers for confidential business data leaks on
+model output, not input, nemo sensitive_data_detection only runs
+inbound, and rag retrieval can surface restricted content ingestion
+never screened for.
 
-not a live probe: an earlier version of this file minted a keycloak
-token and fired three fixed canned questions at the real coordinator
-a2a gateway every run. caught on review as not a logical design, a
-single call per fixed sentence cannot measure anything about
-consistency, and nobody using the real system asks these exact three
-sentences, so a scan built that way is closer to a unit test against a
-planted document than a security control. this version instead mines
-spear-shield-security-trace's own mlflow traces for answers that already
-happened, same real data source scripts/lib/export_ragas_dataset.py
-already reads for ragas, no live agent call, no demo persona
-credentials, no fixed prompt list at all.
+not a live probe: mines spear-shield-security-trace's mlflow traces for
+answers that already happened, same source
+scripts/lib/export_ragas_dataset.py reads for ragas. no live agent
+call, no demo persona credentials, no fixed prompt list, a single call
+per fixed sentence cannot measure anything about real consistency.
 
-not a pii scan: presidio's stock recognizers (person, email, ssn, bank
-account, phone) are all classic personal data detectors, and the
-planted content this provider is meant to catch is deliberately not
-personal data at all, it is a vendor's negotiated contract economics, a
-competitively sensitive business secret. so instead of presidio's built
-in entity types, this registers two custom PatternRecognizer entities
-keyed to the actual negotiated figures on file (see
-seed-data/raw-intake/vendor_contract_economics_record.md), a project
-specific confidential data detector, not a generic one.
+not a pii scan: the planted content here is a vendor's negotiated
+contract economics, not personal data, so this registers two custom
+PatternRecognizer entities keyed to the actual negotiated figures (see
+seed-data/raw-intake/vendor_contract_economics_record.md) instead of
+presidio's stock entity types.
 
-real adapter protocol confirmed from the already shipped garak provider
-image, not guessed: pip package eval-hub-sdk, importable as evalhub,
-FrameworkAdapter is the one abstract base every provider subclasses,
-run_benchmark_job(config, callbacks) -> JobResults is the one method to
-implement.
+adapter protocol: eval-hub-sdk (importable as evalhub), FrameworkAdapter
+is the abstract base every provider subclasses,
+run_benchmark_job(config, callbacks) -> JobResults is the method to implement.
 """
 
 from __future__ import annotations
@@ -91,7 +76,7 @@ def _register_workspace_header(mlflow_module: Any, workspace: str) -> None:
 
         def request_headers(self) -> dict[str, str]:
             # the real constant mlflow's own rest_utils.WORKSPACE_HEADER_NAME
-            # uses is this exact casing, confirmed live: getting this wrong
+            # exact casing mlflow rest_utils.WORKSPACE_HEADER_NAME expects; wrong casing duplicates headers
             # (a plausible looking "X-MLflow-Workspace") means
             # headers.setdefault(WORKSPACE_HEADER_NAME, ...) treats this as
             # a different key entirely and still adds its own env derived
@@ -115,8 +100,7 @@ def _fetch_recent_answers(
     one actually produced. the ca cert travels as a plain parameter and
     gets written to a temp file here rather than assuming a mounted
     volume, the evalhub operator's own job template for this provider
-    gives the adapter container whatever env it gives it, confirmed live
-    it does not let this repo inject its own volumes, same reasoning
+    does not inject custom volumes; ca cert passed as a parameter instead
     shield_* used to travel as plain parameters for the same restriction
     """
     if mlflow_ca_cert:
@@ -169,8 +153,7 @@ LEAK_DETAIL_EXPERIMENT = "spear-shield-evalhub-results"
 
 def _log_leak_detail_run(job_id, per_trace_detail, traces_scanned, total_hits):
     """the one thing the real evalhub job api strips on its own GET
-    response, confirmed live against a completed job: EvaluationResult's
-    own metadata field never survives, the job result only ever carries
+    response: EvaluationResult metadata does not survive the job GET; only
     the bare confidential_leak_count number back out. section 8's closed
     loop patch job needs the actual leaked text to build a new guardrail
     pattern from, not just the count, so this writes it durably here
@@ -184,8 +167,7 @@ def _log_leak_detail_run(job_id, per_trace_detail, traces_scanned, total_hits):
     scripts/11-submit-evalhub-jobs.sh right after this same job finishes,
     can find exactly this run and nothing stale from an earlier cycle.
 
-    as a tag, not a logged artifact: tried log_dict first, confirmed live
-    this job pod's image has no boto3, and this real mlflow server's
+    as a tag not an artifact: log_dict needs boto3 this image lacks; mlflow server's
     older spear-shield-evalhub-results experiment predates
     serveArtifacts: true, so its runs still get a direct s3:// artifact
     location, needing a real s3 client to upload to, not the artifact
@@ -298,17 +280,7 @@ class ConfidentialDataAdapter(FrameworkAdapter):
             mlflow_workspace = params.get("mlflow_workspace") or DEFAULT_MLFLOW_WORKSPACE
             mlflow_experiment = params.get("mlflow_experiment") or DEFAULT_MLFLOW_EXPERIMENT
 
-            # not read_model_auth_key, not config.model.url: confirmed live
-            # the real evalhub operator never gives this adapter container
-            # a usable channel for either, "api-key" always comes back as
-            # the literal placeholder string "api-key:ref", a reference
-            # token only its own openai style proxy sidecar is meant to
-            # resolve, and that proxy flow has nothing to do with mlflow.
-            # the mlflow url, a real sa bearer token and the service ca
-            # cert all travel as plain benchmark parameters instead, same
-            # already accepted risk level this whole project's demo
-            # credentials already live at (manifests/spear-console/01-chat-creds.yaml
-            # commits a real client secret and password in plaintext)
+            # mlflow url, token, ca via job params (evalhub does not expose read_model_auth_key)
             mlflow_url = params.get("mlflow_url", "")
             mlflow_token = params.get("mlflow_token", "")
             mlflow_ca_cert = params.get("mlflow_ca_cert", "")

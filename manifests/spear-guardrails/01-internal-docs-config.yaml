@@ -1,20 +1,4 @@
-# nemo guardrails config for internal documents, default policy on the
-# nemoguardrails cr in 03-nemoguardrails-cr.yaml. built in Presidio and
-# regex detectors only, no llm required, see
-# https://eformat.github.io/ralf-wiggum-rhoai-kitchen-sink/nemo-guardrails
-# module 2.
-#
-# design note on block vs mask: the documented "mask sensitive data on
-# input/output" flow only appears in the workshop wired to the
-# /v1/chat/completions path fronting a live model. our ingestion step calls
-# /v1/guardrail/checks instead, which is fully documented as block-only
-# (status success|blocked, activated_rails), so this config stays on the
-# documented "detect ... on input" / "regex check input" block flows.
-# scripts/07-install-guardrails.sh's ingestion caller treats a "blocked"
-# verdict plus activated_rails as the detection signal, and performs the
-# actual redact-and-continue itself, guardrails is the detector and audit
-# source of record here, not the transform engine, see PHASE1_PLAN.md
-# section 2.
+# nemoguardrails config for internal docs ingestion pipeline
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -35,8 +19,8 @@ data:
           input:
             patterns:
               # prompt injection / instruction override signatures. this list
-              # is the one thing PHASE1_PLAN.md section 2 flagged as needing
-              # a security team review pass before go live.
+              # is the one thing
+              # a security team review pass before go live
               - "ignore\\s+(all\\s+)?previous\\s+instructions?"
               - "system\\s+override"
               - "you\\s+(now\\s+)?have\\s+elevated\\s+access"

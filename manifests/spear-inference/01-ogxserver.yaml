@@ -89,7 +89,7 @@
 apiVersion: ogx.io/v1beta1
 kind: OGXServer
 metadata:
-  name: rag-phase1-ogx
+  name: spear-ogx
   namespace: spear-inference
 spec:
   # rh-dev is deprecated in the operator version installed on this cluster
@@ -104,7 +104,7 @@ spec:
   # rules rather than merging with them, despite the field's own stated
   # description saying merged, so every rule actually needed is listed
   # explicitly: same namespace plus redhat-ods-applications on 8321 and
-  # monitoring on 9464 are the operator's own defaults, spear-shield-agents
+  # monitoring on 9464 are the operator's own defaults, spear-agents
   # and spear-data are this project's own additions, spear-coordinator-agent's
   # and spear-retrieval-agent's own calls through spear-guardrails, and
   # spear-data's own rag-query-relay calling the embeddings endpoint
@@ -131,7 +131,7 @@ spec:
         - from:
             - namespaceSelector:
                 matchLabels:
-                  kubernetes.io/metadata.name: spear-shield-agents
+                  kubernetes.io/metadata.name: spear-agents
           ports:
             - protocol: TCP
               port: 8321
@@ -167,7 +167,7 @@ spec:
         # calls this service directly from spear-guardrails for its own
         # generation step, confirmed live via the pod's own traceback,
         # nemoguardrails.exceptions.LLMTimeoutError wrapping a real
-        # httpcore.ConnectTimeout against rag-phase1-ogx-service, caught
+        # httpcore.ConnectTimeout against spear-ogx-service, caught
         # by nemoguardrails's own generic exception handler and returned
         # as a clean 200 with message.content literally "Internal server
         # error", no tool_calls, which is what spear-console's chat page
@@ -190,7 +190,7 @@ spec:
         - from:
             - namespaceSelector:
                 matchLabels:
-                  kubernetes.io/metadata.name: spear-shield-eval
+                  kubernetes.io/metadata.name: spear-eval
           ports:
             - protocol: TCP
               port: 8321
@@ -269,7 +269,7 @@ spec:
         # dedicated to embeddings, pointed at the self hosted TEI
         # server (manifests/spear-inference/02-embed-server.yaml)
         - name: VLLM_EMBEDDING_URL
-          value: http://rag-phase1-embed-server.spear-inference.svc.cluster.local/v1
+          value: http://spear-embed-server.spear-inference.svc.cluster.local/v1
         # tei has no auth of its own, this is a placeholder so the
         # required env var is non empty, the value is never checked
         - name: VLLM_EMBEDDING_API_TOKEN

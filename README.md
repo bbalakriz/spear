@@ -4,13 +4,13 @@ Enterprises have been deploying AI at a fast pace. Out in the field the same pat
 
 CISO teams keep asking the same questions. Who exactly can this AI see data for? What happens if someone tries to manipulate it through the documents or tools it uses? If something goes wrong, can we actually prove what it accessed and why?
 
-SPEAR is our answer to closing that gap, a secure permission aware agentic runner designed to solve the OWASP failure modes we see repeatedly in enterprise AI deployments, with one real control for each one. It is implemented end to end on Red Hat OpenShift AI: two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a Kuadrant/Authorino MCP gateway with per-tool RBAC, identified by Keycloak caller tokens and SPIRE workload identity, with an OpenShift console dynamic plugin as the operator's console, a KFP ingestion plus AutoRAG pipeline chain building the knowledge base and an EvalHub evaluation cycle (ragas, IBM CLEAR, garak and a custom confidential data leak scanner) feeding MLflow.
+SPEAR is our answer to closing that gap, a secure permission aware agentic runner designed to solve the OWASP failure modes we see repeatedly in enterprise AI deployments, with one real control for each one. It is implemented end to end on Red Hat OpenShift AI: two sandboxed agents (coordinator on runc, retrieval on Kata) answer questions through NeMo Guardrails and a Kuadrant/Authorino MCP gateway with per-tool RBAC, identified by Keycloak caller tokens and SPIRE workload identity, with an OpenShift console dynamic plugin as the operator's console, a KFP corpus prepare plus AutoRAG pipeline chain building the knowledge base and an EvalHub evaluation cycle (ragas, IBM CLEAR, garak and a custom confidential data leak scanner) feeding MLflow.
 
 ## Architecture at a glance
 
 ![Solution overview](images/solution-overview.png)
 
-Every uploaded document passes through ABAC quarantine and NeMo Guardrails sanitization before anything is indexed, a document that fails stays quarantined rather than reaching the eval dataset. AutoRAG then sweeps chunk size, overlap and embedding model combinations against that real eval dataset and only the winning pattern is ever applied, the one step that actually chunks, embeds and writes documents into `rag_chunks`, ABAC tagged from that point on. The same mlflow instance that traces every live agent question also carries the ingestion audit trail and the continuous evaluation cycle, EvalHub's four providers (ragas, IBM CLEAR, garak and the confidential data scanner) score real agent traces on a schedule, not a one time report, feeding results back into the same experiments an operator watches from the Evaluation Trends page.
+Every uploaded document passes through ABAC quarantine and NeMo Guardrails sanitization before anything is indexed, a document that fails stays quarantined rather than reaching the eval dataset. AutoRAG then sweeps chunk size, overlap and embedding model combinations against that real eval dataset and only the winning pattern is ever applied, the one step that actually chunks, embeds and writes documents into `rag_chunks`, ABAC tagged from that point on. The same mlflow instance that traces every live agent question also carries the corpus prepare audit trail and the continuous evaluation cycle, EvalHub's four providers (ragas, IBM CLEAR, garak and the confidential data scanner) score real agent traces on a schedule, not a one time report, feeding results back into the same experiments an operator watches from the Evaluation Trends page.
 
 One question traverses six enforcement layers end to end: sandbox isolation, openshell egress policy, guardrails, gateway auth, per-tool RBAC and ABAC row filtering. The data path runs independently of any live question.
 
@@ -25,7 +25,7 @@ Refer [Detailed architecture](Detailed%20architecture.md) for a deep dive on the
 ### 1. Get a cluster
 
 - OpenShift with the apps domain reachable, routes resolve as `<name>.<apps-domain>`. 
-> Recommended catalog item in the Red Hat Demo Platform is OpenShift Container Platform Cluster (Multi-Cloud) with OpenShift 4.22 (to match the version of OpenShift dynamic console plugin version) and 3 worker node cluster.
+> Recommended catalog item in the Red Hat Demo Platform is OpenShift Container Platform Cluster (Multi-Cloud) with OpenShift 4.22 (to match the version of OpenShift dynamic console plugin version) and 3 worker node cluster (m5a.4xlarge).
 
 - logged in as cluster-admin, the install chain creates operators, MachineConfigs, SCC grants and cluster scoped RBAC. 
 - RHOAI 3.5.1 is installed by the platform layer if absent, left untouched if already present
@@ -37,7 +37,7 @@ Refer [Detailed architecture](Detailed%20architecture.md) for a deep dive on the
 - `oc` and `helm`
 - `jq`, `curl`, `python3`, `openssl`
 - `yarn` and node, for the console plugin frontend build
-- a Python 3.12 venv at `.venv-kfp`, needed for the manual pipeline steps in step 7:
+- a Python 3.12 venv at `.venv-kfp`, needed by script 04's pipeline registration and by the optional CLI alternatives to the console buttons in step 7:
 
 ```
 python3.12 -m venv .venv-kfp && source .venv-kfp/bin/activate
@@ -78,7 +78,7 @@ litemaas scopes keys per model server side, reusing the chat key for embedding r
 
 `00-a` installs everything under `manifests/platform/`: RHOAI 3.5.1 (operator, DSC, DSCI, dashboard flags), operators (Authorino, Kuadrant/RHCL, OSSM3, MCP gateway, RHBK/Keycloak, Red Hat agent sandbox, which replaces any upstream kubernetes-sigs controller first), Istio plus Istio CNI, Authorino and Kuadrant instances, Keycloak server, ZTWIM/SPIRE, Kata sandboxed containers and the guest initramfs nftables patch. All operator subscriptions use `installPlanApproval: Manual`, approved only when the InstallPlan carries the pinned `startingCSV`, so a rerun never silently accepts an OLM proposed upgrade.
 
-`00-b` installs the OpenShell gateway relay (Helm chart `oci://ghcr.io/nvidia/openshell/helm-chart`, release `openshell` in namespace `openshell`, values from `manifests/platform/openshell/values-openshell-spear.yaml`), grants the `openshell-sandbox` SA the privileged SCC in `spear-shield-agents`, and applies the gateway route. The project's a2a HTTPRoutes later point at this release via the `spear-shield-openshell-a2a-backend` ExternalName.
+`00-b` installs the OpenShell gateway relay (Helm chart `oci://ghcr.io/nvidia/openshell/helm-chart`, release `openshell` in namespace `openshell`, values from `manifests/platform/openshell/values-openshell-spear.yaml`), grants the `openshell-sandbox` SA the privileged SCC in `spear-agents`, and applies the gateway route. The project's a2a HTTPRoutes later point at this release via the `spear-openshell-a2a-backend` ExternalName.
 
 Optional env knobs for the platform layer, all default safely if unset:
 
@@ -119,13 +119,11 @@ The console's Architecture Status page shows live component probes and runtimeCl
 Point checks beyond the script:
 
 ```
-oc get sandbox -n spear-shield-agents                            # both sandboxes Running
-oc get consoleplugin phase1-ingestion-console                    # plugin rolled out
-oc get keycloakrealmimport spear-shield-agents-realm -n keycloak # realm imported
+oc get sandbox -n spear-agents                            # both sandboxes Running
+oc get consoleplugin spear-console                                # plugin rolled out
+oc get keycloakrealmimport spear-agents-realm -n keycloak # realm imported
 oc get mcpserverregistration -A                                  # registrations Ready
 ```
-
-No test suite exists in this repo, `90-verify.sh` plus the in script smoke tests are the whole verification story.
 
 ### 7. Post-install real-data steps
 
@@ -137,45 +135,59 @@ The seed corpus at `seed-data/raw-intake/` includes one real, deliberately plant
 
 ![Document PII and injection sanitization](images/doc-pii-inject-sanitize.png)
 
-After step 7.2 runs, this document is blocked by sanitization rather than copied to `sanitized/`. The Knowledge Base page's sanitization run card shows the same outcome.
+After step 7.3 runs, this document is blocked by sanitization rather than copied to `sanitized/`. The Knowledge Base page's sanitization run card shows the same outcome.
 
-#### 7.2 Ingestion pipeline run
+#### 7.2 Upload documents to the corpus
 
-Needs `.venv-kfp`:
+The seed corpus already sits in MinIO, bucket `rag-documents`, prefix `raw-intake/`, seeded by `02-install-storage.sh` from `seed-data/raw-intake/`. That script is also how you add real documents of your own, there is no upload button on the console, uploading is a repo plus rerun step not a console action.
+
+1. Drop the new file (or files) under `seed-data/raw-intake/`.
+2. Add a matching entry to `seed-data/raw-intake/manifest.json`, the ABAC tags every document needs (`clearance_level`, `dept`, `team`, `project_scope`, `data_owner`), keyed by the exact filename.
+3. Rerun `./scripts/02-install-storage.sh`. It wipes `raw-intake/` first then remirrors it from `seed-data/raw-intake/` exactly, so the bucket never ends up a mix of old and new files, safe to rerun as often as you add documents.
+
+The Knowledge Base page's source strip (S3 endpoint, raw feed bucket and prefix, a link straight into the MinIO console) shows exactly what step 7.3 is about to read, use it to confirm your new file landed before starting a run.
+
+#### 7.3 Sanitization run
+
+On the console, under Knowledge Base, type a batch id into New batch ID (anything unused works, pick something that describes what you just uploaded) and click Sanitize sources.
+
+Every document currently under `raw-intake/` is sent through the guardrails `/v1/guardrail/checks` call, the vendor submission from 7.1 is blocked, every other document passes and moves on to real eval question generation over the sanitized set. Nothing is chunked or written to `rag_chunks` yet. The run lands in MLflow experiment `spear-corpus-prepare`, workspace `spear-pipelines`, and the page's report section fills in once it finishes.
+
+The same run is also reachable from the CLI if you prefer it, same pipeline, same result, just without the console's batch picker and report view:
 
 ```
 source .venv-kfp/bin/activate
 python pipelines/corpus_prepare/compile_and_run.py
 ```
 
-Every document is sent through the guardrails `/v1/guardrail/checks` call, the vendor submission from 7.1 is blocked, every other document passes and moves on to real eval question generation over the sanitized set. Nothing is chunked or written to `rag_chunks` yet. Run id lands in MLflow experiment `phase1-ingestion`, workspace `spear-pipelines`, using your own `oc whoami -t` token.
+#### 7.4 AutoRAG optimization run
 
-#### 7.3 AutoRAG optimization run
+Needs 7.3's eval dataset. Once the sanitization run's report is showing, click Optimize RAG parameters on the same Knowledge Base page, it is disabled until a batch with a report is selected.
 
-Needs 7.2's eval dataset:
-
-```
-python pipelines/autorag/run_autorag.py seed-batch-001
-```
-
-Triggers the RHOAI auto-registered `documents-rag-optimization-pipeline`.
+Triggers the RHOAI auto-registered `documents-rag-optimization-pipeline`, sweeping chunk size, overlap and embedding model combinations against that batch's eval set. The leaderboard card fills in with the winning pattern once the run succeeds.
 
 ![AutoRAG optimization run](images/autorag-run.png)
 
-#### 7.4 Apply the winning pattern
+The CLI equivalent, same run, no leaderboard card:
 
-Read the winning pattern from the console backend (`GET /kfp/autorag-leaderboard?run_id=<autorag_run_id>` through the console proxy), then:
+```
+python pipelines/autorag/run_autorag.py <batch_id>
+```
+
+#### 7.5 Apply the winning pattern
+
+Once the leaderboard shows a winner, click Apply this pattern to production on the same page. This is the only step that actually chunks, embeds and writes sanitized documents into `rag_chunks`, ABAC tagged, ready for real retrieval.
+
+![Apply winning pattern](images/apply-winning-pattern.png)
+
+The CLI equivalent, reading the same winning pattern the console button reads (`GET /kfp/autorag-leaderboard?run_id=<autorag_run_id>` through the console proxy):
 
 ```
 python pipelines/corpus_index/compile_and_run.py \
     <batch_id> <autorag_run_id> <pattern_name> <chunk_size> <chunk_overlap> <embedding_model>
 ```
 
-This is the only step that actually chunks, embeds and writes sanitized documents into `rag_chunks`, ABAC tagged, ready for real retrieval.
-
-![Apply winning pattern](images/apply-winning-pattern.png)
-
-#### 7.5 Two personas, one prompt, two different answers
+#### 7.6 Two personas, one prompt, two different answers
 
 Demo usernames and passwords are in step 8 (`spear-shield-console-creds`). Open the console as both personas, paste this same question into the SpearShield Assistant chat in both browser sessions:
 
@@ -189,7 +201,7 @@ The ABAC filter on `rag_chunks` means `balakrishnan.b` and `siddhartha.de` get g
 
 ![Two personas, different tool access](images/2-personas-b-diff-tools.png)
 
-#### 7.6 The malicious MCP tool response injection 
+#### 7.7 The malicious MCP tool response injection 
 
 ```
 ./scripts/demo-tool-response-injection.sh
@@ -199,15 +211,15 @@ Plants one real malicious work package, a prompt injection payload in the subjec
 
 ![Work package guard proxy blocking injection](images/work-package-guard-proxy.png)
 
-#### 7.7 Evaluation layer, seed traces then one real cycle
+#### 7.8 Evaluation layer, seed traces then one real cycle
 
 After `10-install-evalhub.sh`, build the custom provider and cycle runner once:
 
 ```
-oc start-build spear-confidential-data-provider --from-dir=evalhub --wait -n spear-shield-eval
+oc start-build spear-confidential-data-provider --from-dir=evalhub --wait -n spear-eval
 oc start-build evalhub-cycle-runner --from-dir=. \
   --exclude='(^|/)(\.git|\.venv-kfp|\.venv|venv|node_modules|__pycache__|archive)(/|$)|\.(docx|pptx|rtf|excalidraw|pyc)$' \
-  --wait -n spear-shield-eval
+  --wait -n spear-eval
 ```
 
 > Warning: the `--exclude` on the cycle runner build is required, `oc start-build` does not read `.dockerignore`.
@@ -253,9 +265,9 @@ Confidential leak count should climb on the Trends page. Leave the Tighten butto
 
 ![Evaluation Trends Cycle B, confidential leak risen](images/cycleb-trend-leak.png)
 
-#### 7.8 Closed loop, then a second trend point
+#### 7.9 Closed loop, then a second trend point
 
-Only after Cycle B's leak count is visible, open Evaluation Trends and click Tighten guardrails from this leak on the Confidential Data Leaks card. That patches the leaked text into `coordinator-agent-config`'s input and output `regex_detection` patterns (output is what blocks a re ask of the same natural question). Re ask the Northbridge prompts from 7.7 as `siddhartha.de`, the answer should refuse instead of reprinting the rebate or volume figures, then add a couple of clean prompts from Cycle A, then:
+Only after Cycle B's leak count is visible, open Evaluation Trends and click Tighten guardrails from this leak on the Confidential Data Leaks card. That patches the leaked text into `coordinator-agent-config`'s input and output `regex_detection` patterns (output is what blocks a re ask of the same natural question). Re ask the Northbridge prompts from 7.8 as `siddhartha.de`, the answer should refuse instead of reprinting the rebate or volume figures, then add a couple of clean prompts from Cycle A, then:
 
 ```
 ./scripts/11-submit-evalhub-jobs.sh
@@ -266,7 +278,7 @@ Only after Cycle B's leak count is visible, open Evaluation Trends and click Tig
 Optional unattended schedule later, `evalhub-cycle-runner` ships suspended since every cycle makes real paid model calls:
 
 ```
-oc patch cronjob evalhub-cycle-runner -n spear-shield-eval --type merge \
+oc patch cronjob evalhub-cycle-runner -n spear-eval --type merge \
   -p '{"spec":{"suspend":false}}'
 ```
 
@@ -294,7 +306,7 @@ Console navigation, under the SpearShield section:
 
 | Page | What it shows |
 |---|---|
-| Knowledge Base | ingestion controls, corpus and pipeline state, the sanitization run card from step 7.1 |
+| Knowledge Base | corpus upload status, sanitization, AutoRAG and apply pattern controls, the sanitization run card from step 7.1 |
 | Ask SPEAR Shield | live chat, box and arrow per hop trace |
 | Under the Hood | seven live security demos over the one real topology (four runtime compare groups plus three access control scenarios) |
 | Evaluation Trends | eval cycles from MLflow, the confidential data leak card with its closed loop tighten button |
@@ -320,13 +332,13 @@ Known behaviors, all previously hit live and worked around in the scripts:
 |---|---|---|
 | API server drops mid-install | the Kata step reboots every node in the labelled pool | do not interrupt `00-a-install-platform.sh` during Kata; the wait loop tolerates the drop; a healthy KataConfig is never touched on rerun; after a node reboot rerun `./scripts/patch-kata-nftables.sh` (the initramfs patch is wiped) |
 | script 05 fails on missing OGX secrets | expected on first install | create the three secrets from step 3 and rerun |
-| `phase1-apply-pattern-pipeline` registration skipped | script 04 warns and skips if `.venv-kfp` is absent | create the venv (step 2) and rerun script 04 |
+| `spear-corpus-index-pipeline` registration skipped | script 04 warns and skips if `.venv-kfp` is absent | create the venv (step 2) and rerun script 04 |
 | MLflow 400 "Workspace context is required" | caller's namespace lacks the `spear.io/mlflow-workspace` label or the request lacks `X-MLflow-Workspace: spear-pipelines` | script 04 sets the label on `spear-pipelines`; cross-namespace callers also need the SubjectAccessReview RBAC (script 04 grants pipeline runner, console backend and human users) |
-| `spear-shield-security-trace` (or other SPEAR experiments) missing from the MLflow UI | UI is scoped to the `spear-pipelines` workspace only, or the experiment was soft deleted (`lifecycle_stage: deleted`) | open MLflow from the `spear-pipelines` project context; restore with `POST .../experiments/restore` for experiment id 6 if soft deleted, name is `spear-shield-security-trace` not `spear-shield-agents-trace` |
+| `spear-shield-security-trace` (or other SPEAR experiments) missing from the MLflow UI | UI is scoped to the `spear-pipelines` workspace only, or the experiment was soft deleted (`lifecycle_stage: deleted`) | open MLflow from the `spear-pipelines` project context; restore with `POST .../experiments/restore` for experiment id 6 if soft deleted, name is `spear-shield-security-trace` not `spear-agents-trace` |
 | MCP tools/call "Bad request syntax" or 404s after install | mcp-gateway operator (v0.7.1 preview) regenerates its ext_proc EnvoyFilter with `request_body_mode: STREAMED`, which plain HTTP backends cannot parse | script 09 pauses the controller and patches both filters to BUFFERED; if you ever unpause the controller for maintenance, rerun script 09's patch step afterwards |
-| Ask SPEAR Shield returns 503 Service Unavailable while agents are up | Kuadrant WASM filter fail closed after Envoy could not fetch `plugin.wasm` from the `kuadrant-operator-wasm` service (often after operator or gateway pod churn) | restart the gateway pods: `oc rollout restart deploy/spear-shield-a2a-gateway-istio deploy/spear-shield-mcp-gateway-istio -n spear-shield-agents`; confirm with an unauthenticated curl to the A2A path returning 401 rather than 503 |
+| Ask SPEAR Shield returns 503 Service Unavailable while agents are up | Kuadrant WASM filter fail closed after Envoy could not fetch `plugin.wasm` from the `kuadrant-operator-wasm` service (often after operator or gateway pod churn) | restart the gateway pods: `oc rollout restart deploy/spear-a2a-gateway-istio deploy/spear-mcp-gateway-istio -n spear-agents`; confirm with an unauthenticated curl to the A2A path returning 401 rather than 503 |
 | console tighten-guardrails button returns 403 | the closed-loop patcher RBAC is missing | rerun script 08 (idempotent) |
-| agent code changes not showing up in the sandbox | sandboxes seed their workspace PVC from the image exactly once; `oc patch` on the CR is accepted but never reconciles into the running pod | after `oc start-build <agent> --from-dir=agents --wait -n spear-shield-agents`, delete the sandbox's PVC and pod together (PVC first), then recreate; plain `oc delete pod` keeps the stale PVC |
+| agent code changes not showing up in the sandbox | sandboxes seed their workspace PVC from the image exactly once; `oc patch` on the CR is accepted but never reconciles into the running pod | after `oc start-build <agent> --from-dir=agents --wait -n spear-agents`, delete the sandbox's PVC and pod together (PVC first), then recreate; plain `oc delete pod` keeps the stale PVC |
 | a provider refuses to delete | a provider attached to a sandbox refuses deletion even when the sandbox pod is gone | delete the sandboxes first |
 | sandbox pods sitting Failed after a node reboot | the sandbox predates the create-time `restartPolicy: Always` patch | delete and recreate it via script 09 (idempotent) |
 | SPIRE identity mismatch, A2A 401 from the relay path | Keycloak's `spear-coordinator-workload` client pins the sandbox SVID subject exactly | compare the ClusterSPIFFEID's pinned hash against the real pod label (script 09's closing output prints both commands) and patch `06-cluster-spiffeid.yaml` if they differ |
@@ -343,9 +355,9 @@ Deployment state versus Git: never assume running pods match HEAD, every code ch
 ./scripts/99-cleanup.sh --force    # no prompt
 ```
 
-Deletes the eight namespaces created by the base chain in dependency order, sandboxes and gateways first, pgvector and minio last, plus the `spear-shield-agents` Keycloak realm import.
+Deletes the eight namespaces created by the base chain in dependency order, sandboxes and gateways first, pgvector and minio last, plus the `spear-agents` Keycloak realm import.
 
-> Warning: `spear-shield-eval`, the evaluation layer's own namespace, is not touched by this script and is left standing if script 10 was ever run. Delete it by hand (`oc delete namespace spear-shield-eval`) for a full teardown.
+> Warning: `spear-eval`, the evaluation layer's own namespace, is not touched by this script and is left standing if script 10 was ever run. Delete it by hand (`oc delete namespace spear-eval`) for a full teardown.
 
 Deliberately left alone otherwise: RHOAI itself, the DSC/DSCI, the odh-dashboard-config CR, the shared MLflow instance and all platform layer operators. Operator uninstall is a manual, cluster owner decision.
 
@@ -354,17 +366,17 @@ Deliberately left alone otherwise: RHOAI itself, the DSC/DSCI, the odh-dashboard
 - `01-install-namespaces.sh`, the project's eight namespaces, `genAiStudio`/`autorag` dashboard flags
 - `02-install-storage.sh`, minio, buckets `rag-documents` and `dsp-pipeline-artifacts`, the seed corpus uploaded under `raw-intake/`
 - `03-install-data.sh`, pgvector postgres plus the `vector` extension on `ragdb`
-- `04-install-pipelines.sh`, DSPA `rag-phase1-dspa`, the shared cluster wide MLflow instance, the `phase1-ingestion` experiment and `phase1-apply-pattern-pipeline` registration (needs `.venv-kfp`, warns and skips if absent)
-- `05-install-inference.sh`, TEI embedding server, judge proxy, `OGXServer rag-phase1-ogx` with both foundation models plus embedding
+- `04-install-pipelines.sh`, DSPA `spear-dspa`, the shared cluster wide MLflow instance, the `spear-corpus-prepare` experiment and `spear-corpus-index-pipeline` registration (needs `.venv-kfp`, warns and skips if absent)
+- `05-install-inference.sh`, TEI embedding server, judge proxy, `OGXServer spear-ogx` with both foundation models plus embedding
 - `06-setup-autorag-secrets.sh`, `autorag-s3-creds` and `autorag-ogx-creds`
 - `07-install-guardrails.sh`, four guardrail configs (`internal-docs`, `vendor-submission`, `work-tracker`, `coordinator-agent`), the `NemoGuardrails` CR, live smoke tests against `/v1/guardrail/checks`
 - `08-install-console.sh`, console backend and frontend plugin, routes injected via `oc set env`, never hardcoded
-- `09-install-worktracker-and-agents.sh`, the heaviest script: OpenProject plus demo data, the `spear-shield-agents` Keycloak realm, SPIFFE federated auth, both MCP gateways and the guard proxy, both agent builds and the in cluster job creating the two OpenShell sandboxes
-- `demo-tool-response-injection.sh`, plants the malicious work package used in step 7.6 (run after script 09, not part of `00-install-spear.sh`)
+- `09-install-worktracker-and-agents.sh`, the heaviest script: OpenProject plus demo data, the `spear-agents` Keycloak realm, SPIFFE federated auth, both MCP gateways and the guard proxy, both agent builds and the in cluster job creating the two OpenShell sandboxes
+- `demo-tool-response-injection.sh`, plants the malicious work package used in step 7.7 (run after script 09, not part of `00-install-spear.sh`)
 
-Outside `00-install-spear.sh`, used by steps 7.7 and 7.8:
+Outside `00-install-spear.sh`, used by steps 7.8 and 7.9:
 
-- `10-install-evalhub.sh`, EvalHub CR in `spear-shield-eval`, custom providers, `spear-pipelines` tenant registration, suspended `evalhub-cycle-runner` CronJob
+- `10-install-evalhub.sh`, EvalHub CR in `spear-eval`, custom providers, `spear-pipelines` tenant registration, suspended `evalhub-cycle-runner` CronJob
 - `11-submit-evalhub-jobs.sh`, one evaluation cycle: export ragas dataset, then ragas, IBM CLEAR, garak and confidential leak scan into `spear-shield-evalhub-results`
 
 Optional, never part of the required chain: `scripts/patch-kata-nftables.sh` (rerun after any Kata node reboot, see Troubleshooting).

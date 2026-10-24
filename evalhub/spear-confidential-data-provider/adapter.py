@@ -307,7 +307,7 @@ class ConfidentialDataAdapter(FrameworkAdapter):
             # the mlflow url, a real sa bearer token and the service ca
             # cert all travel as plain benchmark parameters instead, same
             # already accepted risk level this whole project's demo
-            # credentials already live at (manifests/spear-console/02-chat-creds.yaml
+            # credentials already live at (manifests/spear-console/01-chat-creds.yaml
             # commits a real client secret and password in plaintext)
             mlflow_url = params.get("mlflow_url", "")
             mlflow_token = params.get("mlflow_token", "")

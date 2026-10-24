@@ -5,7 +5,7 @@
 # being present in the sandbox's own filesystem.
 #
 # build in cluster:
-#   oc start-build spear-coordinator-agent --from-dir=agents --wait -n spear-shield-agents
+#   oc start-build spear-coordinator-agent --from-dir=agents --wait -n spear-agents
 
 FROM registry.access.redhat.com/ubi9/python-312:latest
 

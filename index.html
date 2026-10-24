@@ -181,8 +181,8 @@
           {[
             { n:1, t:'Unauthorized Access',      d:'A user retrieves documents they were never meant to see',                       c:'Pre-retrieval ABAC + row-level security in Postgres (clearance + dept, connected as rag_reader, never a BYPASSRLS superuser)', ph:'spear-data ns' },
             { n:2, t:'Weaponized Knowledge Base',d:'A malicious document instructs the agent on every future query',                c:'NeMo Guardrails /v1/guardrail/checks per document at ingestion; a document that fails stays quarantined, never indexed',        ph:'spear-guardrails ns' },
-            { n:3, t:'Tool-Response Injection',  d:'A tool returns live data carrying injected instructions',                       c:'guard proxy request + response rails on every tools/call (Nemo /v1/guardrail/checks both directions, fail-closed)',              ph:'spear-shield-agents ns' },
-            { n:4, t:'Privilege Escalation',     d:'A user talks the agent into calling tools they hold no role for',               c:'Per-tool RBAC AuthPolicy at the gateway (tool:<name> in the JWT resource_access claim, 401/403 fail-closed) + assignee=self check', ph:'spear-shield-agents ns' },
+            { n:3, t:'Tool-Response Injection',  d:'A tool returns live data carrying injected instructions',                       c:'guard proxy request + response rails on every tools/call (Nemo /v1/guardrail/checks both directions, fail-closed)',              ph:'spear-agents ns' },
+            { n:4, t:'Privilege Escalation',     d:'A user talks the agent into calling tools they hold no role for',               c:'Per-tool RBAC AuthPolicy at the gateway (tool:<name> in the JWT resource_access claim, 401/403 fail-closed) + assignee=self check', ph:'spear-agents ns' },
             { n:5, t:'No Audit Trail',           d:'"Prove what it accessed and why" is unanswerable',                              c:'Every hop traced (per-hop trace[] + MLflow), EvalHub cycle scores real traces, closed loop tightens guardrails from findings',   ph:'cluster shared' },
           ].map(({ n, t, d, c, ph }) => (
             <div key={n} className="rounded-xl border border-red-900/40 bg-red-950/20 p-3 flex flex-col gap-1.5">
@@ -223,7 +223,7 @@
                 <span>GET users/~ with the forwarded console token - identity is never trusted from the request <Ref>(openshift_username)</Ref></span>,
                 <span>realm JWT minted per real persona, sub = that user <Ref>(mint_spear_shield_token)</Ref></span>,
               ]} />
-            <Card title="spear-shield-a2a-gateway" subtitle="AuthPolicy (Kuadrant/Authorino) · dual issuer · fail-closed 401" color="amber" tag="enforcement" wide highlighted
+            <Card title="spear-a2a-gateway" subtitle="AuthPolicy (Kuadrant/Authorino) · dual issuer · fail-closed 401" color="amber" tag="enforcement" wide highlighted
               items={[
                 'accepts a keycloak realm JWT OR a SPIRE jwt-svid',
                 <span>host rewrite → openshell relay, the sandbox's only door <Ref>(07-a2a-gateway.yaml)</Ref></span>,
@@ -234,7 +234,7 @@
         <FlowDown label="message/send · Authorization: Bearer <realm jwt> + params.callerToken (the relay strips the header; the body copy is what the coordinator reads)" />
 
         {/* AGENT PLANE */}
-        <Layer label="Agent plane · two sandboxes, one delegation" color="violet" note="openshell Sandbox CRs (spear-shield-agents ns)">
+        <Layer label="Agent plane · two sandboxes, one delegation" color="violet" note="openshell Sandbox CRs (spear-agents ns)">
           <div className="flex gap-3">
             <SandboxedAgents
               title="spear-coordinator-agent" tag="runc pod" runtime="model reasoning loop"
@@ -299,13 +299,13 @@
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
                 <div className="gate-bar w-1 h-9 shrink-0" />
-                <Card title="spear-shield-mcp-gateway · mcps listener" subtitle="per-tool RBAC AuthPolicy" color="cyan" tag="enforcement" highlighted compact wide
+                <Card title="spear-mcp-gateway · mcps listener" subtitle="per-tool RBAC AuthPolicy" color="cyan" tag="enforcement" highlighted compact wide
                   items={[
-                    <span>('tool:' + x-mcp-toolname) in resource_access[x-mcp-servername].roles - 401/403 fail-closed <Ref>(03-auth-policies.yaml)</Ref></span>,
+                    <span>('tool:' + x-mcp-toolname) in resource_access[x-mcp-servername].roles - 401/403 fail-closed <Ref>(02-mcp-gateway.yaml)</Ref></span>,
                     <span>the caller JWT's signature is finally verified here</span>,
                   ]} />
               </div>
-              <Card title="spear-shield-mcp-guard-proxy" subtitle="one shared deployment fronting every MCP server" color="cyan"
+              <Card title="spear-mcp-guard-proxy" subtitle="one shared deployment fronting every MCP server" color="cyan"
                 items={[
                   <span>request rail: /v1/guardrail/checks on the tool arguments before the backend sees them <Ref>(server.py:274-285)</Ref></span>,
                   <span>response rail: /v1/guardrail/checks on the result before any model sees it <Ref>(server.py:316-326)</Ref></span>,

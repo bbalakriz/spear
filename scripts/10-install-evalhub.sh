@@ -5,7 +5,7 @@ set -euo pipefail
 # ibm-clear-v060 and garak registered. the stock ragas/ibm-clear configmaps
 # this cluster ships are not registered at all, confirmed live their
 # bundled v0.5.0 images have real bugs, see
-# manifests/spear-shield-eval/03-custom-providers.yaml, no reason to enable
+# manifests/spear-eval/03-custom-providers.yaml, no reason to enable
 # a provider nothing here ever submits a job against.
 #
 # run after 03-install-data.sh (pgvector) and 09-install-worktracker-and-agents.sh
@@ -105,7 +105,7 @@ main() {
   command -v openssl >/dev/null 2>&1 || { echo "openssl is required" >&2; exit 1; }
 
   log "namespace, tenant label"
-  oc apply -f "${ROOT_DIR}/manifests/spear-shield-eval/00-namespace.yaml"
+  oc apply -f "${ROOT_DIR}/manifests/spear-eval/00-namespace.yaml"
 
   log "evalhub's own postgres database, on the already running pgvector server in ${DATA_NS}"
   ensure_secret evalhub-pg-creds "${EVAL_NS}" \
@@ -123,11 +123,11 @@ main() {
   # library's newer metrics api, ibm-clear's trace fetch against this
   # mlflow server's v3 schema). these two newer named providers point at
   # the same quay.io images on later tags instead, see
-  # manifests/spear-shield-eval/03-custom-providers.yaml for why a new
+  # manifests/spear-eval/03-custom-providers.yaml for why a new
   # name (not editing ragas/ibm-clear in place) is what actually survives
   # the operator's own reconcile loop.
   log "custom provider configmaps: ragas-v062, ibm-clear-v060, on the operator's own newer quay.io tags"
-  oc apply -f "${ROOT_DIR}/manifests/spear-shield-eval/03-custom-providers.yaml"
+  oc apply -f "${ROOT_DIR}/manifests/spear-eval/03-custom-providers.yaml"
 
   # the fourth provider the cr below lists, spear-confidential-data, is
   # our own image, not a community one, so it needs a real build before
@@ -137,15 +137,15 @@ main() {
   # in namespace redhat-ods-applications"), confirmed live, never
   # producing a deployment at all.
   log "spear-confidential-data provider: imagestream/buildconfig, build, provider configmap"
-  oc apply -f "${ROOT_DIR}/manifests/spear-shield-eval/04-confidential-data-provider-build.yaml"
+  oc apply -f "${ROOT_DIR}/manifests/spear-eval/04-confidential-data-provider-build.yaml"
   oc start-build spear-confidential-data-provider --from-dir="${ROOT_DIR}/evalhub" --wait -n "${EVAL_NS}"
   local image_digest
   image_digest="$(oc get istag spear-confidential-data-provider:latest -n "${EVAL_NS}" -o jsonpath='{.image.metadata.name}')"
   sed "s|IMAGE_DIGEST_PLACEHOLDER|${image_digest}|g" \
-    "${ROOT_DIR}/manifests/spear-shield-eval/05-confidential-data-provider-config.yaml" | oc apply -f -
+    "${ROOT_DIR}/manifests/spear-eval/05-confidential-data-provider-config.yaml" | oc apply -f -
 
   log "the real evalhub cr, providers: ragas-v062, ibm-clear-v060, garak"
-  oc apply -f "${ROOT_DIR}/manifests/spear-shield-eval/01-evalhub.yaml"
+  oc apply -f "${ROOT_DIR}/manifests/spear-eval/01-evalhub.yaml"
   # the provider configmap above is now applied before this cr, so a
   # genuinely fresh install's first reconcile already sees it. this
   # nudge only matters on a rerun against a cluster whose cr is already
@@ -157,7 +157,7 @@ main() {
   wait_deploy_ready evalhub "${EVAL_NS}"
 
   log "caller serviceaccount + rbac for submitting jobs"
-  oc apply -f "${ROOT_DIR}/manifests/spear-shield-eval/02-caller-rbac.yaml"
+  oc apply -f "${ROOT_DIR}/manifests/spear-eval/02-caller-rbac.yaml"
 
   # confirmed live: every evaluation job's adapter pod gets MLFLOW_WORKSPACE
   # forced to whatever namespace the job actually runs in (the x-tenant
@@ -166,16 +166,13 @@ main() {
   # in that same namespace's own mlflow workspace, and
   # spear-shield-security-trace lives in spear-pipelines, so
   # spear-pipelines has to be a second real evalhub tenant too, not just
-  # spear-shield-eval's own, empty workspace.
-  log "registering ${PIPELINES_NS} as a second evalhub tenant, where spear-shield-security-trace's own mlflow workspace actually lives"
+  # spear-eval's own, empty workspace.
+  # also carries the dummy model auth secret ibm-clear's own litellm
+  # backend needs, it refuses to call any openai compatible endpoint
+  # without *some* non empty api key client side, even though the raw
+  # ogx server it actually calls needs none, confirmed live.
+  log "registering ${PIPELINES_NS} as a second evalhub tenant, where spear-shield-security-trace's own mlflow workspace actually lives, plus its dummy model auth secret"
   oc apply -f "${ROOT_DIR}/manifests/spear-pipelines/08-evalhub-tenant.yaml"
-
-  # ibm-clear's own litellm backend refuses to call any openai compatible
-  # endpoint without *some* non empty api key client side, even though the
-  # raw ogx server it actually calls needs none, confirmed live. a dummy
-  # value is enough.
-  log "dummy model auth secret for ibm-clear's litellm backend in ${PIPELINES_NS}"
-  oc apply -f "${ROOT_DIR}/manifests/spear-pipelines/09-evalhub-model-auth.yaml"
 
   log "evalhub ready"
   local route

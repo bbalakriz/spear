@@ -6,7 +6,7 @@ than reimplementing autorag's dashboard flow ourselves.
 mirrors corpus_prepare/compile_and_run.py's auth pattern (the caller's
 own `oc whoami -t` token, no separate pipeline server credential) but
 does not compile or upload anything: this pipeline already exists on
-rag-phase1-dspa, this script only looks it up by name and runs it.
+spear-dspa, this script only looks it up by name and runs it.
 
 parameter names below come from actually reading this pipeline's own
 live registered input definitions on this cluster (see
@@ -23,10 +23,10 @@ parameters point at:
   - sanitized/ in the raw_bucket as the corpus autorag is allowed to
     index (the sanitized only boundary sanitize_documents itself
     enforces, see corpus_prepare/pipeline.py)
-  - the eval dataset phase1_ingestion_pipeline's generate_eval_dataset
+  - the eval dataset corpus_prepare_pipeline's generate_eval_dataset
     step wrote to autorag-eval/<batch_id>_test_data.json
   - the pgvector vector_io provider already live and healthy on
-    rag-phase1-ogx (confirmed via a real /v1/providers call)
+    spear-ogx (confirmed via a real /v1/providers call)
   - both foundation chat models plus the embedding model, all using the
     exact ids ogx's own /v1/models exposes (confirmed live), not the
     litellm double prefixed form sdg_hub needed: autorag talks to ogx
@@ -122,7 +122,7 @@ def current_token() -> str:
 def dspa_route() -> str:
     # resolved live, this route hostname is unique per cluster, never hardcode it
     host = subprocess.run(
-        ["oc", "get", "route", "ds-pipeline-rag-phase1-dspa", "-n", "spear-pipelines",
+        ["oc", "get", "route", "ds-pipeline-spear-dspa", "-n", "spear-pipelines",
          "-o", "jsonpath={.spec.host}"],
         check=True, capture_output=True, text=True,
     ).stdout.strip()

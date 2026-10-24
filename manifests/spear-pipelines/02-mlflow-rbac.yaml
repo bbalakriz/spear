@@ -24,7 +24,7 @@ metadata:
   namespace: spear-pipelines
 subjects:
   - kind: ServiceAccount
-    name: pipeline-runner-rag-phase1-dspa
+    name: pipeline-runner-spear-dspa
     namespace: spear-pipelines
 roleRef:
   kind: Role

@@ -11,7 +11,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=./lib-common.sh
 source "${ROOT_DIR}/scripts/lib-common.sh"
 
-CR_NAME="rag-phase1-guardrails"
+CR_NAME="spear-guardrails"
 
 # correction, 2026-10-04: an earlier pass here claimed the operator's own
 # "BBR plugin not found, will retry" reconcile log (bbr being an archived
@@ -20,7 +20,7 @@ CR_NAME="rag-phase1-guardrails"
 # polling the deployment's own Available condition instead. live status
 # later the same day showed bbrPluginFound: false and phase: Ready at the
 # same time, so that was wrong, bbr absence is logged but non blocking.
-# the real and only confirmed blocker was the missing spear-shield-mcp-gateway
+# the real and only confirmed blocker was the missing spear-mcp-gateway
 # object, fixed by ensure_early_gateway above, polling .status.phase
 # directly again now that the real fix is in place
 wait_guardrails_ready() {
@@ -43,7 +43,15 @@ wait_guardrails_ready() {
 # checks the response's top level status matches $3 (success|blocked).
 check_verdict() {
   local config_id="$1" content="$2" expect="$3" route token body guardrails_field status
-  local tries=8
+  # the cr reporting Ready only means the operator finished reconciling
+  # it, not that the router has actually admitted the route yet or that
+  # the guardrails pod's own presidio/nlp models are warm. confirmed
+  # live on a fresh cluster: the very first real request after Ready
+  # can still come back as the router's own default html error page,
+  # or take close to 20s once it does reach the backend (cold model
+  # load). 8 tries at 5s each (the old budget here) was not always
+  # enough, widened to a real few minutes rather than retrying forever
+  local tries=24
   route="https://$(oc get route "${CR_NAME}" -n "${GUARDRAILS_NS}" -o jsonpath='{.status.ingress[0].host}')"
   token="$(oc whoami -t)"
   if [[ -n "${config_id}" ]]; then
@@ -51,11 +59,8 @@ check_verdict() {
   else
     guardrails_field=""
   fi
-  # route can still return an html error page for a few seconds after the
-  # cr reports Ready (router admission / kube-rbac-proxy warmup), retry
-  # until we get real json rather than failing the first html blip.
   while (( tries > 0 )); do
-    body=$(curl -ksS -X POST "${route}/v1/guardrail/checks" \
+    body=$(curl -ksS --max-time 25 -X POST "${route}/v1/guardrail/checks" \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer ${token}" \
       -d "{\"model\":\"test\",\"messages\":[{\"role\":\"user\",\"content\":\"${content}\"}]${guardrails_field}}")
@@ -75,16 +80,19 @@ check_verdict() {
   fi
 }
 
-# brings up just enough of spear-shield-agents for the nemoguardrails cr's
+# brings up just enough of spear-agents for the nemoguardrails cr's
 # own gateway status check to pass, namespace, the realm import (no
-# placeholders of its own, a plain oc apply), and the gateway/mcpgatewayextension
-# pair templated with the same two placeholders scripts/09-install-worktracker-and-agents.sh's
-# own resolve_hosts/apply_templated use for this same file, kept minimal and
-# duplicated here on purpose rather than refactored into lib-common.sh,
-# everything else that file resolves (guardrails route, spire route) does
-# not exist yet at this point in the chain and is not needed for this
+# placeholders of its own, a plain oc apply), and the gateway/mcpgatewayextension/
+# authpolicy file templated with the same two placeholders
+# scripts/09-install-worktracker-and-agents.sh's own resolve_hosts/apply_templated
+# use for this same file, kept minimal and duplicated here on purpose rather
+# than refactored into lib-common.sh. the authpolicies riding along early is
+# fine, same soft attach behaviour every other authpolicy in this project
+# already relies on, the gateway just comes up already protected instead of
+# briefly open. everything else that file resolves (guardrails route, spire
+# route) does not exist yet at this point in the chain and is not needed for this
 ensure_early_gateway() {
-  local agents_manifests="${ROOT_DIR}/manifests/spear-shield-agents"
+  local agents_manifests="${ROOT_DIR}/manifests/spear-agents"
   oc apply -f "${agents_manifests}/00-namespace.yaml"
   oc apply -f "${agents_manifests}/01-keycloak-realm.yaml"
 
@@ -111,7 +119,7 @@ main() {
   log "guardrails configmaps and cr"
   oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/01-internal-docs-config.yaml"
   oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/02-vendor-submission-config.yaml"
-  # work-tracker-config and coordinator-agent-config back spear-shield-agents
+  # work-tracker-config and coordinator-agent-config back spear-agents
   # (phase 2), applied here too since they are both just configmaps this
   # same cr already lists in nemoConfigs, not a separate install step
   oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/03-work-tracker-config.yaml"
@@ -119,7 +127,7 @@ main() {
 
   # correction, 2026-10-04: this comment used to say the cr below carries
   # a template.pod.mcpGateway pointer and that status.mcpGateway never
-  # reports found until spear-shield-mcp-gateway exists, which is why this
+  # reports found until spear-mcp-gateway exists, which is why this
   # ensure_early_gateway call exists. that field has since been removed
   # from 05-nemoguardrails-cr.yaml entirely, confirmed live to be
   # unneeded, see that manifest's own header comment. kept this call
@@ -145,22 +153,21 @@ main() {
   # was silently dropped by kube-rbac-proxy, see that file's own comment),
   # while every check_verdict call here kept passing the whole time.
   # exercising the real sa directly here closes that blind spot
-  # pipeline-runner-rag-phase1-dspa: same literal subject name
-  # 06-pipeline-rbac.yaml's own RoleBinding already grants, rag-phase1-dspa
+  # pipeline-runner-spear-dspa: same literal subject name
+  # 06-pipeline-rbac.yaml's own RoleBinding already grants, spear-dspa
   # being the dspa's own fixed name (see scripts/04-install-pipelines.sh's
   # own DSPA_NAME), not namespace scoped so no renaming needed here
   log "confirming the pipeline runner sa itself, not just this installer's own token, can call the route"
-  if ! run_restricted_probe guardrails-rbac-probe "${PIPELINES_NS}" pipeline-runner-rag-phase1-dspa \
+  if ! run_restricted_probe guardrails-rbac-probe "${PIPELINES_NS}" pipeline-runner-spear-dspa \
     "curl -sfk -X POST https://${CR_NAME}.${GUARDRAILS_NS}.svc.cluster.local/v1/guardrail/checks \
       -H 'Content-Type: application/json' -H \"Authorization: Bearer \$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\" \
       -d '{\"model\":\"test\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'" \
     | grep -q '"status":"success"'; then
-    echo "warning: pipeline-runner-rag-phase1-dspa cannot call the guardrails route, the ingestion pipeline's sanitize step will tag every document \"error\"" >&2
+    echo "warning: pipeline-runner-spear-dspa cannot call the guardrails route, the ingestion pipeline's sanitize step will tag every document \"error\"" >&2
   fi
 
   log "rbac: letting spear-openproject-mcp's and spear-coordinator-agent's own service accounts call the guardrails route"
-  oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/07-guard-proxy-rbac.yaml"
-  oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/08-coordinator-caller-rbac.yaml"
+  oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/07-caller-rbac.yaml"
 
   log "smoke test: default policy (internal-docs-config)"
   check_verdict "" "What is the data classification policy for customer data?" "success"

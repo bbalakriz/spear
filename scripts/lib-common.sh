@@ -26,11 +26,11 @@ GUARDRAILS_NS="spear-guardrails"
 PIPELINES_NS="spear-pipelines"
 CONSOLE_NS="spear-console"
 WORKTRACKER_NS="spear-worktracker"
-AGENTS_NS="spear-shield-agents"
+AGENTS_NS="spear-agents"
 # evalhub's own namespace, a dedicated tenant rather than redhat-ods-applications,
 # per that namespace's own restrictive NetworkPolicy, confirmed live against
 # this cluster's real rhods-operator 3.5 docs, see scripts/10-install-evalhub.sh
-EVAL_NS="spear-shield-eval"
+EVAL_NS="spear-eval"
 
 # generates a random secret once, never regenerates against an already
 # provisioned one. same pattern as agent-pack's ensure_keycloak_db_secret,

@@ -1,8 +1,8 @@
-"""phase1-ingestion-pipeline: the one kfp pipeline for the whole ingestion
+"""spear-corpus-prepare-pipeline: the one kfp pipeline for the whole ingestion
 flow, per PHASE1_PLAN.md section 3. every step here is real: list intake,
 abac validation/quarantine, guardrails sanitization, and (as of the sdg
 hub wiring) a real sdg hub generated evaluation dataset against
-rag-phase1-ogx's chat model. the one piece still deliberately kept out of
+spear-ogx's chat model. the one piece still deliberately kept out of
 this pipeline is the actual AutoRAG optimization run itself: that is a
 separately registered kfp pipeline (documents-rag-optimization-pipeline,
 auto registered on every dspa pipeline server) with its own long running
@@ -19,9 +19,9 @@ winner's exact settings. the real indexing now lives in
 pipelines/corpus_index/pipeline.py, run once a winning pattern
 exists for a batch, not here.
 
-run `python3 pipeline.py` to compile phase1-ingestion-pipeline.yaml, or
+run `python3 pipeline.py` to compile spear-corpus-prepare-pipeline.yaml, or
 `python3 compile_and_run.py` to also upload and trigger a run against
-rag-phase1-dspa (see that file for the pipeline server auth/upload code).
+spear-dspa (see that file for the pipeline server auth/upload code).
 """
 from typing import NamedTuple
 
@@ -42,9 +42,9 @@ SANITIZED_PREFIX_DEFAULT = "sanitized/"
 # endpoint) resolves them live via `oc get route` and passes them in
 # explicitly instead.
 MLFLOW_WORKSPACE_DEFAULT = "spear-pipelines"
-MLFLOW_EXPERIMENT_NAME_DEFAULT = "phase1-ingestion"
+MLFLOW_EXPERIMENT_NAME_DEFAULT = "spear-corpus-prepare"
 EVAL_PREFIX_DEFAULT = "autorag-eval/"
-OGX_BASE_URL_DEFAULT = "http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321"
+OGX_BASE_URL_DEFAULT = "http://spear-ogx-service.spear-inference.svc.cluster.local:8321"
 # glm-53-flash's maas gateway moved to root, body based routing on
 # 2026-09-27 (see PHASE1_PLAN.md and pipelines/autorag/
 # run_autorag.py), restored here once that was confirmed live through
@@ -265,7 +265,7 @@ def generate_eval_dataset(
     so this uses each document's manifest title as a lightweight stand
     in, honest simplification, not sdg hub's fault.
 
-    talks to rag-phase1-ogx over its in cluster service url. one real,
+    talks to spear-ogx over its in cluster service url. one real,
     empirically confirmed gotcha: sdg hub calls litellm's `openai/`
     custom api_base provider routing, which strips exactly one leading
     path segment (up to the first '/') before sending the model field
@@ -582,10 +582,10 @@ def _use_ogx_creds(task):
 
 
 @dsl.pipeline(
-    name="phase1-ingestion-pipeline",
+    name="spear-corpus-prepare-pipeline",
     description="docs -> abac validation gate -> nemo guardrails -> sdg hub eval dataset -> mlflow report",
 )
-def phase1_ingestion_pipeline(
+def corpus_prepare_pipeline(
     guardrails_route: str,
     mlflow_url: str,
     batch_id: str = "seed-batch-001",
@@ -646,6 +646,6 @@ if __name__ == "__main__":
 
     # matches compile_and_run.py's own output filename, was previously
     # writing to pipeline.yaml instead by accident (__file__ replace bug)
-    out = __file__.replace("pipeline.py", "phase1-ingestion-pipeline.yaml")
-    compiler.Compiler().compile(phase1_ingestion_pipeline, out)
+    out = __file__.replace("pipeline.py", "spear-corpus-prepare-pipeline.yaml")
+    compiler.Compiler().compile(corpus_prepare_pipeline, out)
     print(f"compiled {out}")

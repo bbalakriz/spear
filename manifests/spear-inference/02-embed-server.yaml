@@ -40,19 +40,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: rag-phase1-embed-server
+  name: spear-embed-server
   namespace: spear-inference
   labels:
-    app: rag-phase1-embed-server
+    app: spear-embed-server
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: rag-phase1-embed-server
+      app: spear-embed-server
   template:
     metadata:
       labels:
-        app: rag-phase1-embed-server
+        app: spear-embed-server
     spec:
       containers:
         - name: tei
@@ -112,11 +112,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: rag-phase1-embed-server
+  name: spear-embed-server
   namespace: spear-inference
 spec:
   selector:
-    app: rag-phase1-embed-server
+    app: spear-embed-server
   ports:
     - port: 80
       targetPort: 8080

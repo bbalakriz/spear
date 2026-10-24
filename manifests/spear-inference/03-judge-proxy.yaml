@@ -35,13 +35,13 @@
 # structured output calls, never real generation or embedding calls,
 # which do not use json_schema), which gets chat_template_kwargs
 # injected before forwarding. autorag-ogx-creds' OGX_CLIENT_BASE_URL
-# points here instead of straight at rag-phase1-ogx-service as of
+# points here instead of straight at spear-ogx-service as of
 # 2026-09-27, see scripts/06-setup-autorag-secrets.sh and
 # PHASE1_PLAN.md.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: rag-phase1-judge-proxy-script
+  name: spear-judge-proxy-script
   namespace: spear-inference
 data:
   proxy.py: |
@@ -51,7 +51,7 @@ data:
     import urllib.request
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-    UPSTREAM = "http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321"
+    UPSTREAM = "http://spear-ogx-service.spear-inference.svc.cluster.local:8321"
 
 
     class ProxyHandler(BaseHTTPRequestHandler):
@@ -103,19 +103,19 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: rag-phase1-judge-proxy
+  name: spear-judge-proxy
   namespace: spear-inference
   labels:
-    app: rag-phase1-judge-proxy
+    app: spear-judge-proxy
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: rag-phase1-judge-proxy
+      app: spear-judge-proxy
   template:
     metadata:
       labels:
-        app: rag-phase1-judge-proxy
+        app: spear-judge-proxy
     spec:
       containers:
         - name: proxy
@@ -147,16 +147,16 @@ spec:
       volumes:
         - name: script
           configMap:
-            name: rag-phase1-judge-proxy-script
+            name: spear-judge-proxy-script
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: rag-phase1-judge-proxy
+  name: spear-judge-proxy
   namespace: spear-inference
 spec:
   selector:
-    app: rag-phase1-judge-proxy
+    app: spear-judge-proxy
   ports:
     - port: 8321
       targetPort: 8080

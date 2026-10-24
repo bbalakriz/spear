@@ -1,0 +1,53 @@
+# a serviceaccount for calling evalhub's own rest api to submit and poll
+# evaluation jobs, same long lived token shape the agent sandboxes'
+# own caller tokens use (coordinator-guardrails-sa.yaml), minted with
+# oc create token rather than a projected volume since this is called
+# from outside any pod for now, by scripts/11-submit-evalhub-jobs.sh.
+#
+# the role's resource/verb list and the mlflow experiments grant are
+# exactly what the real rhods-operator 3.5 docs show for an
+# evalhub-evaluator role, trustyai.opendatahub.io virtual resources, not
+# real crds, enforced by evalhub's own subjectaccessreview checks keyed
+# off the x-tenant header.
+#
+# the mlflow.kubeflow.org rule below is the other half of that same
+# grant, confirmed live via a real ragas job submission with x-tenant
+# spear-eval: evalhub forwards this caller's own token to mlflow, and
+# mlflow runs its own subjectaccessreview against whichever namespace
+# the request's own x-tenant resolves to, spear-eval here, not
+# spear-pipelines, where 08-evalhub-tenant.yaml already covers the
+# same caller for jobs submitted with x-tenant spear-pipelines (the
+# ibm-clear job). without this rule the ragas/garak/confidential-data
+# jobs 403 straight out of the job submission call itself.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-eval-caller
+  namespace: spear-eval
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: evalhub-evaluator
+  namespace: spear-eval
+rules:
+  - apiGroups: ["trustyai.opendatahub.io"]
+    resources: ["evaluations", "collections", "providers"]
+    verbs: ["get", "list", "create", "update", "delete"]
+  - apiGroups: [mlflow.kubeflow.org]
+    resources: [experiments]
+    verbs: [get, list, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-eval-caller
+  namespace: spear-eval
+subjects:
+  - kind: ServiceAccount
+    name: spear-eval-caller
+    namespace: spear-eval
+roleRef:
+  kind: Role
+  name: evalhub-evaluator
+  apiGroup: rbac.authorization.k8s.io

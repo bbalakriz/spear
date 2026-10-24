@@ -161,7 +161,7 @@ kata_already_healthy() {
 # error, no timeout, indistinguishable from progress unless you diff
 # `oc get nodes -l node-role.kubernetes.io/kata-oc` against the pool you
 # expect to be enrolled. this is the same manual step the upstream guide
-# this project adapted 07-kata-nftables-patch.yaml from documents, it was
+# this project adapted 08-kata-nftables-patch.yaml from documents, it was
 # just never needed on the single node cluster this repo started on since
 # every KataConfig test there happened before this gap was found.
 #
@@ -456,13 +456,13 @@ main() {
     oc apply -f "${ROOT_DIR}/manifests/platform/05-ztwim.yaml"
     approve_and_wait_subscription openshift-zero-trust-workload-identity-manager zero-trust-workload-identity-manager
     sed "s|SPIRE_OIDC_HOSTNAME_PLACEHOLDER|spire-oidc.${CLUSTER_DOMAIN}|g" \
-      "${ROOT_DIR}/manifests/platform/07-spire.yaml" | oc apply -f -
+      "${ROOT_DIR}/manifests/platform/06-spire.yaml" | oc apply -f -
     wait_ztwim_ready
   fi
 
   if [[ "${INSTALL_KATA}" == "true" ]]; then
     log "openshift sandboxed containers (kata)"
-    oc apply -f "${ROOT_DIR}/manifests/platform/06-sandboxed-containers.yaml"
+    oc apply -f "${ROOT_DIR}/manifests/platform/07-sandboxed-containers.yaml"
     approve_and_wait_subscription sandboxed-containers-operator openshift-sandboxed-containers-operator
     if kata_already_healthy; then
       log "kata already installed and healthy, not touching it"

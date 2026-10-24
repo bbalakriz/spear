@@ -1,14 +1,14 @@
-"""compiles phase1-apply-pattern-pipeline.yaml then uploads and triggers
-one run against rag-phase1-dspa, same auth pattern as
+"""compiles spear-corpus-index-pipeline.yaml then uploads and triggers
+one run against spear-dspa, same auth pattern as
 corpus_prepare/compile_and_run.py (the caller's own `oc whoami -t`
 token, no separate pipeline server credential).
 
 this script does not look up the winning pattern itself: minio's s3 api
 is only reachable in cluster (confirmed live, this cluster has no
 external route for it, only the console ui route), and this script runs
-from a caller's own machine. the owner console backend already runs in
+from a caller's own machine. the spear console backend already runs in
 cluster and already does this exact lookup for real, in
-autorag_leaderboard() (spear-console-backend/server.py), so the settings
+autorag_leaderboard() (console-backend/server.py), so the settings
 below are meant to be copied from that endpoint's own response
 (GET /kfp/autorag-leaderboard?run_id=<autorag_run_id> through the
 console plugin proxy) rather than re implemented here against an
@@ -20,12 +20,12 @@ usage: source .venv-kfp/bin/activate && python compile_and_run.py \
 a bare `python compile_and_run.py --register-only` compiles and uploads
 the pipeline definition without triggering a run, no batch_id/pattern
 needed for that half. scripts/04-install-pipelines.sh calls this mode so
-the pipeline is registered on rag-phase1-dspa as part of the normal
+the pipeline is registered on spear-dspa as part of the normal
 install chain, before scripts/90-verify.sh ever checks for it, same
 registered-but-not-run state documents-rag-optimization-pipeline is
 already in right after rhoai auto registers it. an actual run still
 needs a real batch_id and a real winning pattern from a completed
-autorag run, copied from the owner console's own autorag leaderboard
+autorag run, copied from the spear console's own autorag leaderboard
 response, see the module docstring above, and stays a manual step.
 """
 import subprocess
@@ -36,12 +36,12 @@ from kfp import compiler
 from kfp.client import Client
 
 sys.path.insert(0, str(Path(__file__).parent))
-from pipeline import phase1_apply_pattern_pipeline  # noqa: E402
+from pipeline import corpus_index_pipeline  # noqa: E402
 
 HERE = Path(__file__).parent
-PIPELINE_YAML = HERE / "phase1-apply-pattern-pipeline.yaml"
-PIPELINE_NAME = "phase1-apply-pattern-pipeline"
-EXPERIMENT_NAME = "phase1-apply-pattern"
+PIPELINE_YAML = HERE / "spear-corpus-index-pipeline.yaml"
+PIPELINE_NAME = "spear-corpus-index-pipeline"
+EXPERIMENT_NAME = "spear-corpus-index"
 
 
 def current_token() -> str:
@@ -58,7 +58,7 @@ def route_host(name: str, namespace: str) -> str:
 
 
 def dspa_route() -> str:
-    return f"https://{route_host('ds-pipeline-rag-phase1-dspa', 'spear-pipelines')}"
+    return f"https://{route_host('ds-pipeline-spear-dspa', 'spear-pipelines')}"
 
 
 def mlflow_url() -> str:
@@ -73,7 +73,7 @@ def register() -> tuple[Client, str, str]:
     """compiles and uploads the pipeline definition, no run triggered.
     safe to call with no batch/pattern data at all, idempotent, a rerun
     against an already registered pipeline just uploads a new version."""
-    compiler.Compiler().compile(phase1_apply_pattern_pipeline, str(PIPELINE_YAML))
+    compiler.Compiler().compile(corpus_index_pipeline, str(PIPELINE_YAML))
     print(f"compiled {PIPELINE_YAML.name}")
 
     route = dspa_route()

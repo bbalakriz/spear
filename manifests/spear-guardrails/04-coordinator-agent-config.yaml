@@ -39,7 +39,7 @@ data:
       - type: main
         engine: openai
         parameters:
-          base_url: "http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321/v1"
+          base_url: "http://spear-ogx-service.spear-inference.svc.cluster.local:8321/v1"
           model_name: "openai/publishers/prelude-maas/models/glm-53-flash"
     rails:
       config:

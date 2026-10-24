@@ -1,5 +1,5 @@
-"""compiles phase1-ingestion-pipeline.yaml then uploads and triggers one
-run against the rag-phase1-dspa pipeline server in spear-pipelines, using the caller's own
+"""compiles spear-corpus-prepare-pipeline.yaml then uploads and triggers one
+run against the spear-dspa pipeline server in spear-pipelines, using the caller's own
 `oc whoami -t` token exactly like every other in cluster auth check in
 this project, no separate pipeline server credential to manage.
 
@@ -13,12 +13,12 @@ from kfp import compiler
 from kfp.client import Client
 
 sys.path.insert(0, str(Path(__file__).parent))
-from pipeline import phase1_ingestion_pipeline  # noqa: E402
+from pipeline import corpus_prepare_pipeline  # noqa: E402
 
 HERE = Path(__file__).parent
-PIPELINE_YAML = HERE / "phase1-ingestion-pipeline.yaml"
-PIPELINE_NAME = "phase1-ingestion-pipeline"
-EXPERIMENT_NAME = "phase1-ingestion"
+PIPELINE_YAML = HERE / "spear-corpus-prepare-pipeline.yaml"
+PIPELINE_NAME = "spear-corpus-prepare-pipeline"
+EXPERIMENT_NAME = "spear-corpus-prepare"
 
 
 def current_token() -> str:
@@ -36,11 +36,11 @@ def route_host(name: str, namespace: str) -> str:
 
 
 def dspa_route() -> str:
-    return f"https://{route_host('ds-pipeline-rag-phase1-dspa', 'spear-pipelines')}"
+    return f"https://{route_host('ds-pipeline-spear-dspa', 'spear-pipelines')}"
 
 
 def guardrails_route() -> str:
-    return f"https://{route_host('rag-phase1-guardrails', 'spear-guardrails')}"
+    return f"https://{route_host('spear-guardrails', 'spear-guardrails')}"
 
 
 def mlflow_url() -> str:
@@ -55,7 +55,7 @@ def mlflow_url() -> str:
 
 
 def main() -> None:
-    compiler.Compiler().compile(phase1_ingestion_pipeline, str(PIPELINE_YAML))
+    compiler.Compiler().compile(corpus_prepare_pipeline, str(PIPELINE_YAML))
     print(f"compiled {PIPELINE_YAML.name}")
 
     route = dspa_route()

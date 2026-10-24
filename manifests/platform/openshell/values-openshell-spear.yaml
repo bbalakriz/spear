@@ -1,11 +1,11 @@
 # helm values for the openshell gateway chart (oci://ghcr.io/nvidia/openshell/helm-chart),
-# applied by scripts/00-b-install-openshell.sh. sandboxes land in spear-shield-agents,
+# applied by scripts/00-b-install-openshell.sh. sandboxes land in spear-agents,
 # supervisor runs as a sidecar, spiffe workload identity on via the spire agent socket.
 # this project's own a2a gateway HTTPRoutes point their backendRef at this release
-# through the spear-shield-openshell-a2a-backend ExternalName, see
-# manifests/spear-shield-agents/07-a2a-gateway.yaml.
+# through the spear-openshell-a2a-backend ExternalName, see
+# manifests/spear-agents/07-a2a-gateway.yaml.
 server:
-  sandboxNamespace: spear-shield-agents
+  sandboxNamespace: spear-agents
   disableTls: true
   telemetryEnabled: false
   auth:

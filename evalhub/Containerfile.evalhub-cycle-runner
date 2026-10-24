@@ -1,5 +1,5 @@
 # wraps scripts/11-submit-evalhub-jobs.sh as a real in cluster image, so
-# the recurring cycle manifests/spear-shield-eval/07-cycle-runner-cronjob.yaml
+# the recurring cycle manifests/spear-eval/07-cycle-runner-cronjob.yaml
 # defines can actually run it on a schedule instead of only by hand from a
 # laptop. see PHASE3_PLAN.md section 7's own "recurring cycle" note, the
 # plan was always this same script, same cadence, just not left running
@@ -16,14 +16,14 @@
 #
 #   oc start-build evalhub-cycle-runner --from-dir=. \
 #     --exclude='(^|/)(\.git|\.venv-kfp|\.venv|venv|node_modules|__pycache__|archive)(/|$)|\.(docx|pptx|rtf|excalidraw|pyc)$' \
-#     --wait -n spear-shield-eval
+#     --wait -n spear-eval
 #
 # that --exclude is doing the real work here, confirmed live the hard
 # way: the repo root's own .dockerignore is NOT read by oc start-build at
 # all, it only ever applies server side to COPY/ADD once a build is
 # already running, by then the upload already happened. without
 # --exclude, oc tars up the whole repo root client side first, including
-# .venv-kfp and spear-console/node_modules at over 1gb combined, and the
+# .venv-kfp and console/node_modules at over 1gb combined, and the
 # upload hangs for many minutes. the .dockerignore file is still kept,
 # harmless, and correct if this Containerfile ever grows a `COPY . .`,
 # but it is not what keeps this particular upload small

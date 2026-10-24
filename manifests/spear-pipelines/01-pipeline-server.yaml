@@ -8,7 +8,7 @@
 apiVersion: datasciencepipelinesapplications.opendatahub.io/v1
 kind: DataSciencePipelinesApplication
 metadata:
-  name: rag-phase1-dspa
+  name: spear-dspa
   namespace: spear-pipelines
 spec:
   apiServer:

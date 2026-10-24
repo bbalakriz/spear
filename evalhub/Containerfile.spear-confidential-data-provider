@@ -16,7 +16,7 @@
 # from the shipped garak image required.
 #
 # build in cluster:
-#   oc start-build spear-confidential-data-provider --from-dir=evalhub --wait -n spear-shield-eval
+#   oc start-build spear-confidential-data-provider --from-dir=evalhub --wait -n spear-eval
 
 FROM registry.access.redhat.com/ubi9/python-312:latest
 

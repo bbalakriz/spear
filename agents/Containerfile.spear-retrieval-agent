@@ -4,7 +4,7 @@
 # own comment for why those packages are not optional here.
 #
 # build in cluster:
-#   oc start-build spear-retrieval-agent --from-dir=agents --wait -n spear-shield-agents
+#   oc start-build spear-retrieval-agent --from-dir=agents --wait -n spear-agents
 
 FROM registry.access.redhat.com/ubi9/python-312:latest
 

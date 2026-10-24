@@ -1,0 +1,99 @@
+[
+  {
+    "type": "console.navigation/section",
+    "properties": {
+      "id": "rag-phase1",
+      "name": "%plugin__spear-console~SpearShield%"
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/rag-ingestion",
+      "component": { "$codeRef": "KnowledgeBasePage" }
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "rag-ingestion",
+      "name": "%plugin__spear-console~Knowledge Base%",
+      "href": "/rag-ingestion",
+      "perspective": "admin",
+      "section": "rag-phase1"
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/spear-shield-chat",
+      "component": { "$codeRef": "SpearShieldChatPage" }
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "spear-shield-chat",
+      "name": "%plugin__spear-console~Ask SPEAR Shield%",
+      "href": "/spear-shield-chat",
+      "perspective": "admin",
+      "section": "rag-phase1"
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/spear-shield-demo",
+      "component": { "$codeRef": "UnderTheHoodPage" }
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "spear-shield-demo",
+      "name": "%plugin__spear-console~Under the Hood%",
+      "href": "/spear-shield-demo",
+      "perspective": "admin",
+      "section": "rag-phase1"
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/spear-shield-trend",
+      "component": { "$codeRef": "TrendPage" }
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "spear-shield-trend",
+      "name": "%plugin__spear-console~Evaluation Trends%",
+      "href": "/spear-shield-trend",
+      "perspective": "admin",
+      "section": "rag-phase1"
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/spear-shield-status",
+      "component": { "$codeRef": "ArchitectureStatusPage" }
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "spear-shield-status",
+      "name": "%plugin__spear-console~Architecture Status%",
+      "href": "/spear-shield-status",
+      "perspective": "admin",
+      "section": "rag-phase1"
+    }
+  }
+]

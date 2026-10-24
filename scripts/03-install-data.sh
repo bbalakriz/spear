@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # rag-query-relay (manifests/spear-data/02-rag-query-relay.yaml) is NOT
 # applied here despite living in this same namespace: its own image is
-# spear-shield-agents' own spear-retrieval-agent build, which does not
+# spear-agents' own spear-retrieval-agent build, which does not
 # exist until scripts/09-install-worktracker-and-agents.sh builds it.
 # applied there instead, once that image is real, not here where it
 # would just crash loop on an image pull that cannot succeed yet

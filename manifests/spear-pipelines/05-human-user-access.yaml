@@ -1,17 +1,17 @@
 # the spear console's trigger/sanitization-run buttons forward the signed
 # in console user's own token straight to the dspa route (see
-# spear-console-backend/server.py's own kfp_get/kfp_post, authorization:
+# console-backend/server.py's own kfp_get/kfp_post, authorization:
 # UserToken on the consoleplugin proxy), never this backend pod's own
 # identity. that route sits behind kube-rbac-proxy, which does its own
 # subjectaccessreview per request, confirmed live against its real config
-# (kube-rbac-proxy-config-ds-pipeline-rag-phase1-dspa):
+# (kube-rbac-proxy-config-ds-pipeline-spear-dspa):
 #
 #   resourceAttributes:
 #     namespace: spear-pipelines
 #     apiGroup: datasciencepipelinesapplications.opendatahub.io
 #     resource: datasciencepipelinesapplications
 #     subresource: api
-#     name: rag-phase1-dspa
+#     name: spear-dspa
 #
 # the built in edit clusterrole already carries every verb this needs on
 # that exact resource, the dspa operator contributes those rules to it by

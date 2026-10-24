@@ -18,7 +18,7 @@ comment on why), and executes each one for real:
   all, see rag_query_server.py's own module docstring
 - search_work_packages / update_work_package: forwards the caller's own
   jwt as the Authorization header on a real tools/call against
-  spear-shield-mcp-gateway, the same full path PHASE2_PLAN.md section 4
+  spear-mcp-gateway, the same full path PHASE2_PLAN.md section 4
   already live tested end to end (siddhartha.de's own real tool rbac
   and assignee=self results), this code is just the first thing to
   actually call it as a real a2a delegated action instead of a one off
@@ -32,7 +32,7 @@ Authorization (the coordinator's workload identity) is what
 authorino's a2a gateway authpolicy actually checks, not
 params.callerToken, that field is invisible to a header based jwt
 check entirely. the callerToken's own signature still gets checked for
-real at the next hop, spear-shield-mcp-gateway's own tool rbac authpolicy,
+real at the next hop, spear-mcp-gateway's own tool rbac authpolicy,
 exactly the same as if it had been sent there directly, so a forged or
 tampered token still fails there with a real 401/403, not silently
 accepted here and laundered through.
@@ -67,11 +67,11 @@ PUBLIC_URL = os.environ.get("AGENT_PUBLIC_URL", f"http://{NAME}:{PORT}/")
 # a plain ClusterIP hit without that header override does not route
 # anywhere, confirmed live in that section, not re-guessed here
 MCP_GATEWAY_URL = os.environ.get(
-    "MCP_GATEWAY_URL", "http://spear-shield-mcp-gateway-istio.spear-shield-agents.svc.cluster.local:8080/mcp"
+    "MCP_GATEWAY_URL", "http://spear-mcp-gateway-istio.spear-agents.svc.cluster.local:8080/mcp"
 )
 # no cluster specific fallback on purpose, nothing in this source tree
 # should bake in one cluster's own hostname, this always comes from the
-# --env the sandbox was created with (scripts/08-install-spear-shield-agents.sh's
+# --env the sandbox was created with (scripts/08-install-spear-agents.sh's
 # own resolve_hosts, MCP_PUBLIC_HOST)
 MCP_GATEWAY_HOST_HEADER = os.environ["MCP_GATEWAY_HOST_HEADER"]
 # the broker prefixes every federated tool name with the registered mcp
@@ -88,7 +88,7 @@ MCP_TOOL_PREFIX_MAP = {
 # is the exact key a caller's own token carries its tool:<name> roles
 # under for this one mcp server
 MCP_SERVER_RESOURCE_KEY = "spear-worktracker/spear-openproject-mcp"
-# the exact prefixes mcp-servers/spear-shield-mcp-guard-proxy/server.py's
+# the exact prefixes mcp-servers/spear-mcp-guard-proxy/server.py's
 # own blocked_result() writes, "tool call blocked by guardrails" for its
 # request side check, "tool response blocked by guardrails" for its
 # response side one, the one honest way from here to tell a guard proxy
@@ -282,7 +282,7 @@ def run_work_tracker_tool(
 
     def _guardrails_evidence(stage: str, verdict_text: str) -> str:
         # a response guard block, not a request guard one, see
-        # mcp-servers/spear-shield-mcp-guard-proxy/server.py: the real
+        # mcp-servers/spear-mcp-guard-proxy/server.py: the real
         # spear-openproject-mcp already ran and already returned the
         # real, now malicious, work package text, the assignee=self
         # check never even ran, there was nothing wrong with who asked.

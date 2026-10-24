@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # NAMESPACE_MIGRATION_PLAN.md section 8's own fold back decision:
-# openproject (spear-worktracker) and the agents/gateways (spear-shield-agents)
+# openproject (spear-worktracker) and the agents/gateways (spear-agents)
 # never actually need to install independently of each other in practice,
-# one script, same as the old 08-install-spear-shield-agents.sh was before
+# one script, same as the old 08-install-spear-agents.sh was before
 # this migration split its own manifests across two namespaces.
 #
 # the realm, the self hosted openproject work tracker, spear-openproject-mcp,
@@ -27,14 +27,14 @@ set -euo pipefail
 # not actually hold up, openshell cli orchestration is a heavier,
 # stateful, multi step operation, not a one off exec, so this now
 # matches the reference properly: a real Job, built cli image, see
-# manifests/spear-shield-agents/openshell/deploy-agents-job.yaml and
+# manifests/spear-agents/openshell/deploy-agents-job.yaml and
 # run_agents_deploy_job below
 #
 # nothing in here is cluster specific. every hostname (this cluster's own
 # apps domain, the sso route, the guardrails route) is either constructed
 # from `oc get ingresses.config.openshift.io cluster` or resolved from an
 # already live Route, same convention scripts/08-install-console.sh already
-# uses, never typed in literally. every manifest under manifests/spear-shield-agents/
+# uses, never typed in literally. every manifest under manifests/spear-agents/
 # and manifests/spear-worktracker/ that needs one of these carries a
 # PLACEHOLDER token instead of a real value, substituted here before
 # apply, same pattern the sibling rhoai-agentic-demo project's own
@@ -56,7 +56,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "${ROOT_DIR}/scripts/lib-common.sh"
 
 WORKTRACKER_MANIFESTS="${ROOT_DIR}/manifests/spear-worktracker"
-AGENTS_MANIFESTS="${ROOT_DIR}/manifests/spear-shield-agents"
+AGENTS_MANIFESTS="${ROOT_DIR}/manifests/spear-agents"
 # where the real Mlflow cr lives, same constant scripts/08-install-console.sh
 # and scripts/04-install-pipelines.sh already use, not re-derived some
 # other way here
@@ -180,7 +180,7 @@ resolve_hosts() {
     echo "could not resolve the sso realm's own route (route 'keycloak' in namespace 'keycloak')" >&2
     exit 1
   fi
-  GUARDRAILS_HOST="$(oc get route rag-phase1-guardrails -n "${GUARDRAILS_NS}" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+  GUARDRAILS_HOST="$(oc get route spear-guardrails -n "${GUARDRAILS_NS}" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
   if [[ -z "${GUARDRAILS_HOST}" ]]; then
     echo "could not resolve the guardrails route, run scripts/07-install-guardrails.sh first" >&2
     exit 1
@@ -245,7 +245,7 @@ apply_templated() {
 
 # same placeholder convention as apply_templated above, but for files the
 # openshell cli consumes directly from a local path rather than oc apply,
-# manifests/spear-shield-agents/openshell/policies/coordinator-policy.yaml
+# manifests/spear-agents/openshell/policies/coordinator-policy.yaml
 # and openshell/providers/coordinator-a2a-token-grant.yaml. writes the
 # substituted copy to a tmp path and prints it, caller passes that path to
 # the relevant openshell command. SSO_HOST_PLACEHOLDER is the bare host
@@ -280,9 +280,9 @@ render_openshell_file() {
 # and leave the controller paused.
 #
 # NAMESPACE_MIGRATION_PLAN.md: the envoyfilter itself is still keyed to
-# the gateway's own namespace (spear-shield-agents, unchanged), but the
+# the gateway's own namespace (spear-agents, unchanged), but the
 # real MCPServerRegistration to wait on now lives in spear-worktracker,
-# not spear-shield-agents, since spear-openproject-mcp's own HTTPRoute
+# not spear-agents, since spear-openproject-mcp's own HTTPRoute
 # moved there
 patch_mcp_ext_proc_buffered() {
   local filter="mcp-ext-proc-${AGENTS_NS}-gateway"
@@ -587,7 +587,7 @@ run_agents_deploy_job() {
 # relay. the exact service names below ("a2a", "coordinator-http") and
 # sandbox names ("spear-retrieval", "spear-coordinator", the 19
 # character cap already found live per PHASE2_PLAN.md section 2) are
-# not free choices here, manifests/spear-shield-agents/07-a2a-gateway.yaml's
+# not free choices here, manifests/spear-agents/07-a2a-gateway.yaml's
 # own HTTPRoute Host header rewrites already hardcode the exact strings
 # openshell service expose has to print for those routes to ever match
 deploy_sandboxed_agents() {
@@ -598,7 +598,7 @@ deploy_sandboxed_agents() {
 
   # openshift refuses cross namespace pulls from the internal registry
   # without this grant; without it the relay in spear-data sits in
-  # ImagePullBackOff against spear-shield-agents/spear-retrieval-agent
+  # ImagePullBackOff against spear-agents/spear-retrieval-agent
   log "allow spear-data's default sa to pull spear-retrieval-agent from ${AGENTS_NS}"
   oc apply -f "${AGENTS_MANIFESTS}/09-rag-query-relay-image-puller-rbac.yaml"
 
@@ -622,7 +622,7 @@ main() {
   # to exist before this script ever runs, see that script's comment.
   # harmless no-ops here on a normal full chain run, kept so this script
   # still stands on its own if ever run in isolation
-  log "spear-shield-agents namespace, keycloak realm import"
+  log "spear-agents namespace, keycloak realm import"
   oc apply -f "${AGENTS_MANIFESTS}/00-namespace.yaml"
   oc apply -f "${AGENTS_MANIFESTS}/01-keycloak-realm.yaml"
 
@@ -665,9 +665,8 @@ main() {
   log "openproject demo data: personas, data-governance project, work packages, api tokens"
   seed_openproject_demo_data
 
-  log "spear-shield-mcp-gateway, auth policies"
+  log "spear-mcp-gateway plus its own auth policies"
   apply_templated "${AGENTS_MANIFESTS}/02-mcp-gateway.yaml"
-  apply_templated "${AGENTS_MANIFESTS}/03-auth-policies.yaml"
 
   log "spear-openproject-mcp code configmap"
   oc create configmap spear-openproject-mcp-code -n "${WORKTRACKER_NS}" \
@@ -680,19 +679,18 @@ main() {
 
   # guardrails rbac for both spear-openproject-mcp's and spear-coordinator's
   # own service accounts already applied by scripts/07-install-guardrails.sh
-  # (manifests/spear-guardrails/07-guard-proxy-rbac.yaml,
-  # 08-coordinator-caller-rbac.yaml), not repeated here
+  # (manifests/spear-guardrails/07-caller-rbac.yaml), not repeated here
 
-  log "spear-shield-mcp-guard-proxy code configmap, deployment, service, referencegrant for its new cross namespace backendref"
-  oc create configmap spear-shield-mcp-guard-proxy-code -n "${AGENTS_NS}" \
-    --from-file=server.py="${ROOT_DIR}/mcp-servers/spear-shield-mcp-guard-proxy/server.py" \
+  log "spear-mcp-guard-proxy code configmap, deployment, service, referencegrant for its new cross namespace backendref"
+  oc create configmap spear-mcp-guard-proxy-code -n "${AGENTS_NS}" \
+    --from-file=server.py="${ROOT_DIR}/mcp-servers/spear-mcp-guard-proxy/server.py" \
     --dry-run=client -o yaml | oc apply -f -
   apply_templated "${AGENTS_MANIFESTS}/04-mcp-guard-proxy.yaml"
   # a configmap update alone never reaches an already running pod, only a
   # fresh pod mounts the new content, so force one on every run rather
   # than silently serving stale server.py against a cluster that is not
   # a brand new install
-  oc rollout restart deployment/spear-shield-mcp-guard-proxy -n "${AGENTS_NS}"
+  oc rollout restart deployment/spear-mcp-guard-proxy -n "${AGENTS_NS}"
 
   log "spear-coordinator-agent's own credential for calling spear-guardrails directly, a dedicated sa plus a long lived token (sandboxes never automount one, confirmed live)"
   oc apply -f "${AGENTS_MANIFESTS}/openshell/coordinator-guardrails-sa.yaml"
@@ -701,7 +699,7 @@ main() {
   oc apply -f "${AGENTS_MANIFESTS}/openshell/agents-mlflow-sa.yaml"
   oc apply -f "${ROOT_DIR}/manifests/spear-pipelines/06-agents-mlflow-rbac.yaml"
 
-  log "spear-shield-a2a-gateway, cluster spiffeid for the two sandboxed agents"
+  log "spear-a2a-gateway, cluster spiffeid for the two sandboxed agents"
   oc apply -f "${AGENTS_MANIFESTS}/06-cluster-spiffeid.yaml"
   apply_templated "${AGENTS_MANIFESTS}/07-a2a-gateway.yaml"
 
@@ -723,7 +721,7 @@ main() {
   # needed again.
   cat <<EOF
 
-spear-shield-agents and spear-worktracker deployed.
+spear-agents and spear-worktracker deployed.
   openproject:  https://${OPENPROJECT_HOST}
   mcp gateway:  https://${MCP_PUBLIC_HOST}/mcp
   sso issuer:   ${ISSUER_URL}
@@ -734,13 +732,13 @@ credentials (cluster secrets, none in this repo):
   siddhartha.de openproject login:  oc get secret spear-openproject-login-creds -n ${WORKTRACKER_NS} -o jsonpath='{.data.siddhartha\.de-password}' | base64 -d
   balakrishnan.b api token:         oc get secret spear-openproject-api-tokens -n ${WORKTRACKER_NS} -o jsonpath='{.data.balakrishnan\.b}' | base64 -d
   siddhartha.de api token:          oc get secret spear-openproject-api-tokens -n ${WORKTRACKER_NS} -o jsonpath='{.data.siddhartha\.de}' | base64 -d
-  spear-shield-agents realm users:  oc get keycloakrealmimport spear-shield-agents-realm -n keycloak -o jsonpath='{range .spec.realm.users[*]}{.username}{" "}{.credentials}{"\n"}{end}'
+  spear-agents realm users:  oc get keycloakrealmimport spear-agents-realm -n keycloak -o jsonpath='{range .spec.realm.users[*]}{.username}{" "}{.credentials}{"\n"}{end}'
 
 sandbox status:  oc get sandbox -n ${AGENTS_NS}
 
 if a sandbox was ever recreated under a new name, confirm the coordinator's spiffe identity still resolves:
   oc get pod -n ${AGENTS_NS} -l openshell.ai/managed-by=openshell -o jsonpath='{.items[0].metadata.labels.agents\.x-k8s\.io/sandbox-name-hash}{"\n"}'
-  (compare against manifests/spear-shield-agents/06-cluster-spiffeid.yaml's podSelector value, patch if it differs)
+  (compare against manifests/spear-agents/06-cluster-spiffeid.yaml's podSelector value, patch if it differs)
 EOF
 }
 

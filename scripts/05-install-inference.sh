@@ -35,7 +35,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=./lib-common.sh
 source "${ROOT_DIR}/scripts/lib-common.sh"
 
-CR_NAME="rag-phase1-ogx"
+CR_NAME="spear-ogx"
 
 ensure_ogx_metadata_db() {
   local exists
@@ -87,10 +87,18 @@ main() {
   require_secret ogx-glm-key
   require_secret ogx-litemaas-key
   require_secret ogx-embedding-key
+  # corpus_prepare's own eval dataset task (pipeline.py's _use_ogx_creds,
+  # running as a pod in spear-pipelines) reads ogx-glm-key via a
+  # secretKeyRef, which only ever resolves within the pod's own
+  # namespace. same cross namespace gap already fixed for pgvector-creds
+  # in 04-install-pipelines.sh, mirrored here too, confirmed live via
+  # "Error: secret ogx-glm-key not found" on a real sanitization run.
+  log "mirroring ogx-glm-key into ${PIPELINES_NS}, corpus_prepare's own eval dataset task needs its own local copy"
+  mirror_secret ogx-glm-key "${INFERENCE_NS}" "${PIPELINES_NS}"
 
   log "applying the dashboard flags patch and the self hosted embedding server (02-embed-server.yaml), the ogxserver cr below needs it up first"
   oc apply -f "${ROOT_DIR}/manifests/spear-inference/02-embed-server.yaml"
-  oc rollout status deployment/rag-phase1-embed-server -n "${INFERENCE_NS}" --timeout=300s
+  oc rollout status deployment/spear-embed-server -n "${INFERENCE_NS}" --timeout=300s
 
   log "applying the judge proxy (03-judge-proxy.yaml), used by scripts/06-setup-autorag-secrets.sh"
   oc apply -f "${ROOT_DIR}/manifests/spear-inference/03-judge-proxy.yaml"

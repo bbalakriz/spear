@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """stdlib mcp server fronting the real, self hosted openproject instance
-for spear-shield-agents. same shape as the reference's
+for spear-agents. same shape as the reference's
 mcp-servers/calculator/server.py (stdlib http server, no pip deps), but
 this one calls a real backend rather than doing local arithmetic.
 
@@ -25,7 +25,7 @@ work package, never someone else's, even though tool level rbac already
 gates who may call update_work_package at all).
 
 the nightmare 3 tool response check used to live here too, moved out to
-spear-shield-mcp-guard-proxy instead (see that server's own module
+spear-mcp-guard-proxy instead (see that server's own module
 docstring), this server has no guardrails code of its own now, proving
 the proxy alone is enough, not a redundant second check on top of it.
 """
@@ -56,7 +56,7 @@ BACKEND_SECRET = os.environ.get("MCP_BACKEND_SECRET", "")
 # the personal api token is the only auth layer here, openproject's
 # native login already gates the external route for human users.
 OPENPROJECT_INTERNAL_URL = os.environ.get(
-    "OPENPROJECT_INTERNAL_URL", "http://spear-openproject.spear-shield-agents.svc.cluster.local:8080"
+    "OPENPROJECT_INTERNAL_URL", "http://spear-openproject.spear-agents.svc.cluster.local:8080"
 )
 # rails' own host authorization and force_ssl checks reject a plain
 # internal http call otherwise, found live in section 4's build: send

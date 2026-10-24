@@ -5,7 +5,7 @@
 # SubjectAccessReview against the namespace the request's own
 # X-MLflow-Workspace header names, spear-pipelines here, not whatever
 # namespace the calling service account actually lives in
-# (spear-shield-agents for both of these).
+# (spear-agents for both of these).
 #
 # confirmed live this is the real shape needed, not the generic
 # "get services" oauth-proxy style grant the existing guardrails caller
@@ -29,10 +29,10 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: spear-coordinator-mlflow-caller
-    namespace: spear-shield-agents
+    namespace: spear-agents
   - kind: ServiceAccount
     name: spear-retrieval-mlflow-caller
-    namespace: spear-shield-agents
+    namespace: spear-agents
 roleRef:
   kind: Role
   name: spear-pipelines-mlflow-agents-caller

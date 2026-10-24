@@ -1,6 +1,6 @@
-"""phase1-apply-pattern-pipeline: the step that used to happen too early.
+"""spear-corpus-index-pipeline: the step that used to happen too early.
 
-before 2026-09-28 phase1_ingestion_pipeline chunked, embedded and wrote
+before 2026-09-28 corpus_prepare_pipeline chunked, embedded and wrote
 every sanitized document into rag_chunks itself, with a fixed size
 placeholder chunker, before autorag ever got a chance to pick a real
 winning recipe against the eval set that same pipeline produced. autorag's
@@ -15,7 +15,7 @@ given a batch_id (to find that batch's already logged ingestion report,
 for the document list and abac tags) and a winning pattern's settings
 (chunk_size, chunk_overlap and embedding_model_id, passed in as plain
 run parameters, already extracted by the caller from a completed autorag
-run's pattern.json, see spear-console-backend/server.py's
+run's pattern.json, see console-backend/server.py's
 autorag_leaderboard()), this pipeline re chunks and re embeds every
 document that batch's own guardrails audit marked "success", deletes any
 rows rag_chunks already had for those doc_ids first (chunk boundaries
@@ -31,12 +31,12 @@ pipeline only ever reproduces chunk_size and chunk_overlap, not
 ai4rag's own recursive splitting algorithm, which is not something this
 project can inspect or reproduce. the size and overlap and the embedding
 model are the winner's real settings, the splitting method itself is
-still the same fixed window slicer phase1_ingestion_pipeline used to
+still the same fixed window slicer corpus_prepare_pipeline used to
 carry, just parameterized now instead of hardcoded.
 
-run `python3 pipeline.py` to compile phase1-apply-pattern-pipeline.yaml,
+run `python3 pipeline.py` to compile spear-corpus-index-pipeline.yaml,
 or `python3 compile_and_run.py <batch_id> <autorag_run_id>` to also
-upload and trigger a real run against rag-phase1-dspa.
+upload and trigger a real run against spear-dspa.
 """
 from typing import NamedTuple
 
@@ -48,10 +48,10 @@ BASE_IMAGE = "registry.access.redhat.com/ubi9/python-311:latest"
 MINIO_ENDPOINT_DEFAULT = "minio.minio.svc.cluster.local:9000"
 RAW_BUCKET_DEFAULT = "rag-documents"
 SANITIZED_PREFIX_DEFAULT = "sanitized/"
-OGX_BASE_URL_DEFAULT = "http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321"
+OGX_BASE_URL_DEFAULT = "http://spear-ogx-service.spear-inference.svc.cluster.local:8321"
 MLFLOW_WORKSPACE_DEFAULT = "spear-pipelines"
-INGESTION_EXPERIMENT_NAME_DEFAULT = "phase1-ingestion"
-APPLY_EXPERIMENT_NAME_DEFAULT = "phase1-apply-pattern"
+INGESTION_EXPERIMENT_NAME_DEFAULT = "spear-corpus-prepare"
+APPLY_EXPERIMENT_NAME_DEFAULT = "spear-corpus-index"
 
 
 @dsl.component(
@@ -78,7 +78,7 @@ def apply_winning_pattern(
     apply_report: dsl.Output[dsl.Dataset],
 ) -> NamedTuple("Outputs", [("chunks_created", int), ("documents_indexed", int), ("embedding_failures", int)]):
     """fetches batch_id's own already logged ingestion_report.json from
-    mlflow (the same artifact spear-console-backend/server.py's
+    mlflow (the same artifact console-backend/server.py's
     ingestion_report() reads), pulls the abac tags and the guardrails
     verdict per document from it, then re indexes every document that
     passed sanitization using the winning pattern's real chunk_size,
@@ -181,15 +181,22 @@ def apply_winning_pattern(
     # sql runs against it. rag_reader is created by
     # scripts/03-install-data.sh, not here, a grant against a role that
     # does not exist yet should never be what blocks a real indexing run
+    # tagged dollar quote ($rls$, not the bare $$ form), kubernetes'
+    # own $(VAR_NAME) env expansion on container args treats a literal
+    # $$ as an escaped single $ regardless of what follows, and
+    # lightweight kfp components embed this whole source as a literal
+    # arg, confirmed live: a bare $$ here reached postgres as a single
+    # $ and failed with "syntax error at or near $". a tagged delimiter
+    # never has two dollar signs adjacent, so it survives untouched.
     cur.execute(
         """
-        DO $$
+        DO $rls$
         BEGIN
             IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'rag_reader') THEN
                 GRANT SELECT ON rag_chunks TO rag_reader;
             END IF;
         END
-        $$;
+        $rls$;
 
         ALTER TABLE rag_chunks ENABLE ROW LEVEL SECURITY;
         ALTER TABLE rag_chunks FORCE ROW LEVEL SECURITY;
@@ -340,8 +347,8 @@ def log_apply_report(
     embedding_failures: int,
     apply_report: dsl.Input[dsl.Dataset],
 ) -> str:
-    """logs one mlflow run per apply, under its own phase1-apply-pattern
-    experiment rather than mixed into phase1-ingestion, since applying a
+    """logs one mlflow run per apply, under its own spear-corpus-index
+    experiment rather than mixed into spear-corpus-prepare, since applying a
     pattern is a separate real world action from ingesting a batch and
     can happen more than once against the same batch as autorag keeps
     finding better recipes.
@@ -453,10 +460,10 @@ def _use_pgvector_creds(task):
 
 
 @dsl.pipeline(
-    name="phase1-apply-pattern-pipeline",
+    name="spear-corpus-index-pipeline",
     description="winning autorag pattern -> re chunk + re embed the sanitized batch -> pgvector -> mlflow report",
 )
-def phase1_apply_pattern_pipeline(
+def corpus_index_pipeline(
     mlflow_url: str,
     batch_id: str,
     pattern_name: str,
@@ -505,6 +512,6 @@ def phase1_apply_pattern_pipeline(
 if __name__ == "__main__":
     from kfp import compiler
 
-    out = __file__.replace("pipeline.py", "phase1-apply-pattern-pipeline.yaml")
-    compiler.Compiler().compile(phase1_apply_pattern_pipeline, out)
+    out = __file__.replace("pipeline.py", "spear-corpus-index-pipeline.yaml")
+    compiler.Compiler().compile(corpus_index_pipeline, out)
     print(f"compiled {out}")

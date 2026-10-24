@@ -16,10 +16,10 @@ set -euo pipefail
 #
 # what this actually exercises, confirmed live, not assumed: search_work_packages
 # returns each work package's real subject verbatim, mcp-servers/spear-openproject-mcp/server.py's
-# own run_search_work_packages. spear-shield-mcp-guard-proxy sits in
+# own run_search_work_packages. spear-mcp-guard-proxy sits in
 # front of that server and checks every tool response against
 # work-tracker-config, manifests/spear-guardrails/03-work-tracker-config.yaml,
-# before the retrieval agent or its llm ever sees it, mcp-servers/spear-shield-mcp-guard-proxy/server.py's
+# before the retrieval agent or its llm ever sees it, mcp-servers/spear-mcp-guard-proxy/server.py's
 # own response guard. a clean real subject line passes, this crafted one
 # trips the regex rail and gets blocked, confirmed live against the real
 # guardrails route both ways before this script existed.

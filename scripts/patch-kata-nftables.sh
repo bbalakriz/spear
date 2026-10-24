@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # standalone, safely re-runnable fix for the kata guest kernel's missing
-# nf_tables modules, see manifests/platform/07-kata-nftables-patch.yaml
+# nf_tables modules, see manifests/platform/08-kata-nftables-patch.yaml
 # for the full story and the upstream source this was adapted from. called
 # once from scripts/00-a-install-platform.sh on a fresh install, but the
 # patch lives in the node's initramfs on disk and gets wiped by
@@ -32,7 +32,7 @@ main() {
   oc adm policy add-scc-to-user privileged -z "${SA}" -n "${NS}"
 
   log "applying kata nftables patch daemonset"
-  oc apply -f "${ROOT_DIR}/manifests/platform/07-kata-nftables-patch.yaml"
+  oc apply -f "${ROOT_DIR}/manifests/platform/08-kata-nftables-patch.yaml"
 
   log "waiting for patch pods to start"
   oc rollout status daemonset/kata-nftables-patch -n "${NS}" --timeout=180s
@@ -84,7 +84,7 @@ main() {
   log "patched=${patched} already=${already} skipped_no_image=${skipped}"
 
   log "cleaning up patch daemonset and revoking privileged scc"
-  oc delete -f "${ROOT_DIR}/manifests/platform/07-kata-nftables-patch.yaml" --ignore-not-found=true
+  oc delete -f "${ROOT_DIR}/manifests/platform/08-kata-nftables-patch.yaml" --ignore-not-found=true
   oc adm policy remove-scc-from-user privileged -z "${SA}" -n "${NS}"
 
   log "kata nftables patch complete"

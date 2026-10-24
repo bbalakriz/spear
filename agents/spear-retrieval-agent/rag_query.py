@@ -43,7 +43,7 @@ import os
 import psycopg2
 import requests
 
-OGX_BASE_URL_DEFAULT = "http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321"
+OGX_BASE_URL_DEFAULT = "http://spear-ogx-service.spear-inference.svc.cluster.local:8321"
 # same embedding model and dimension (768) every real row in rag_chunks
 # was already written with, phase1_apply_pattern's own default, a query
 # embedded with a different model would not even be comparable

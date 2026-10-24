@@ -35,7 +35,7 @@ source "${ROOT_DIR}/scripts/lib-common.sh"
 
 JUDGE_MODEL="openai/publishers/prelude-maas/models/gemma4"
 EMBEDDING_MODEL="vllm-embedding/nomic-embed-text-v1.5"
-OGX_URL="http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321/v1"
+OGX_URL="http://spear-ogx-service.spear-inference.svc.cluster.local:8321/v1"
 # the model actually behind the coordinator agent's own generation step,
 # agents/spear-coordinator-agent/main.py's own GENERATION_MODEL default,
 # not gemma4, that one is only ever the ragas/ibm-clear judge model. this
@@ -55,7 +55,7 @@ evalhub_url() {
 }
 
 caller_token() {
-  oc create token spear-shield-eval-caller -n "${EVAL_NS}" --duration=2h
+  oc create token spear-eval-caller -n "${EVAL_NS}" --duration=2h
 }
 
 # pulls real (question, response, retrieved_contexts) rows straight out of
@@ -74,7 +74,7 @@ caller_token() {
 # aware dataset loading path of its own, confirmed reading its shipped
 # main.py, test_data_ref.s3 is genuinely the only shape it accepts
 #
-# runs in spear-shield-agents, not minio: that is the one namespace the
+# runs in spear-agents, not minio: that is the one namespace the
 # coordinator image's own internal imagestream can be pulled from without
 # a new cross namespace system:image-puller grant, confirmed live, a
 # plain tag pull from another namespace came back "authentication
@@ -84,7 +84,7 @@ caller_token() {
 # its own local copy
 export_and_upload_ragas_dataset() {
   log "exporting a fresh ragas dataset from real ${MLFLOW_EXPERIMENT} traces straight into minio"
-  local job_ns="spear-shield-agents"
+  local job_ns="spear-agents"
   local token
   token="$(oc create token spear-coordinator-mlflow-caller -n "${job_ns}" --duration=30m)"
 
@@ -122,7 +122,7 @@ spec:
           # the coordinator agent's own image, it already carries
           # mlflow-skinny, this step needs nothing else from it, a plain
           # mlflow query is not agent specific
-          image: image-registry.openshift-image-registry.svc:5000/spear-shield-agents/spear-coordinator-agent:latest
+          image: image-registry.openshift-image-registry.svc:5000/spear-agents/spear-coordinator-agent:latest
           command: ["python3", "/scripts/export_ragas_dataset.py"]
           env:
             - name: MLFLOW_URL
@@ -272,10 +272,10 @@ EOF
   # finds this run by its own returned mlflow_run_id and only tags it into
   # the cycle, it does not create a second one
   #
-  # x-tenant spear-pipelines, not spear-shield-eval: every job's adapter
+  # x-tenant spear-pipelines, not spear-eval: every job's adapter
   # pod gets MLFLOW_WORKSPACE forced to its own x-tenant namespace, and
   # spear-shield-security-trace lives in spear-pipelines's own mlflow
-  # workspace, confirmed live, see manifests/spear-shield-eval/01-evalhub.yaml
+  # workspace, confirmed live, see manifests/spear-eval/01-evalhub.yaml
   log "submitting ibm-clear job (x-tenant ${PIPELINES_NS})"
   curl -sk -X POST \
     -H "Authorization: Bearer $(caller_token)" \
@@ -299,7 +299,7 @@ EOF
 # ibm-clear's, same structural dead end ragas hit, this result goes
 # through log_result_to_mlflow's own custom run path, not a native one
 #
-# x-tenant spear-shield-eval, not spear-pipelines: no mlflow trace lookup
+# x-tenant spear-eval, not spear-pipelines: no mlflow trace lookup
 # dependency here unlike ibm-clear, this is the simpler default tenant
 submit_garak_job() {
   local body
@@ -344,11 +344,11 @@ EOF
 # comes off the same evalhub-mlflow-ca configmap that step already
 # ensures exists, created here too in case this function ever runs first
 #
-# x-tenant spear-shield-eval, not spear-pipelines: this adapter opens its
+# x-tenant spear-eval, not spear-pipelines: this adapter opens its
 # own mlflow connection directly, no ibm-clear style sdk trace lookup
 # tying it to the pipelines tenant
 submit_confidential_data_job() {
-  local job_ns="spear-shield-agents"
+  local job_ns="spear-agents"
   local mlflow_token mlflow_ca_cert body
 
   mlflow_token="$(oc create token spear-coordinator-mlflow-caller -n "${job_ns}" --duration=30m)"
@@ -437,7 +437,7 @@ wait_for_job() {
 # of unrelated flat rows, printed run id read back off this pod's own logs,
 # same plain pod shape as every other step here
 create_eval_cycle_run() {
-  local job_ns="spear-shield-agents"
+  local job_ns="spear-agents"
   local token
   token="$(oc create token spear-coordinator-mlflow-caller -n "${job_ns}" --duration=10m)"
 
@@ -468,7 +468,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cycle-run
-          image: image-registry.openshift-image-registry.svc:5000/spear-shield-agents/spear-coordinator-agent:latest
+          image: image-registry.openshift-image-registry.svc:5000/spear-agents/spear-coordinator-agent:latest
           command: ["python3", "/scripts/create_eval_cycle_run.py"]
           env:
             - name: MLFLOW_URL
@@ -519,7 +519,7 @@ EOF
 log_result_to_mlflow() {
   local result_json="$1"
   local parent_run_id="${2:-}"
-  local job_ns="spear-shield-agents"
+  local job_ns="spear-agents"
   local token
   token="$(oc create token spear-coordinator-mlflow-caller -n "${job_ns}" --duration=10m)"
 
@@ -553,7 +553,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: log
-          image: image-registry.openshift-image-registry.svc:5000/spear-shield-agents/spear-coordinator-agent:latest
+          image: image-registry.openshift-image-registry.svc:5000/spear-agents/spear-coordinator-agent:latest
           command: ["python3", "/scripts/log_eval_to_mlflow.py"]
           env:
             - name: MLFLOW_URL

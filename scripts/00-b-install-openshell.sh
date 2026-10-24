@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 NAMESPACE="${OPENSHELL_NS:-openshell}"
 # SANDBOX_NS="${SANDBOX_NS:-agent-pack}"
-SANDBOX_NS="${SANDBOX_NS:-spear-shield-agents}"
+SANDBOX_NS="${SANDBOX_NS:-spear-agents}"
 CHART_VERSION="${OPENSHELL_CHART_VERSION:-0.0.116}"
 RELEASE="${OPENSHELL_RELEASE:-openshell}"
 # only used below as a last resort if reading the route back fails, see

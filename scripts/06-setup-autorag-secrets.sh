@@ -4,7 +4,7 @@ set -euo pipefail
 # documents-rag-optimization-pipeline (AutoRAG's kfp pipeline, auto
 # registered on every dspa pipeline server per official rhoai docs, see
 # PHASE1_PLAN.md) needs to run: autorag-s3-creds (input/test data bucket
-# access) and autorag-ogx-creds (points it at rag-phase1-ogx). lives in
+# access) and autorag-ogx-creds (points it at spear-ogx). lives in
 # spear-pipelines, the dspa's own namespace, since this is what the
 # pipeline run itself actually reads.
 #
@@ -23,7 +23,7 @@ set -euo pipefail
 # never passes through this script's own output or context, same as an
 # ordinary `oc get secret -o yaml | oc apply -f -` secret copy.
 #
-# autorag-ogx-creds just needs rag-phase1-ogx's in cluster url. no real
+# autorag-ogx-creds just needs spear-ogx's in cluster url. no real
 # api key is needed: ogx's server.auth block only activates when
 # AUTH_ISSUER is set (confirmed by reading /opt/app-root/config.yaml
 # live), and this instance never sets it, so the placeholder value below
@@ -52,7 +52,7 @@ stringData:
   AWS_DEFAULT_REGION: "us-east-1"
 EOF
 
-log "creating autorag-ogx-creds (points at rag-phase1-judge-proxy, not rag-phase1-ogx directly, as of 2026-09-27)"
+log "creating autorag-ogx-creds (points at spear-judge-proxy, not spear-ogx directly, as of 2026-09-27)"
 # the judge proxy (manifests/spear-inference/03-judge-proxy.yaml) forwards
 # every request byte for byte unchanged except the llm judge's own
 # structured json_schema calls, which is where the answer_relevance
@@ -62,7 +62,7 @@ log "creating autorag-ogx-creds (points at rag-phase1-judge-proxy, not rag-phase
 # spear-pipelines calling into spear-inference, re verify the ogx
 # networkpolicy still allows it, see manifests/spear-inference/01-ogxserver.yaml
 oc create secret generic autorag-ogx-creds -n "${PIPELINES_NS}" \
-  --from-literal=OGX_CLIENT_BASE_URL="http://rag-phase1-judge-proxy.${INFERENCE_NS}.svc.cluster.local:8321" \
+  --from-literal=OGX_CLIENT_BASE_URL="http://spear-judge-proxy.${INFERENCE_NS}.svc.cluster.local:8321" \
   --from-literal=OGX_CLIENT_API_KEY="not-required-auth-disabled-on-this-instance" \
   --dry-run=client -o yaml | oc apply -f -
 

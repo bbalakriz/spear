@@ -7,11 +7,11 @@
 # server, the spear console, openproject) has its own real namespace
 # below, nothing is left that actually needs it to exist. minio keeps
 # its own name, not renamed to spear-storage, section 8's own decision,
-# only its placement changed. spear-shield-agents keeps its own
+# only its placement changed. spear-agents keeps its own
 # namespace object, already well named for what stays in it (both
 # gateways, the guard proxy, the keycloak realm import, the cluster
 # spiffeid, both agent sandboxes), that object still lives in its own
-# directory (manifests/spear-shield-agents/00-namespace.yaml) since it
+# directory (manifests/spear-agents/00-namespace.yaml) since it
 # predates this migration and already carries real labels and a
 # service account/network policy alongside it, not duplicated here.
 apiVersion: v1
@@ -63,4 +63,4 @@ kind: Namespace
 metadata:
   name: spear-worktracker
   labels:
-    app.kubernetes.io/part-of: spear-shield-agents
+    app.kubernetes.io/part-of: spear-agents

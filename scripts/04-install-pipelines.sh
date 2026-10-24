@@ -30,7 +30,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "${ROOT_DIR}/scripts/lib-common.sh"
 
 SHARED_NS="redhat-ods-applications"
-DSPA_NAME="rag-phase1-dspa"
+DSPA_NAME="spear-dspa"
 
 wait_dspa_ready() {
   local tries=60 status=""
@@ -118,16 +118,16 @@ ensure_experiment() {
     "${url}/api/2.0/mlflow/experiments/search" | python3 -c \
     'import json,sys; d=json.load(sys.stdin); print(len(d.get("experiments",[])))' 2>/dev/null || echo 0)
   if [[ "${existing}" != "0" ]]; then
-    log "phase1-ingestion experiment already exists in the ${PIPELINES_NS} workspace, leaving it alone"
+    log "spear-corpus-prepare experiment already exists in the ${PIPELINES_NS} workspace, leaving it alone"
     return 0
   fi
-  log "creating the phase1-ingestion experiment in the ${PIPELINES_NS} workspace"
+  log "creating the spear-corpus-prepare experiment in the ${PIPELINES_NS} workspace"
   curl -ksS -H "Authorization: Bearer ${token}" -H "X-MLflow-Workspace: ${PIPELINES_NS}" \
-    -X POST -H "Content-Type: application/json" -d '{"name": "phase1-ingestion"}' \
+    -X POST -H "Content-Type: application/json" -d '{"name": "spear-corpus-prepare"}' \
     "${url}/api/2.0/mlflow/experiments/create" >/dev/null
 }
 
-# registers phase1-apply-pattern-pipeline on the dspa, compile + upload
+# registers spear-corpus-index-pipeline on the dspa, compile + upload
 # only, --register-only, no run triggered, a real run still needs a real
 # batch_id and a real winning pattern from a completed autorag run, see
 # pipelines/corpus_index/compile_and_run.py's own usage comment,
@@ -138,10 +138,10 @@ ensure_experiment() {
 register_apply_pattern_pipeline() {
   local venv="${ROOT_DIR}/.venv-kfp"
   if [[ ! -x "${venv}/bin/python3" ]]; then
-    echo "warning: ${venv} not found, skipping phase1-apply-pattern-pipeline registration, create that venv (kfp sdk) yourself and rerun this script" >&2
+    echo "warning: ${venv} not found, skipping spear-corpus-index-pipeline registration, create that venv (kfp sdk) yourself and rerun this script" >&2
     return 0
   fi
-  log "registering phase1-apply-pattern-pipeline on ${DSPA_NAME}"
+  log "registering spear-corpus-index-pipeline on ${DSPA_NAME}"
   "${venv}/bin/python3" "${ROOT_DIR}/pipelines/corpus_index/compile_and_run.py" --register-only
 }
 
@@ -153,7 +153,7 @@ main() {
     exit 1
   fi
 
-  # phase1-apply-pattern-pipeline's own tasks (pipeline.py's
+  # spear-corpus-index-pipeline's own tasks (pipeline.py's
   # _use_pgvector_creds, running as pods in spear-pipelines) read
   # pgvector-creds via a secretKeyRef, which only ever resolves within
   # the pod's own namespace. pgvector-creds is only ever created in
@@ -161,7 +161,7 @@ main() {
   # fixed for ogxserver's pod in spear-inference, see
   # NAMESPACE_MIGRATION_PLAN.md. mirrored here too, confirmed live via
   # "Error: secret pgvector-creds not found" on a real apply-pattern run.
-  log "mirroring pgvector-creds into ${PIPELINES_NS}, phase1-apply-pattern-pipeline's own tasks need their own local copy"
+  log "mirroring pgvector-creds into ${PIPELINES_NS}, spear-corpus-index-pipeline's own tasks need their own local copy"
   mirror_secret pgvector-creds "${DATA_NS}" "${PIPELINES_NS}"
 
   log "data science pipelines application (autoML/autoRAG pipelines enabled)"

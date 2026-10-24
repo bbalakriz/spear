@@ -21,9 +21,9 @@ time (dotted = not a runtime request path). All labels cite the file that implem
 The only user-facing door is the OpenShift console dynamic plugin. No client-supplied
 username anywhere: the console proxy injects the signed-in user's own OAuth token, and the
 backend resolves identity by a live apiserver self-lookup (`users/~`), never by trusting a
-client. Identity minting is then a Keycloak password grant against the spear-shield-agents
+client. Identity minting is then a Keycloak password grant against the spear-agents
 realm keyed on that verified username - the backend holds each persona's realm password on
-file (`02-chat-creds.yaml`), a demo-only shortcut (no sso<->spear-shield-agents federation
+file (`01-chat-creds.yaml`), a demo-only shortcut (no sso<->spear-agents federation
 exists).
 
 ```mermaid
@@ -45,7 +45,7 @@ flowchart LR
 flowchart LR
     BK["spear-console-backend"]
     AP["OpenShift apiserver<br/>(kubernetes.default.svc)"]
-    KC[("Keycloak<br/>(sso + spear-shield-agents<br/>realms, keycloak ns)")]
+    KC[("Keycloak<br/>(sso + spear-agents<br/>realms, keycloak ns)")]
     PC[("spear-shield-console-creds secret<br/>(spear-console ns): one persona<br/>realm password file per username")]
     CO["Coordinator a2a<br/>endpoint via gateway"]
 
@@ -65,14 +65,14 @@ validates the header copy; the coordinator's code reads the body copy.
 
 ## 2. Coordinator agent sandbox (runc)
 
-Inside `spear-shield-agents`, the coordinator runs in an openshell Sandbox CR
+Inside `spear-agents`, the coordinator runs in an openshell Sandbox CR
 (`default--spear-coordinator`, runc - never Kata: its supervisor opens a CSI SPIFFE socket
 a virtiofs mount inside a Kata guest cannot proxy). Three credentials converge here, then
 the model loop runs with guardrails on the way in and the way out.
 
 ```mermaid
 flowchart LR
-    subgraph GW1["spear-shield-a2a-gateway (istio, spear-shield-agents)"]
+    subgraph GW1["spear-a2a-gateway (istio, spear-agents)"]
         AUTH["AuthPolicy (Authorino/Kuadrant)<br/>dual issuer, fail-closed 401:<br/>keycloak realm jwt OR spire jwt-svid"]
     end
 
@@ -83,13 +83,13 @@ flowchart LR
     end
 
     SP["SPIRE server<br/>(ztwim, cluster singleton,<br/>trust domain agent-pack.internal)"]
-    KC2[("Keycloak spear-shield-agents realm")]
-    GR["NeMo Guardrails CR<br/>rag-phase1-guardrails<br/>(spear-guardrails ns)"]
+    KC2[("Keycloak spear-agents realm")]
+    GR["NeMo Guardrails CR<br/>spear-guardrails<br/>(spear-guardrails ns)"]
     RT["Retrieval agent a2a<br/>endpoint via gateway"]
 
     AUTH -->|"host rewrite + ExternalName<br/>to openshell relay :8080<br/>(07-a2a-gateway.yaml)"| SUP
     SUP -->|"env + secrets +<br/>token_grant injection"| AG
-    TG -.->|"spiffe jwt-svid mint:<br/>sub = spiffe://agent-pack.internal/ns/<br/>spear-shield-agents/sandbox/&lt;name-hash&gt;<br/>pinned by keycloak client<br/>spear-coordinator-workload<br/>(federated-jwt)"| SP
+    TG -.->|"spiffe jwt-svid mint:<br/>sub = spiffe://agent-pack.internal/ns/<br/>spear-agents/sandbox/&lt;name-hash&gt;<br/>pinned by keycloak client<br/>spear-coordinator-workload<br/>(federated-jwt)"| SP
     TG -.->|"workload access token<br/>(supervisor injects as outbound<br/>Authorization on coord->retr hop)"| KC2
     AG -->|"input guardrail check<br/>(coordinator-agent-config<br/>input rails)"| GR
     GR -->|"sanitized prompt"| AG
@@ -128,7 +128,7 @@ flowchart LR
 
     REL["rag-query-relay<br/>(spear-data ns, unsandboxed,<br/>same retrieval-agent image)"]
     PG[("pgvector postgres<br/>ragdb, rag_chunks table<br/>(spear-data ns)")]
-    OGX["OGX server<br/>(spear-inference ns,<br/>rag-phase1-ogx)"]
+    OGX["OGX server<br/>(spear-inference ns,<br/>spear-ogx)"]
     MF[("MLflow<br/>(redhat-ods-applications,<br/>shared cluster instance)")]
 
     A2 --> SUP2
@@ -158,14 +158,14 @@ guard proxy before any model or agent sees content.
 
 ```mermaid
 flowchart LR
-    AG2b["spear-retrieval-agent<br/>(caller JWT as Authorization,<br/>host = mcp-spear-shield-agents...<br/>(egress policy: gateway :8080 rest))"]
-    subgraph GW3["spear-shield-mcp-gateway (istio, mcps listener)"]
-        RBA["AuthPolicy per-tool RBAC:<br/>('tool:' + x-mcp-toolname) in<br/>resource_access[x-mcp-servername].roles<br/>401/403 fail-closed<br/>(03-auth-policies.yaml)"]
+    AG2b["spear-retrieval-agent<br/>(caller JWT as Authorization,<br/>host = mcp-spear-agents...<br/>(egress policy: gateway :8080 rest))"]
+    subgraph GW3["spear-mcp-gateway (istio, mcps listener)"]
+        RBA["AuthPolicy per-tool RBAC:<br/>('tool:' + x-mcp-toolname) in<br/>resource_access[x-mcp-servername].roles<br/>401/403 fail-closed<br/>(02-mcp-gateway.yaml)"]
     end
-    GP["spear-shield-mcp-guard-proxy<br/>(spear-shield-agents ns :8000)<br/>request guard + response guard,<br/>config work-tracker-config"]
+    GP["spear-mcp-guard-proxy<br/>(spear-agents ns :8000)<br/>request guard + response guard,<br/>config work-tracker-config"]
     OM["spear-openproject-mcp<br/>(MCPServer CR, spear-worktracker ns)<br/>assignee=self check"]
     OP[("OpenProject<br/>data-governance project,<br/>work packages")]
-    GRC["guardrails route<br/>rag-phase1-guardrails"]
+    GRC["guardrails route<br/>spear-guardrails"]
 
     AG2b -->|"1. tools/call<br/>x-mcp-servername + x-mcp-toolname + x-mcp-method headers"| RBA
     RBA -->|"2. backendRef -> guard proxy<br/>(cross-ns ReferenceGrant)"| GP
@@ -197,7 +197,7 @@ into guardrails config. Dotted = deploy-time or offline; solid = runtime path.
 
 ```mermaid
 flowchart LR
-    subgraph EH["EvalHub (spear-shield-eval ns, bundled in rhods 3.5)"]
+    subgraph EH["EvalHub (spear-eval ns, bundled in rhods 3.5)"]
         RG["ragas-v062<br/>(4 reference-free metrics,<br/>dataset exported from real traces)"]
         IC["ibm-clear-v060<br/>(agentic eval over mlflow traces)"]
         GK["garak quick scan<br/>(straight at glm-53-flash)"]

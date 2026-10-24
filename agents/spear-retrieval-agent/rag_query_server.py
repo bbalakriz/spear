@@ -31,7 +31,7 @@ from rag_query import abac_filtered_search, connect, embed_query  # noqa: E402
 # namespace than ogx (spear-inference) now, ogx's own NetworkPolicy needs
 # an explicit namespaceSelector rule for spear-data to still allow this
 # call, see manifests/spear-inference/01-ogxserver.yaml
-OGX_BASE_URL = os.environ.get("OGX_BASE_URL", "http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321")
+OGX_BASE_URL = os.environ.get("OGX_BASE_URL", "http://spear-ogx-service.spear-inference.svc.cluster.local:8321")
 
 
 class Handler(BaseHTTPRequestHandler):

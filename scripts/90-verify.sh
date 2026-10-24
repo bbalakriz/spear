@@ -45,38 +45,38 @@ main() {
 
   log "pipeline server (${PIPELINES_NS})"
   check "dspa reports Ready" bash -c \
-    "[[ \"\$(oc get dspa rag-phase1-dspa -n ${PIPELINES_NS} -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}')\" == 'True' ]]"
+    "[[ \"\$(oc get dspa spear-dspa -n ${PIPELINES_NS} -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}')\" == 'True' ]]"
 
   log "guardrails (${GUARDRAILS_NS})"
   # reverted back to .status.phase, see scripts/07-install-guardrails.sh's
   # own wait_guardrails_ready comment, an earlier pass here wrongly
   # believed this field could never reach Ready
   check "nemoguardrails reports Ready" bash -c \
-    "[[ \"\$(oc get nemoguardrails rag-phase1-guardrails -n ${GUARDRAILS_NS} -o jsonpath='{.status.phase}')\" == 'Ready' ]]"
-  check "guardrails route exists" oc get route rag-phase1-guardrails -n "${GUARDRAILS_NS}"
+    "[[ \"\$(oc get nemoguardrails spear-guardrails -n ${GUARDRAILS_NS} -o jsonpath='{.status.phase}')\" == 'Ready' ]]"
+  check "guardrails route exists" oc get route spear-guardrails -n "${GUARDRAILS_NS}"
   # kube-rbac-proxy in front of this route reads its own resourceName
   # scoping from an operator generated configmap whose yaml key
   # ("resourceName") the real proxy binary does not actually recognize
   # (the real field is "name"), so that scoping is silently dropped and
   # a plain unscoped "get services" grant is what the live proxy actually
   # checks, see manifests/spear-guardrails/06-pipeline-rbac.yaml and
-  # 07-guard-proxy-rbac.yaml's own comments. this check exercises the
+  # 07-caller-rbac.yaml's own comments. this check exercises the
   # pipeline runner sa's real call, not just rbac can-i, confirmed to
   # genuinely fail before that fix (every document gets tagged "error")
   # and pass after it
   check "pipeline runner sa can actually call the guardrails /v1/guardrail/checks endpoint (not just rbac can-i)" bash -c \
-    "source '${ROOT_DIR}/scripts/lib-common.sh'; run_restricted_probe guardrails-verify-probe '${PIPELINES_NS}' pipeline-runner-rag-phase1-dspa \
-      \"curl -sfk -X POST https://rag-phase1-guardrails.${GUARDRAILS_NS}.svc.cluster.local/v1/guardrail/checks \
+    "source '${ROOT_DIR}/scripts/lib-common.sh'; run_restricted_probe guardrails-verify-probe '${PIPELINES_NS}' pipeline-runner-spear-dspa \
+      \"curl -sfk -X POST https://spear-guardrails.${GUARDRAILS_NS}.svc.cluster.local/v1/guardrail/checks \
         -H 'Content-Type: application/json' -H \\\"Authorization: Bearer \\\$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\\\" \
         -d '{\\\"model\\\":\\\"test\\\",\\\"messages\\\":[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"Hello\\\"}]}'\" \
       | grep -q '\"status\":\"success\"'"
 
   log "ogx (${INFERENCE_NS})"
   check "ogxserver reports Ready" bash -c \
-    "[[ \"\$(oc get ogxserver rag-phase1-ogx -n ${INFERENCE_NS} -o jsonpath='{.status.phase}')\" == 'Ready' ]]"
+    "[[ \"\$(oc get ogxserver spear-ogx -n ${INFERENCE_NS} -o jsonpath='{.status.phase}')\" == 'Ready' ]]"
   check "ogxserver service responds healthy" oc run ogx-verify-probe --rm -i --restart=Never \
     --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n "${INFERENCE_NS}" --command -- \
-    bash -c "curl -sf http://rag-phase1-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/health | grep -q '\"OK\"'"
+    bash -c "curl -sf http://spear-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/health | grep -q '\"OK\"'"
   # every other ogx check in this file runs its probe pod inside
   # ${INFERENCE_NS} itself, always allowed by the cr's own podSelector:
   # {} ingress rule regardless of what cross namespace rules exist, so
@@ -90,14 +90,14 @@ main() {
   check "ogxserver reachable from spear-pipelines, not just ${INFERENCE_NS} itself (networkpolicy ingress)" \
     oc run ogx-netpol-verify-probe --rm -i --restart=Never \
     --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n "${PIPELINES_NS}" --command -- \
-    bash -c "curl -sf --max-time 10 http://rag-phase1-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/health | grep -q '\"OK\"'"
+    bash -c "curl -sf --max-time 10 http://spear-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/health | grep -q '\"OK\"'"
   # the vllm foundation model and the embedding model, wired via the
   # image's own generic env var driven remote::vllm slots, see
   # manifests/spear-inference/01-ogxserver.yaml, only meaningful once
   # scripts/05-install-inference.sh has been run.
   check "ogx lists the vllm foundation model plus the embedding model" oc run ogx-models-verify-probe --rm -i \
     --restart=Never --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n "${INFERENCE_NS}" --command -- \
-    bash -c "out=\$(curl -sf http://rag-phase1-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/models); \
+    bash -c "out=\$(curl -sf http://spear-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/models); \
       echo \"\${out}\" | grep -q vllm-inference/ && echo \"\${out}\" | grep -q nomic-embed"
   # a real failed autorag run on 2026-09-28 (see PHASE1_PLAN.md) proved
   # this is the check that actually matters for run_autorag.py's own
@@ -109,7 +109,7 @@ main() {
   # run_autorag.py configures, not a stand in.
   check "ogx registers both autorag generation models" oc run ogx-models-registered-verify-probe --rm -i \
     --restart=Never --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n "${INFERENCE_NS}" --command -- \
-    bash -c "out=\$(curl -sf http://rag-phase1-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/models); \
+    bash -c "out=\$(curl -sf http://spear-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/models); \
       echo \"\${out}\" | grep -q 'vllm-inference/Qwen3.6-35B-A3B' && \
       echo \"\${out}\" | grep -q 'openai/publishers/prelude-maas/models/glm-53-flash'"
   # glm-53-flash genuinely does still route a real completion, confirmed
@@ -131,7 +131,7 @@ main() {
   check "ogx routes a real chat completion through openai/glm-53-flash" \
     oc run ogx-chat-verify-probe --rm -i \
     --restart=Never --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n "${INFERENCE_NS}" --command -- \
-    bash -c "curl -sf -X POST http://rag-phase1-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/chat/completions \
+    bash -c "curl -sf -X POST http://spear-ogx-service.${INFERENCE_NS}.svc.cluster.local:8321/v1/chat/completions \
       -H 'Content-Type: application/json' \
       -d '{\"model\":\"openai/publishers/prelude-maas/models/glm-53-flash\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":10}' \
       | grep -q chatcmpl"
@@ -146,12 +146,12 @@ main() {
   # spear-pipelines, see scripts/04-install-pipelines.sh
   check "mlflow api reachable with the spear-pipelines workspace header" oc run mlflow-verify-probe --rm -i \
     --restart=Never --image=registry.access.redhat.com/ubi9/ubi-minimal:latest -n "${PIPELINES_NS}" \
-    --overrides="{\"spec\":{\"serviceAccountName\":\"pipeline-runner-rag-phase1-dspa\"}}" --command -- \
+    --overrides="{\"spec\":{\"serviceAccountName\":\"pipeline-runner-spear-dspa\"}}" --command -- \
     bash -c "curl -sfk -H \"Authorization: Bearer \$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\" \
       -H 'X-MLflow-Workspace: ${PIPELINES_NS}' -X POST -H 'Content-Type: application/json' -d '{\"max_results\":50}' \
-      https://mlflow.redhat-ods-applications.svc:8443/mlflow/api/2.0/mlflow/experiments/search | grep -q phase1-ingestion"
+      https://mlflow.redhat-ods-applications.svc:8443/mlflow/api/2.0/mlflow/experiments/search | grep -q spear-corpus-prepare"
 
-  log "phase1-ingestion-pipeline"
+  log "spear-corpus-prepare-pipeline"
   # rag_chunks is deliberately left empty for a batch until a winning
   # autorag pattern is applied to it, see PHASE1_PLAN.md's sequencing
   # writeup, 2026-09-28: ingestion itself no longer writes to this table
@@ -190,35 +190,35 @@ assert len(rows) > 0 and 'question' in rows[0] and 'correct_answer_document_ids'
   # the dspa route hostname is resolved live here too, never hardcoded,
   # it is unique per cluster
   local dspa_route
-  dspa_route="https://$(oc get route ds-pipeline-rag-phase1-dspa -n "${PIPELINES_NS}" -o jsonpath='{.spec.host}' 2>/dev/null)"
-  check "documents-rag-optimization-pipeline is registered on rag-phase1-dspa" bash -c \
+  dspa_route="https://$(oc get route ds-pipeline-spear-dspa -n "${PIPELINES_NS}" -o jsonpath='{.spec.host}' 2>/dev/null)"
+  check "documents-rag-optimization-pipeline is registered on spear-dspa" bash -c \
     "curl -sk -H \"Authorization: Bearer \$(oc whoami -t)\" \
       '${dspa_route}/apis/v2beta1/pipelines?filter=%7B%22predicates%22%3A%5B%7B%22key%22%3A%22name%22%2C%22operation%22%3A%22EQUALS%22%2C%22stringValue%22%3A%22documents-rag-optimization-pipeline%22%7D%5D%7D' \
       | grep -q documents-rag-optimization-pipeline"
 
-  log "phase1-apply-pattern-pipeline"
+  log "spear-corpus-index-pipeline"
   # applies a winning autorag pattern to the production index, see
   # pipelines/corpus_index/. registered (compile + upload, no
   # run) by scripts/04-install-pipelines.sh's own
   # register_apply_pattern_pipeline, part of the normal install chain
   # now, triggering a real run still needs real batch/pattern data and
   # stays manual, see that pipeline's own compile_and_run.py
-  check "phase1-apply-pattern-pipeline is registered on rag-phase1-dspa" bash -c \
+  check "spear-corpus-index-pipeline is registered on spear-dspa" bash -c \
     "curl -sk -H \"Authorization: Bearer \$(oc whoami -t)\" \
-      '${dspa_route}/apis/v2beta1/pipelines?filter=%7B%22predicates%22%3A%5B%7B%22key%22%3A%22name%22%2C%22operation%22%3A%22EQUALS%22%2C%22stringValue%22%3A%22phase1-apply-pattern-pipeline%22%7D%5D%7D' \
-      | grep -q phase1-apply-pattern-pipeline"
+      '${dspa_route}/apis/v2beta1/pipelines?filter=%7B%22predicates%22%3A%5B%7B%22key%22%3A%22name%22%2C%22operation%22%3A%22EQUALS%22%2C%22stringValue%22%3A%22spear-corpus-index-pipeline%22%7D%5D%7D' \
+      | grep -q spear-corpus-index-pipeline"
 
-  log "spear-worktracker and spear-shield-agents"
+  log "spear-worktracker and spear-agents"
   check "spear-openproject deployment available" oc wait --for=condition=Available deployment/spear-openproject -n "${WORKTRACKER_NS}" --timeout=5s
   check "spear-openproject-mcp reports Ready" oc wait mcpserver spear-openproject-mcp -n "${WORKTRACKER_NS}" --for=condition=Ready --timeout=5s
-  check "spear-shield-mcp-guard-proxy deployment available" oc wait --for=condition=Available deployment/spear-shield-mcp-guard-proxy -n "${AGENTS_NS}" --timeout=5s
-  check "spear-shield-mcp-gateway's allowedRoutes is All, not Same, for the cross namespace worktracker route" bash -c \
-    "[[ \"\$(oc get gateway spear-shield-mcp-gateway -n ${AGENTS_NS} -o jsonpath='{.spec.listeners[0].allowedRoutes.namespaces.from}')\" == 'All' ]]"
+  check "spear-mcp-guard-proxy deployment available" oc wait --for=condition=Available deployment/spear-mcp-guard-proxy -n "${AGENTS_NS}" --timeout=5s
+  check "spear-mcp-gateway's allowedRoutes is All, not Same, for the cross namespace worktracker route" bash -c \
+    "[[ \"\$(oc get gateway spear-mcp-gateway -n ${AGENTS_NS} -o jsonpath='{.spec.listeners[0].allowedRoutes.namespaces.from}')\" == 'All' ]]"
   check "spear-shield-rag-query-relay deployment available (manual follow up, see scripts/09-install-worktracker-and-agents.sh)" \
     oc wait --for=condition=Available deployment/spear-shield-rag-query-relay -n "${DATA_NS}" --timeout=5s
 
   log "spear-console"
-  check "phase1-ingestion-console-backend deployment available" oc wait --for=condition=Available deployment/phase1-ingestion-console-backend -n "${CONSOLE_NS}" --timeout=5s
+  check "spear-console-backend deployment available" oc wait --for=condition=Available deployment/spear-console-backend -n "${CONSOLE_NS}" --timeout=5s
   # exercises the backend's own real sa token against mlflow, not
   # pipeline-runner's, the earlier version of this check used
   # pipeline-runner's sa and missed a real cross namespace rbac gap:
@@ -226,8 +226,8 @@ assert len(rows) > 0 and 'question' in rows[0] and 'correct_answer_document_ids'
   # header, spear-pipelines, not the caller's own home namespace, so this
   # backend's own grant has to live in manifests/spear-pipelines/04-console-backend-mlflow-rbac.yaml,
   # not anywhere in spear-console itself
-  check "console backend's own sa can see the phase1-ingestion experiment in mlflow (not just pipeline-runner's)" bash -c \
-    "oc exec -n ${CONSOLE_NS} deploy/phase1-ingestion-console-backend -- bash -c \"curl -sfk -H \\\"Authorization: Bearer \\\$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\\\" -H 'X-MLflow-Workspace: ${PIPELINES_NS}' -X POST -H 'Content-Type: application/json' -d '{\\\"max_results\\\":50}' https://mlflow.redhat-ods-applications.svc:8443/mlflow/api/2.0/mlflow/experiments/search\" | grep -q '\"name\": \"phase1-ingestion\"'"
+  check "console backend's own sa can see the spear-corpus-prepare experiment in mlflow (not just pipeline-runner's)" bash -c \
+    "oc exec -n ${CONSOLE_NS} deploy/spear-console-backend -- bash -c \"curl -sfk -H \\\"Authorization: Bearer \\\$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\\\" -H 'X-MLflow-Workspace: ${PIPELINES_NS}' -X POST -H 'Content-Type: application/json' -d '{\\\"max_results\\\":50}' https://mlflow.redhat-ods-applications.svc:8443/mlflow/api/2.0/mlflow/experiments/search\" | grep -q '\"name\": \"spear-corpus-prepare\"'"
 
   echo
   if (( FAILURES == 0 )); then

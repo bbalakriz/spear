@@ -3,8 +3,8 @@
 # header value, spear-pipelines here, not whatever namespace the calling
 # service account happens to live in. confirmed live: the console backend's
 # own service account (spear-console) kept getting {"experiments": []}
-# back from mlflow despite the phase1-ingestion experiment existing, even
-# though manifests/spear-console/00-backend-rbac.yaml already granted it
+# back from mlflow despite the spear-corpus-prepare experiment existing, even
+# though manifests/spear-console/02-backend.yaml already granted it
 # get/list on mlflow.kubeflow.org experiments, that grant just lived in
 # the wrong namespace to ever be checked. this is the real fix, a
 # cross namespace rolebinding here in spear-pipelines itself, same shape
@@ -26,7 +26,7 @@ metadata:
   namespace: spear-pipelines
 subjects:
   - kind: ServiceAccount
-    name: phase1-ingestion-console-backend
+    name: spear-console-backend
     namespace: spear-console
 roleRef:
   kind: Role

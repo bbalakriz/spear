@@ -2,7 +2,7 @@
 set -euo pipefail
 # builds and deploys the console: the backend (manifests/spear-console)
 # plus the frontend openshift console plugin
-# (spear-console/charts/openshift-console-plugin). both images are built
+# (console/charts/openshift-console-plugin). both images are built
 # binary, straight from source, into this namespace's own internal
 # registry, same pattern every other custom image in this project already
 # uses.
@@ -11,16 +11,17 @@ set -euo pipefail
 # not owner-console, since it is slated to also host the phase 2 chat tab,
 # not just phase 1 ingestion controls. the source directories at the repo
 # root followed later, owner-console/owner-console-backend renamed to
-# spear-console/spear-console-backend, this script builds from those
-# paths now, the BuildConfig/Helm release names themselves stayed as
-# phase1-ingestion-console(-backend), that is a separate, still deferred
-# rename
+# spear-console/spear-console-backend, then renamed again to just
+# console/console-backend since the repo itself is already the spear
+# project, this script builds from those paths now. the live
+# BuildConfig/Deployment/Service/ConsolePlugin/Helm release names kept
+# the spear prefix throughout, only the source directories dropped it
 #
 # MLFLOW_URL, DSPA_ROUTE and GUARDRAILS_ROUTE are never hardcoded anywhere
-# in spear-console-backend/server.py: all three are openshift route
+# in console-backend/server.py: all three are openshift route
 # hostnames, unique per cluster, so this script resolves them live and
 # injects them into the backend deployment with `oc set env`, not the
-# applied manifest itself, so a later `oc apply -f 01-backend.yaml` never
+# applied manifest itself, so a later `oc apply -f 02-backend.yaml` never
 # wipes them out (they are absent from the manifest's own last applied
 # configuration, so strategic merge leaves them alone, confirmed against
 # how minio-dsp-creds style secrets are already handled in this project).
@@ -34,10 +35,10 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "${ROOT_DIR}/scripts/lib-common.sh"
 
 SHARED_NS="redhat-ods-applications"
-BACKEND_BC="phase1-ingestion-console-backend"
-FRONTEND_BC="phase1-ingestion-console"
-BACKEND_DEPLOY="phase1-ingestion-console-backend"
-HELM_RELEASE="phase1-ingestion-console"
+BACKEND_BC="spear-console-backend"
+FRONTEND_BC="spear-console"
+BACKEND_DEPLOY="spear-console-backend"
+HELM_RELEASE="spear-console"
 
 build_image() {
   local bc="$1" context_dir="$2"
@@ -64,16 +65,16 @@ image_digest_ref() {
 
 # balakrishnan.b/siddhartha.de also need real accounts in the "sso"
 # realm, the one oauth cluster's own identity provider actually uses, not
-# spear-shield-agents (that one is only a backend credential store, see
-# manifests/spear-console/02-chat-creds.yaml's own header comment). a
+# spear-agents (that one is only a backend credential store, see
+# manifests/spear-console/01-chat-creds.yaml's own header comment). a
 # KeycloakRealmImport cannot add users to a realm it does not own, so this
 # has to go straight against the admin api, same shape
-# manifests/spear-shield-agents/01-keycloak-realm.yaml's own header
+# manifests/spear-agents/01-keycloak-realm.yaml's own header
 # comment already documents for the spire idp/auth flow. password read
-# straight out of 02-chat-creds.yaml's own secret below, not a fourth
+# straight out of 01-chat-creds.yaml's own secret below, not a fourth
 # hardcoded copy, so one password per persona works at both layers
 # without anyone having to remember to edit three files in lockstep.
-# must run after 02-chat-creds.yaml is applied. found missing live
+# must run after 01-chat-creds.yaml is applied. found missing live
 # 2026-10-04 after a rebuild, see NAMESPACE_MIGRATION_PLAN.md.
 ensure_sso_realm_demo_users() {
   local kc_host admin_user admin_pass admin_token
@@ -125,14 +126,14 @@ ensure_sso_realm_demo_users() {
 
 resolve_routes() {
   log "resolving this cluster's own route hostnames, never hardcoded"
-  DSPA_ROUTE="https://$(oc get route ds-pipeline-rag-phase1-dspa -n "${PIPELINES_NS}" -o jsonpath='{.spec.host}')"
-  GUARDRAILS_ROUTE="https://$(oc get route rag-phase1-guardrails -n "${GUARDRAILS_NS}" -o jsonpath='{.spec.host}')"
+  DSPA_ROUTE="https://$(oc get route ds-pipeline-spear-dspa -n "${PIPELINES_NS}" -o jsonpath='{.spec.host}')"
+  GUARDRAILS_ROUTE="https://$(oc get route spear-guardrails -n "${GUARDRAILS_NS}" -o jsonpath='{.spec.host}')"
   MLFLOW_URL="$(oc get mlflow mlflow -n "${SHARED_NS}" -o jsonpath='{.status.url}')"
   MINIO_CONSOLE_URL="https://$(oc get route minio-console -n "${STORAGE_NS}" -o jsonpath='{.spec.host}')"
   RHOAI_DASHBOARD_URL="https://$(oc get route rhods-dashboard -n "${SHARED_NS}" -o jsonpath='{.spec.host}')"
   # spear shield chat, section 8: same sso host the agents realm already
   # lives on, and the coordinator's own inbound a2a route, see
-  # manifests/spear-shield-agents/07-a2a-gateway.yaml
+  # manifests/spear-agents/07-a2a-gateway.yaml
   SPEAR_SHIELD_ISSUER_URL="https://$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')/realms/${AGENTS_NS}"
   SPEAR_COORDINATOR_A2A_URL="http://spear-coordinator-a2a-gateway.${AGENTS_NS}.svc.cluster.local:80"
   # same host the mcp gateway's own real listener matches on, same
@@ -141,7 +142,7 @@ resolve_routes() {
   # demo page's direct tools/call against the work tracker
   local cluster_domain
   cluster_domain="$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
-  SPEAR_SHIELD_MCP_GATEWAY_HOST_HEADER="mcp-${AGENTS_NS}.${cluster_domain}"
+  SPEAR_MCP_GATEWAY_HOST_HEADER="mcp-${AGENTS_NS}.${cluster_domain}"
   if [[ -z "${DSPA_ROUTE}" || "${DSPA_ROUTE}" == "https://" ]]; then
     echo "could not resolve the dspa route, run scripts/04-install-pipelines.sh first" >&2
     exit 1
@@ -169,7 +170,7 @@ resolve_routes() {
   log "rhoai dashboard:    ${RHOAI_DASHBOARD_URL}"
   log "spear shield issuer:${SPEAR_SHIELD_ISSUER_URL}"
   log "coordinator a2a url:${SPEAR_COORDINATOR_A2A_URL}"
-  log "mcp gateway host:   ${SPEAR_SHIELD_MCP_GATEWAY_HOST_HEADER}"
+  log "mcp gateway host:   ${SPEAR_MCP_GATEWAY_HOST_HEADER}"
 }
 
 main() {
@@ -180,29 +181,28 @@ main() {
     echo "minio-dsp-creds not found in ${PIPELINES_NS}, run ./scripts/02-install-storage.sh first" >&2
     exit 1
   fi
-  # 01-backend.yaml's own secretKeyRef only resolves within spear-console,
+  # 02-backend.yaml's own secretKeyRef only resolves within spear-console,
   # the pod's own namespace, same cross namespace secret limit as
   # pgvector-creds/spear-inference, found live during the same rebuild,
   # see NAMESPACE_MIGRATION_PLAN.md and lib-common.sh's own mirror_secret
   log "mirroring minio-dsp-creds into ${CONSOLE_NS}"
   mirror_secret minio-dsp-creds "${PIPELINES_NS}" "${CONSOLE_NS}"
 
-  build_image "${BACKEND_BC}" "${ROOT_DIR}/spear-console-backend"
+  build_image "${BACKEND_BC}" "${ROOT_DIR}/console-backend"
 
-  log "applying backend rbac, chat creds and deployment"
-  oc apply -f "${ROOT_DIR}/manifests/spear-console/00-backend-rbac.yaml"
-  oc apply -f "${ROOT_DIR}/manifests/spear-console/02-chat-creds.yaml"
-  oc apply -f "${ROOT_DIR}/manifests/spear-console/03-backend-node-reader.yaml"
+  log "applying chat creds"
+  oc apply -f "${ROOT_DIR}/manifests/spear-console/01-chat-creds.yaml"
   ensure_sso_realm_demo_users
-  oc apply -f "${ROOT_DIR}/manifests/spear-shield-agents/08-console-backend-rbac.yaml"
+  oc apply -f "${ROOT_DIR}/manifests/spear-agents/08-console-backend-rbac.yaml"
   # the trend page's own closed loop patch button, lives in spear-guardrails's
   # own manifest folder since that is the namespace the rbac grants into, same
   # cross namespace apply shape as the line just above. found missing from
   # every install script entirely, not just undocumented: a fresh install
   # would 403 on this button until someone noticed and applied it by hand,
   # same as this project's own PHASE3_PLAN.md section 8 ended up doing live
-  oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/09-console-backend-closed-loop-rbac.yaml"
-  oc apply -f "${ROOT_DIR}/manifests/spear-console/01-backend.yaml"
+  oc apply -f "${ROOT_DIR}/manifests/spear-guardrails/08-console-backend-closed-loop-rbac.yaml"
+  log "applying backend service account, node reader rbac and deployment"
+  oc apply -f "${ROOT_DIR}/manifests/spear-console/02-backend.yaml"
 
   local backend_image
   backend_image="$(image_digest_ref "${BACKEND_BC}")"
@@ -219,7 +219,7 @@ main() {
     "RHOAI_DASHBOARD_URL=${RHOAI_DASHBOARD_URL}" \
     "SPEAR_SHIELD_ISSUER_URL=${SPEAR_SHIELD_ISSUER_URL}" \
     "SPEAR_COORDINATOR_A2A_URL=${SPEAR_COORDINATOR_A2A_URL}" \
-    "SPEAR_SHIELD_MCP_GATEWAY_HOST_HEADER=${SPEAR_SHIELD_MCP_GATEWAY_HOST_HEADER}"
+    "SPEAR_MCP_GATEWAY_HOST_HEADER=${SPEAR_MCP_GATEWAY_HOST_HEADER}"
 
   # everything below used to be a python constant baked into server.py, see
   # its own module level defaults for the values this reproduces. setting
@@ -239,13 +239,13 @@ main() {
   log "injecting pipeline/experiment names and autorag knobs into ${BACKEND_DEPLOY}, safe to rerun"
   oc set env "deployment/${BACKEND_DEPLOY}" -n "${CONSOLE_NS}" \
     "RAG_WORKSPACE=${PIPELINES_NS}" \
-    "INGESTION_EXPERIMENT_NAME=phase1-ingestion" \
-    "INGESTION_PIPELINE_NAME=phase1-ingestion-pipeline" \
-    "INGESTION_KFP_EXPERIMENT_NAME=phase1-ingestion" \
+    "INGESTION_EXPERIMENT_NAME=spear-corpus-prepare" \
+    "INGESTION_PIPELINE_NAME=spear-corpus-prepare-pipeline" \
+    "INGESTION_KFP_EXPERIMENT_NAME=spear-corpus-prepare" \
     "AUTORAG_PIPELINE_NAME=documents-rag-optimization-pipeline" \
     "AUTORAG_KFP_EXPERIMENT_NAME=phase1-autorag" \
-    "APPLY_PATTERN_PIPELINE_NAME=phase1-apply-pattern-pipeline" \
-    "APPLY_PATTERN_KFP_EXPERIMENT_NAME=phase1-apply-pattern" \
+    "APPLY_PATTERN_PIPELINE_NAME=spear-corpus-index-pipeline" \
+    "APPLY_PATTERN_KFP_EXPERIMENT_NAME=spear-corpus-index" \
     "AUTORAG_RAW_BUCKET=rag-documents" \
     "AUTORAG_S3_SECRET_NAME=autorag-s3-creds" \
     "AUTORAG_OGX_SECRET_NAME=autorag-ogx-creds" \
@@ -260,13 +260,13 @@ main() {
   wait_deploy_ready "${BACKEND_DEPLOY}" "${CONSOLE_NS}"
 
   log "building the frontend plugin bundle"
-  ( cd "${ROOT_DIR}/spear-console" && yarn build )
-  build_image "${FRONTEND_BC}" "${ROOT_DIR}/spear-console"
+  ( cd "${ROOT_DIR}/console" && yarn build )
+  build_image "${FRONTEND_BC}" "${ROOT_DIR}/console"
 
   local frontend_image
   frontend_image="$(image_digest_ref "${FRONTEND_BC}")"
   log "deploying the console plugin chart with helm, image ${frontend_image}"
-  helm upgrade --install "${HELM_RELEASE}" "${ROOT_DIR}/spear-console/charts/openshift-console-plugin" \
+  helm upgrade --install "${HELM_RELEASE}" "${ROOT_DIR}/console/charts/openshift-console-plugin" \
     -n "${CONSOLE_NS}" \
     --set "plugin.image=${frontend_image}"
 

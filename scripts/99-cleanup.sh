@@ -38,7 +38,7 @@ main() {
   log "deleting ${AGENTS_NS} and ${WORKTRACKER_NS} (gateways, guard proxy, openproject, spear-openproject-mcp, both sandboxes' k8s side)"
   oc delete namespace "${AGENTS_NS}" --ignore-not-found=true
   oc delete namespace "${WORKTRACKER_NS}" --ignore-not-found=true
-  oc delete keycloakrealmimport spear-shield-agents-realm -n keycloak --ignore-not-found=true
+  oc delete keycloakrealmimport spear-agents-realm -n keycloak --ignore-not-found=true
 
   log "deleting ${CONSOLE_NS} (console frontend and backend)"
   oc delete namespace "${CONSOLE_NS}" --ignore-not-found=true
@@ -47,7 +47,7 @@ main() {
   oc delete namespace "${PIPELINES_NS}" --ignore-not-found=true
 
   log "deleting guardrails cr and configmaps in ${GUARDRAILS_NS}"
-  oc delete nemoguardrails rag-phase1-guardrails -n "${GUARDRAILS_NS}" --ignore-not-found=true
+  oc delete nemoguardrails spear-guardrails -n "${GUARDRAILS_NS}" --ignore-not-found=true
   oc delete namespace "${GUARDRAILS_NS}" --ignore-not-found=true
 
   log "deleting ${INFERENCE_NS} (ogx, embed server, judge proxy)"

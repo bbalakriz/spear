@@ -10,7 +10,7 @@ tool calling against ogx (confirmed live before writing this, a direct
 /v1/chat/completions call against glm-53-flash with a tools schema
 genuinely returns a real tool_calls response, not assumed), lets the
 model decide what the query needs, then delegates the actual tool
-calls to spear-retrieval-agent over spear-shield-a2a-gateway rather
+calls to spear-retrieval-agent over spear-a2a-gateway rather
 than executing them itself, same architecture decision PHASE2_PLAN.md
 section 2 makes explicit: this project exists to secure two kinds of
 traffic, agent to agent and agent to tool, a single agent design only
@@ -50,17 +50,17 @@ NAME = os.environ.get("AGENT_NAME", "spear-coordinator-agent")
 VERSION = os.environ.get("AGENT_VERSION", "0.1.0")
 PUBLIC_URL = os.environ.get("AGENT_PUBLIC_URL", f"http://{NAME}:{PORT}/")
 # the service's own dns name is deliberately the exact string the
-# spear-shield-a2a-gateway HTTPRoute's own hostnames field matches
+# spear-a2a-gateway HTTPRoute's own hostnames field matches
 # against, mirroring the reference's own specialist-a2a-gateway naming,
 # so the plain Host header this call sends by default is already
 # correct, no manual override needed on this hop (unlike the mcp
 # gateway hop below, whose friendly service name is not the gateway's
 # own externally facing hostname)
 RETRIEVAL_A2A_URL = os.environ.get(
-    "RETRIEVAL_A2A_URL", "http://spear-retrieval-a2a-gateway.spear-shield-agents.svc.cluster.local:80"
+    "RETRIEVAL_A2A_URL", "http://spear-retrieval-a2a-gateway.spear-agents.svc.cluster.local:80"
 ).rstrip("/")
 
-# points straight at rag-phase1-guardrails's own route, not at ogx
+# points straight at spear-guardrails's own route, not at ogx
 # directly: this agent's own reasoning call now runs through
 # coordinator-agent-config's input/output rails, manifests/spear-guardrails,
 # which itself forwards to the real model (its own models: block). ogx's

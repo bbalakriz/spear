@@ -1,0 +1,32 @@
+# PHASE3_PLAN.md section 8, the ui half: spear-console-backend's own real
+# closed loop patch button, next to the trend page's confidential data
+# leak card. scoped to exactly one named configmap, get to read the
+# current pattern list before merging, patch to write the merged result
+# back, nothing broader, same least privilege shape every other
+# spear-console-backend grant in this project already uses, see
+# manifests/spear-agents/10-console-backend-pathway-rbac.yaml for
+# the sibling pattern
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: owner-console-backend-closed-loop-patcher
+  namespace: spear-guardrails
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["coordinator-agent-config"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: owner-console-backend-closed-loop-patcher
+  namespace: spear-guardrails
+subjects:
+  - kind: ServiceAccount
+    name: spear-console-backend
+    namespace: spear-console
+roleRef:
+  kind: Role
+  name: owner-console-backend-closed-loop-patcher
+  apiGroup: rbac.authorization.k8s.io

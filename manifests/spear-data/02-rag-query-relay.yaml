@@ -10,7 +10,7 @@
 # ogx's own network policy, see manifests/spear-inference/01-ogxserver.yaml
 #
 # built from the same image as spear-coordinator-agent's own sibling,
-# spear-retrieval-agent, already pushed to spear-shield-agents' internal
+# spear-retrieval-agent, already pushed to spear-agents' internal
 # registry, just run with a different command here: a container image
 # is not sandbox specific, only the openshell sandbox create invocation
 # that uses it is.
@@ -20,7 +20,7 @@ metadata:
   name: spear-shield-rag-query-relay
   namespace: spear-data
   labels:
-    app.kubernetes.io/part-of: spear-shield-agents
+    app.kubernetes.io/part-of: spear-agents
 spec:
   replicas: 1
   selector:
@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
         - name: relay
-          image: image-registry.openshift-image-registry.svc:5000/spear-shield-agents/spear-retrieval-agent:latest
+          image: image-registry.openshift-image-registry.svc:5000/spear-agents/spear-retrieval-agent:latest
           command: ["python3", "/sandbox/rag_query_server.py"]
           ports:
             - name: http
@@ -42,7 +42,7 @@ spec:
             - name: PORT
               value: "8080"
             - name: OGX_BASE_URL
-              value: http://rag-phase1-ogx-service.spear-inference.svc.cluster.local:8321
+              value: http://spear-ogx-service.spear-inference.svc.cluster.local:8321
             - name: PGVECTOR_HOST
               value: pgvector.spear-data.svc.cluster.local
             - name: PGVECTOR_DB_PORT
@@ -73,7 +73,7 @@ metadata:
   name: spear-shield-rag-query-relay
   namespace: spear-data
   labels:
-    app.kubernetes.io/part-of: spear-shield-agents
+    app.kubernetes.io/part-of: spear-agents
 spec:
   selector:
     app: spear-shield-rag-query-relay

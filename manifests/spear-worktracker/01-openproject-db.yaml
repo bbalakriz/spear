@@ -26,7 +26,7 @@ metadata:
   namespace: spear-worktracker
   labels:
     app: spear-openproject-db
-    app.kubernetes.io/part-of: spear-shield-agents
+    app.kubernetes.io/part-of: spear-agents
 spec:
   replicas: 1
   strategy:
